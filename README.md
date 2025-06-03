@@ -31,4 +31,9 @@ pip install -ve --no-deps .
 ```
 This will require that your current python environment satisfies the `requirements.txt`. 
 
+## test
+
+```
+python -m unittest discover ./test
+```
 ## examples
