@@ -8,4 +8,27 @@ An example of this code in use is in the development of the [East Lansing Model]
 
 ## installation
 
+### for development
+To modify the model, first clone and build
+```bash
+git clone git@github.com:beykyle/rxmc.git
+cd rxmc
+python3 -m build
+```
+
+Then install an editable version locally like so:
+
+```
+pip install -ve .
+```
+
+Note that `pip` will install package dependencies listed in `requirements.txt`. It is **highly recommended** that you use an isolated virtual environment (e.g. using [venv](https://packaging.python.org/en/latest/guides/installing-using-pip-and-virtual-environments/) or [conda/mamba](https://mamba.readthedocs.io/en/latest/)), as this action will install all of the dependencies in `requirements.txt`, at the specific version required.
+
+If you don't want to create an isolated environment for `rxmc`, but also don't want `pip` to overwrite the package versions you have with the ones in `requirements.txt`, you can
+
+```
+pip install -ve --no-deps .
+```
+This will require that your current python environment satisfies the `requirements.txt`. 
+
 ## examples
