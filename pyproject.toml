@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=62.0.0", "setuptools_scm[toml]>=6.2",]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rxmc"
+authors = [
+  {name="Kyle Beyer", email="beyerk@frib.msu.edu"}
+]
+description = "Uncertainty quantification and calibration of reaction models with Markov-Chain Monte Carlo, with flexible and composable models for the likelihood and corpus of constraints"
+readme = "README.md"
+requires-python = ">=3.9"
+dynamic = ["dependencies", "version"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[tool.setuptools_scm]
+write_to = "src/__version__.py"
+
+# Specify the console script entry point
+[project.scripts]
+mcmc = "calibration.mcmc:main"
