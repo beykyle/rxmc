@@ -5,3 +5,5 @@ from . import params
 
 from . import reaction_constraint
 from . import reaction_corpus
+
+from .__version__ import __version__

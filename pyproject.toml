@@ -23,7 +23,7 @@ where = ["src"]
 dependencies = {file = ["requirements.txt"]}
 
 [tool.setuptools_scm]
-write_to = "src/__version__.py"
+write_to = "src/rxmc/__version__.py"
 
 # Specify the console script entry point
 [project.scripts]
