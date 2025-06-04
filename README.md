@@ -38,7 +38,7 @@ python -m unittest discover ./test
 ```
 ## examples
 
-Check out [`examples/linear_calibration_demo.ipynb`](https://github.com/beykyle/rxmc/tree/main/examples) for an illustrative example of fitting a line to data with various likelihood models.
+Check out [`examples/linear_calibration_demo.ipynb`](https://github.com/beykyle/rxmc/blob/main/examples/linear_calibration_demo.ipynb) for an illustrative example of fitting a line to data with various likelihood models.
 
 Other examples demonstrating actual reaction model fitting coming soon.
 
