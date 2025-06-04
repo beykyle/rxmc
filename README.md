@@ -23,12 +23,40 @@ pip install -ve .
 
 Note that `pip` will install package dependencies listed in `requirements.txt`. It is **highly recommended** that you use an isolated virtual environment (e.g. using [venv](https://packaging.python.org/en/latest/guides/installing-using-pip-and-virtual-environments/) or [conda/mamba](https://mamba.readthedocs.io/en/latest/)), as this action will install all of the dependencies in `requirements.txt`, at the specific version required.
 
-If you don't want to create an isolated environment for `rxmc`, but also don't want `pip` to overwrite the package versions you have with the ones in `requirements.txt`, you can
+
+For example, with `conda`:
+
+
+```
+conda env create -f environment.yml
+conda activate myenv
+pip install -ve . --no-deps
+```
+
+or, similarily, with `mamba`:
+```
+mamba env create -f environment.yml
+mamba activate myenv
+pip install -ve . --no-deps
+```
+
+or with `venv`:
+
+```
+python -m venv .rxmc
+source .rxmc/bin/activate
+pip install -r requirements.txt
+pip install -ve .
+```
+
+The advantages of `conda` and `mamba` is that they can install heavy binary dependencies like `openmpi` required by `mpi4py`. 
+
+Some users may want to use their own custom environment, e.g. setup using the `module` system on a cluster. If you don't want to create an isolated environment for `rxmc`, but also don't want `pip` to overwrite the package versions you havein your environment with the ones in `requirements.txt`, you can
 
 ```
 pip install -ve . --no-deps
 ```
-This will require that your current python environment satisfies the `requirements.txt`. 
+This will require that your current python environment satisfies `requirements.txt`. 
 
 ## test
 
