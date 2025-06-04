@@ -30,8 +30,8 @@ def read_sample_from_json(fpath: Path):
     try:
         with open(fpath, "r") as file:
             return load(file, object_pairs_hook=OrderedDict)
-     except IOError as exc:
-         raise ValueError(f"Error: failed to open {fpath}") from exc
+    except IOError as exc:
+        raise ValueError(f"Error: failed to open {fpath}") from exc
 
 
 def array_to_list(samples: np.ndarray, params: list):

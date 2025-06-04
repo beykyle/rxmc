@@ -1,30 +1,20 @@
 from collections import OrderedDict
 
+import scipy as sc
 import numpy as np
-
-# from scipy.stats import multivariate_normal
 
 from .model import Model
 
 
-def mahalanobis_distance_cholesky(y, mu, cov):
+def mahalanobis_distance_cholesky(y, ym, cov):
     """
-    Returns the Mahalanobis distance between y and mu according to
+    Returns the Mahalanobis distance between y and ym according to
     covariance matrix cov, as well as the log determinant of cov, using
     Cholesky decomposition to factorize cov
     """
-    delta = y - mu
-
-    # Cholesky decomposition: cov = L @ L.T
-    L = np.linalg.cholesky(cov, lower=True)
-
-    # Solve L z = delta --> z = L^{-1} delta
-    z = np.lonalg.solve_triangular(L, delta, lower=True)
-
-    # Mahalanobis distance: z^T z
+    L = sc.linalg.cholesky(cov, lower=True)
+    z = sc.linalg.solve_triangular(L, y - ym, lower=True)
     mahalanobis = np.dot(z, z)
-
-    # Log determinant: log(det(Sigma)) = 2 * sum(log(diag(L)))
     log_det = 2 * np.sum(np.log(np.diag(L)))
 
     return mahalanobis, log_det
