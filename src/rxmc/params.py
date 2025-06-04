@@ -7,7 +7,7 @@ import numpy as np
 
 
 class Parameter:
-    def __init__(self, name, dtype=float, unit='', latex_name=None):
+    def __init__(self, name, dtype=float, unit="", latex_name=None):
         """
         Parameters:
             name (str): Name of the parameter
