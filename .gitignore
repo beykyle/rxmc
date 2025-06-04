@@ -1,6 +1,9 @@
 # version
 src/rxmc/__version__.py
 
+# pickle files
+*.pkl
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
