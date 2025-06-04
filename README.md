@@ -27,7 +27,7 @@ Note that `pip` will install package dependencies listed in `requirements.txt`. 
 If you don't want to create an isolated environment for `rxmc`, but also don't want `pip` to overwrite the package versions you have with the ones in `requirements.txt`, you can
 
 ```
-pip install -ve --no-deps .
+pip install -ve . --no-deps
 ```
 This will require that your current python environment satisfies the `requirements.txt`. 
 
