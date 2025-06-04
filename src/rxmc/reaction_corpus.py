@@ -52,9 +52,9 @@ class ElasticAngularCorpus(Corpus):
     def __init__(
         self,
         model: Callable[[DifferentialWorkspace, OrderedDict], ElasticXS],
+        params: list,
         model_name: str,
         corpus_name: str,
-        n_params: int,
         quantity: str,
         workspaces: list[ElasticWorkspace],
         measurements: list[tuple[Reaction, AngularDistribution]],
@@ -70,8 +70,8 @@ class ElasticAngularCorpus(Corpus):
         ----------
         quantity : str
             The quantity to be measured.
-        nparams : int
-            Total number of free parameters in the model.
+        params : list of str
+            The parameter names
         workspaces : list[tuple[AngularDistribution, ElasticWorkspace]]
             A list of tuples containing a reaction and corresponding measured
             angular distribution of given quantity.
@@ -127,4 +127,4 @@ class ElasticAngularCorpus(Corpus):
                     f"from subentry {measurement.subentry}"
                 ) from e
 
-        super().__init__(constraints, n_params, model_name, corpus_name, weights)
+        super().__init__(constraints, params, model_name, corpus_name, weights)

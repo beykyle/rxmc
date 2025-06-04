@@ -27,8 +27,8 @@ class Corpus:
         Total number of degrees of freedom in calibration.
     nparams : int
         Total number of free parameters in the model.
-    params : list
-        The parameter names and units
+    params : list of str
+        The parameter names
     weights : np.ndarray
         Weights for each constraint (should sum to 1)
 

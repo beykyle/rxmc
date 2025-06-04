@@ -43,7 +43,7 @@ def list_to_array(samples: list, params_dtype: tuple):
 
 
 def to_ordered_dict(sample: np.ndarray, params: list):
-    return OrderedDict(zip([p.name for p in params], sample))
+    return OrderedDict(zip(params, sample))
 
 
 def list_to_dataframe(samples: list):
