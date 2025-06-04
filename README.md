@@ -37,3 +37,9 @@ This will require that your current python environment satisfies the `requiremen
 python -m unittest discover ./test
 ```
 ## examples
+
+Check out [`examples/linear_calibration_demo.ipynb`](https://github.com/beykyle/rxmc/tree/main/examples) for an illustrative example of fitting a line to data with various likelihood models.
+
+Other examples demonstrating actual reaction model fitting coming soon.
+
+For a fully fledged example of this code for calibrating an uncertainty quantified global optical potential, check out [East Lansing Model](https://github.com/beykyle/elm)
