@@ -246,7 +246,7 @@ def main():
         # update unknown covariance factor estimate (Gibbs sampling)
 
         # write record of batch chain to disk
-        np.save( Path(args.output) / f"chain_{rank}_{i}.npy", batch_chain)
+        np.save(Path(args.output) / f"chain_{rank}_{i}.npy", batch_chain)
 
     logl = np.concatenate(logl, axis=0)
     chain = np.concatenate(chain, axis=0)
