@@ -13,7 +13,6 @@ To modify the model, first clone and build
 ```bash
 git clone git@github.com:beykyle/rxmc.git
 cd rxmc
-python3 -m build
 ```
 
 Then install an editable version locally like so:
