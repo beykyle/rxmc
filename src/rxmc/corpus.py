@@ -71,9 +71,9 @@ class Corpus:
             raise ValueError(
                 "weights must be a 1D array with the same shape as constraints"
             )
-        if not np.isclose(np.sum(weights), 1.0):
+        self.weights = weights * len(self.constraints)
+        if not np.isclose(np.sum(weights), len(self.constraints)):
             raise ValueError("weights must sum to 1")
-        self.weights = weights
 
     def residual(self, params: OrderedDict):
         """
