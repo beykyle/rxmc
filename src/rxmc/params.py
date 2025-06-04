@@ -7,7 +7,7 @@ import numpy as np
 
 
 class Parameter:
-    def __init__(self, name, dtype, unit, latex_name):
+    def __init__(self, name, dtype=float, unit='', latex_name=None):
         """
         Parameters:
             name (str): Name of the parameter
@@ -18,7 +18,7 @@ class Parameter:
         self.name = name
         self.dtype = dtype
         self.unit = unit
-        self.latex_name = latex_name
+        self.latex_name = latex_name if latex_name else name
 
 
 def dump_sample_to_json(fpath: Path, sample: OrderedDict):
