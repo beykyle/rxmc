@@ -18,7 +18,6 @@ See examples below for how to use both.
 Not yet available
 
 ### for development
-First clone and build
 ```bash
 git clone git@github.com:beykyle/rxmc.git
 cd rxmc
