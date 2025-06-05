@@ -58,11 +58,11 @@ def run_chain(
     prior,
     corpus: corpus.Corpus,
     nsteps: int,
-    burnin: int,
+    burnin: int = 0,
     seed: int = 42,
     batch_size: int = None,
     rank: int = 0,
-    proposal_cov_scale_factor: float = 1000,
+    proposal_cov_scale_factor: float = 100,
     verbose: bool = True,
     output: Path = None,
 ):
@@ -109,13 +109,15 @@ def run_chain(
         rem_burn = burnin % batch_size
         n_burn_batches = burnin // batch_size
         burn_batches = n_burn_batches * [batch_size] + (rem_burn > 0) * [rem_burn]
-
         rem = (nsteps - burnin) % batch_size
         n_full_batches = (nsteps - burnin) // batch_size
         batches = n_full_batches * [batch_size] + (rem > 0) * [rem]
     else:
         batches = [nsteps - burnin]
         burn_batches = [burnin]
+
+    if burnin == 0:
+        burn_batches = []
 
     # RNG
     seed = seed + rank
@@ -156,7 +158,8 @@ def run_chain(
             )
 
     # update starter location to tail of burn-in
-    x0 = batch_chain[-1]
+    if burnin > 0:
+        x0 = batch_chain[-1]
 
     # run real steps
     chain = []
@@ -181,7 +184,7 @@ def run_chain(
             print(
                 f"Rank: {rank}. Batch: {i+1}/{len(batches)} completed, "
                 f"{steps_in_batch} steps. "
-                f"Acceptance frac: {accepted_in_batch/steps_in_batch}"
+                f"Acceptance frac: {accepted_in_batch/steps_in_batch:.3f}"
             )
 
         # update proposal distribution?

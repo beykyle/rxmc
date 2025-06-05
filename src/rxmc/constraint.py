@@ -236,8 +236,8 @@ class ConstraintWithKnownError(Constraint):
         ym = self.model(params)
         cov = (
             self.model_independent_covariance
-            + self.sys_err_frac * np.outer(ym, ym)
-            + self.diag_err_frac * np.diag(ym**2)
+            + self.sys_err_frac**2 * np.outer(ym, ym)
+            + self.diag_err_frac**2 * np.diag(ym**2)
         )
         return ym, cov
 
@@ -249,6 +249,8 @@ class ConstraintWithUnknownError(Constraint):
     the covariance and model prediction for a given parameter
     """
 
+    # TODO should separate covariance parameters and model parameters
+    # for Gibb's sampling purposes
     def __init__(
         self,
         y: np.ndarray,
