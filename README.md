@@ -6,6 +6,12 @@ Uncertainty quantification and calibration of reaction models with Markov-Chain 
 
 An example of this code in use is in the development of the [East Lansing Model](https://github.com/beykyle/elm)
 
+## usage
+
+After installation (see below), the `rxmc` module can be imported in python, and an executable `mcmc` will be installed.
+
+See examples below for how to use both.
+
 ## installation
 
 ### for development
@@ -65,7 +71,11 @@ python -m unittest discover ./test
 ```
 ## examples
 
-Check out [`examples/linear_calibration_demo.ipynb`](https://github.com/beykyle/rxmc/blob/main/examples/linear_calibration_demo.ipynb) for an illustrative example of fitting a line to data with various likelihood models.
+Check out the demos: 
+- [`examples/linear_calibration_demo.ipynb`](https://github.com/beykyle/rxmc/blob/main/examples/linear_calibration_demo.ipynb) for an illustrative example of fitting a line to data with various likelihood models.
+- [`examples/parallel_calibration_demo.ipynb`](https://github.com/beykyle/rxmc/blob/main/examples/parallel_calibration_demo.ipynb) for ways to run multiple chains in parallel, using `mpi4py` and `ipyparallel`, or using the provided `mcmc`
+- [`systematic_err_demo.ipynb`](https://github.com/beykyle/rxmc/blob/main/examples/systematic_err_demo.ipynb) for a demonstration of the likelihood models built into `rxmc`, and how to use them for situations involving systematic errors and multiple independent experimental constraints
+- [`fitting_an_optical_potential.ipynb`](https://github.com/beykyle/rxmc/blob/main/examples/fitting_an_optical_potential.ipynb) for a demonstration of fitting an optical potential to multiple experimental data sets parsed from Exfor.
 
 Other examples demonstrating actual reaction model fitting coming soon.
 
