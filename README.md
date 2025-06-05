@@ -37,14 +37,14 @@ For example, with `conda`:
 
 ```
 conda env create -f environment.yml
-conda activate myenv
+conda activate rxmc
 pip install -ve . --no-deps
 ```
 
 or, similarily, with `mamba`:
 ```
 mamba env create -f environment.yml
-mamba activate myenv
+mamba activate rxmc
 pip install -ve . --no-deps
 ```
 
