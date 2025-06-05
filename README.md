@@ -13,9 +13,12 @@ After installation (see below), the `rxmc` module can be imported in python, and
 See examples below for how to use both.
 
 ## installation
+### pypi
+
+Not yet available
 
 ### for development
-To modify the model, first clone and build
+First clone and build
 ```bash
 git clone git@github.com:beykyle/rxmc.git
 cd rxmc
