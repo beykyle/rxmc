@@ -201,11 +201,12 @@ def main():
         all_chains = np.array(all_chains)
         all_logl = np.array(all_logl)
         acc_frac = np.array(acc_frac)
-        print(f"\nFinished sampling all {len(all_chains)} chains.")
-        print(f"Chain shape: {all_chains.shape}")
-        print(f"Average acceptance fraction: {np.mean(acc_frac):.3f}")
-        for i, af in enumerate(acc_frac):
-            print(f"  Chain {i}: acceptance fraction = {af:.3f}")
+        if args.verbose:
+            print(f"\nFinished sampling all {len(all_chains)} chains.")
+            print(f"Chain shape: {all_chains.shape}")
+            print(f"Average acceptance fraction: {np.mean(acc_frac):.3f}")
+            for i, af in enumerate(acc_frac):
+                print(f"  Chain {i}: acceptance fraction = {af:.3f}")
 
     np.save(Path(args.output) / "all_chains.npy", all_chains)
     np.save(Path(args.output) / "log_likelihood.npy", all_logl)
