@@ -1,7 +1,6 @@
-from collections import OrderedDict
-
 import numpy as np
 
+from .params import Parameter
 from .constraint import Constraint
 
 
@@ -11,12 +10,10 @@ class Corpus:
 
     Attributes
     ----------
-    model_name : str
-        Name of model
-    corpus_name : str
-        label for corpus of constraints
-    constraints : list of Constraint
-        A list of constraints with the same model.
+    constraints : list of Constraints
+        A list of constraints with the same underlying physical model
+        parameterization.
+    params: list of Parameters
     y : np.ndarray
         Combined y values from all constraints.
     x : np.ndarray
@@ -27,8 +24,6 @@ class Corpus:
         Total number of degrees of freedom in calibration.
     nparams : int
         Total number of free parameters in the model.
-    params : list of str
-        The parameter names
     weights : np.ndarray
         Weights for each constraint (should sum to 1)
 
@@ -45,19 +40,13 @@ class Corpus:
     def __init__(
         self,
         constraints: list[Constraint],
-        params: list,
-        model_name: str,
-        corpus_name: str,
+        params: list[Parameter],
         weights: np.ndarray = None,
     ):
-        self.model_name = model_name
-        self.corpus_name = corpus_name
         self.constraints = constraints
-        self.y = np.hstack([constraint.y for constraint in self.constraints])
-        self.x = np.hstack([constraint.x for constraint in self.constraints])
         self.params = params
         self.n_params = len(params)
-        self.n_data_pts = self.y.size
+        self.n_data_pts = sum(c.observation.n_data_pts for c in constraints)
         self.n_dof = self.n_data_pts - self.n_params
         if self.n_dof < 0:
             raise ValueError(
@@ -75,14 +64,28 @@ class Corpus:
         if not np.isclose(np.sum(weights), len(self.constraints)):
             raise ValueError("weights must sum to 1")
 
-    def residual(self, params: OrderedDict):
+    def model(self, params):
+        """
+        Compute the model output for each constraint, given params
+
+
+        Parameters
+        ----------
+        params : OrderedDict or np.ndarray
+            The parameters of the physical model
+
+        Returns
+        -------
+        list
+        """
+        return [c.model(params) for c in self.constraints]
+
+    def residual(self, params):
         """
         Compute the residuals for the given parameters.
 
         Parameters
         ----------
-        params : OrderedDict
-            Parameters for which to compute the residuals.
 
         Returns
         -------
@@ -90,17 +93,17 @@ class Corpus:
             Residuals for the given parameters.
         """
         return np.hstack(
-            [constraint.residual(params) for constraint in self.constraints]
+            [constraint.observation.residual(params) for constraint in self.constraints]
         )
 
-    def chi2(self, params: OrderedDict):
+    def chi2(self, params):
         """
         Compute the weighted chi-squared value for the given parameters.
 
         Parameters
         ----------
-        params : OrderedDict
-            Parameters for which to compute the chi-squared value.
+        params : OrderedDict or np.ndarray
+            The parameters of the physical model
 
         Returns
         -------
@@ -112,14 +115,14 @@ class Corpus:
             for weight, constraint in zip(self.weights, self.constraints)
         )
 
-    def logpdf(self, params: OrderedDict):
+    def logpdf(self, params):
         """
         Returns the log-pdf that the Model, given params, reproduces y
 
         Parameters
         ----------
-        params : OrderedDict
-            parameters of model
+        params : OrderedDict or np.ndarray
+            The parameters of the physical model
 
         Returns
         -------
@@ -130,7 +133,7 @@ class Corpus:
             for weight, constraint in zip(self.weights, self.constraints)
         )
 
-    def num_pts_within_interval(self, ylow: np.ndarray, yhigh: np.ndarray):
+    def num_pts_within_interval(self, ylow: np.ndarray, yhigh: np.ndarray, xlim=None):
         """
         Compute the empirical coverage within the given interval by summing
         the number of points within the interval.
@@ -141,6 +144,10 @@ class Corpus:
             Lower bounds of the interval.
         yhigh : np.ndarray
             Upper bounds of the interval.
+        xlim : tuple, optional
+            If provided, only consider points where self.x is within
+            this range. Defaults to None, meaning all points are
+            considered.
 
         Returns
         -------
@@ -149,24 +156,8 @@ class Corpus:
         """
         return (
             sum(
-                constraint.num_pts_within_interval(ylow, yhigh)
+                constraint.num_pts_within_interval(ylow, yhigh, xlim=xlim)
                 for constraint in self.constraints
             )
             / self.n_data_pts
         )
-
-    def model(self, params: OrderedDict):
-        """
-        Compute the model output for each constraint, given params
-
-
-        Parameters
-        ----------
-        params : OrderedDict
-            parameters of model
-
-        Returns
-        -------
-        list
-        """
-        return [c.model(params) for c in self.constraints]

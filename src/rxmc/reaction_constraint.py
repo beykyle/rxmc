@@ -2,7 +2,6 @@ import numpy as np
 
 from .constraint import FixedCovarianceConstraint
 from .model import Model
-from exfor_tools.distribution import Distribution
 
 
 def covariance_from_distribution(
@@ -39,7 +38,7 @@ def covariance_from_distribution(
     return y, covariance
 
 
-class ReactionConstraint(FixedCovarianceConstraint):
+class ReactionConstraint(Constraint):
     """
     Represents the constraint determined by a AngularDistribution,
     with the appropriate covariance matrix given statistical
