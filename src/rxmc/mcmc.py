@@ -41,6 +41,8 @@ def metropolis_hastings(
     for i in range(n_steps):
         x_new = propose(x)
         logl_new = log_likelihood(x_new)
+        # use sum log exp trick
+        # https://gregorygundersen.com/blog/2020/02/09/log-sum-exp/
         log_ratio = min(0, logl_new - logl)
         xi = np.log(rng.random())
         if xi < log_ratio:
