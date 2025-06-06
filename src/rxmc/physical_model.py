@@ -17,14 +17,27 @@ class PhysicalModel:
     y(x) contained in an Observation object
     """
 
-    def __init__(self, observation: Observation, params: list[Parameter]):
-        self.observation = observation
+    # TODO pass in Observation object into __call__ method and evaluate
+    # along with params.
+    # In the case of ReactionModel, we would need to take in a
+    # specialized Observation object, ReactionObservation,
+    # which constinas the Workspace objects as well.
+    # Then the actual model would just be a callable that takes in
+    # the workspace and the parameters, and returns a the corresponding
+    # y value.
+    # One would define subclasses of ReactionModel for each model type,
+    # e.g. KDUQModel
+    def __init__(self, params: list[Parameter]):
         self.params = params
 
-    def evaluate(self, parameters):
+    def evaluate(self, parameters: OrderedDict):
         """
         Evaluate the model at the given parameter values.
         Should be overridden by subclasses.
+
+        Parameters:
+        ----------
+            parameters: An OrderedDict mapping parameter names to values.
         """
         raise NotImplementedError("Subclasses must implement the evaluate method.")
 
