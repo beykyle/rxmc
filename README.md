@@ -1,16 +1,16 @@
 # rxmc
-Uncertainty quantification and calibration of reaction models with Markov-Chain Monte Carlo, with flexible and composable models for the likelihood and corpus of constraints.
-- Curate a corpus of experimental constraints using [`exfor_tools`](https://github.com/beykyle/exfor_tools)
-- Efficiently calculate corresponding observables using [`jitR`](https://github.com/beykyle/jitr)
-- Choose from a variety of likelihood models, or extend the basic [`Constraint`]() class to implement your own.
+Bayesian calibration of reaction models with Markov-Chain Monte Carlo, with flexible and composable models for the likelihood and corpus of constraints.
+- curate a set of experimental constraints (e.g. using [`exfor_tools`](https://github.com/beykyle/exfor_tools))
+- efficiently calculate your model's corresponding predictions for these observables using [`jitR`](https://github.com/beykyle/jitr)
+- choose from a variety of likelihood models, or extend the basic [`Constraint`]() class to implement your own.
+- package the constraints, physical model (and solver), and likelihood model together in a `rxmc.corpus.Corpus` object which provides the likelihood of a given model parameter, for use in Bayesian calibration (see `rxmc.mcmc`).
 
 An example of this code in use is in the development of the [East Lansing Model](https://github.com/beykyle/elm)
 
-## usage
+See `examples/` for a variety of demos.
 
-After installation (see below), the `rxmc` module can be imported in python, and an executable `mcmc` will be installed.
-
-See examples below for how to use both.
+## documentation
+- TBD
 
 ## installation
 ### pypi
