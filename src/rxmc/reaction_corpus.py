@@ -3,7 +3,7 @@ from typing import Callable
 import numpy as np
 
 from exfor_tools.distribution import AngularDistribution
-from exfor_tools.reaction import Reaction
+from jitr.reactions import Reaction
 
 from jitr.xs.elastic import DifferentialWorkspace, ElasticXS
 
