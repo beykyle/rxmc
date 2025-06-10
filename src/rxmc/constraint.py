@@ -34,19 +34,28 @@ class Constraint:
             The model that defines the likelihood of the observation given the
             physical model prediction.
         """
-        self.model = physical_model
+        self.physical_model = physical_model
         self.likelihood = likelihood_model
 
-    def logpdf(self, params, likelihood_params=None):
+    def model(self, model_params):
         """
-        Calculate the log probability density function (logpdf) that the model
-        predictions, given the parameters, reproduce the observed data.
+        Compute the model output for each observation, given model_params.
 
         Parameters:
         ----------
-        observation : Observation
-            The observed data that the model will attempt to reproduce.
-        params : tuple
+        model_params : tuple
+            The parameters of the physical model
+        """
+        return [self.physical_model(obs, *model_params) for obs in self.observations]
+
+    def logpdf(self, model_params, likelihood_params=None):
+        """
+        Calculate the log probability density function (logpdf) that the
+        model predictions, given the parameters, reproduce the observed data.
+
+        Parameters:
+        ----------
+        model_params : tuple
             The parameters of the physical model
         likelihood_params : tuple, optional
             Additional parameters for the likelihood model, if any.
@@ -59,18 +68,20 @@ class Constraint:
             parameters.
         """
         return sum(
-            self.likelihood.logpdf(obs, self.model(obs, *params), *likelihood_params)
+            self.likelihood.logpdf(
+                obs, self.physical_model(obs, *model_params), *likelihood_params
+            )
             for obs in self.observations
         )
 
-    def chi2(self, params, likelihood_params=None):
+    def chi2(self, model_params, likelihood_params=None):
         """
         Calculate the chi-squared statistic (or Mahalanobis distance) between
         the model prediction, given the parameters, and the observed data.
 
         Parameters:
         ----------
-        params : tuple
+        model_params : tuple
             The parameters of the physical model
         likelihood_params : tuple, optional
             Additional parameters for the likelihood model, if any.
@@ -81,11 +92,13 @@ class Constraint:
             The chi-squared statistic.
         """
         return sum(
-            self.likelihood.chi2(obs, self.model(obs, *params), *likelihood_params)
+            self.likelihood.chi2(
+                obs, self.physical_model(obs, *model_params), *likelihood_params
+            )
             for obs in self.observations
         )
 
-    def logpdf_and_ym(self, params, likelihood_params=None):
+    def logpdf_and_ym(self, model_params, likelihood_params=None):
         """
         Calculate the log probability density function (logpdf) that the model
         predictions, given the parameters, reproduce the observed data, and
@@ -93,7 +106,7 @@ class Constraint:
 
         Parameters:
         ----------
-        params : tuple
+        model_params : tuple
             The parameters of the physical model
         likelihood_params : tuple, optional
             Additional parameters for the likelihood model, if any.
@@ -109,7 +122,7 @@ class Constraint:
         ym = []
         logpdf = 0.0
         for obs in self.observations:
-            y_pred = self.model(obs, *params)
+            y_pred = self.physical_model(obs, *model_params)
             ym.append(y_pred)
             logpdf += self.likelihood.logpdf(obs, y_pred, *likelihood_params)
 

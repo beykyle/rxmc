@@ -73,6 +73,25 @@ class ElasticDifferentialXSConstraint(Constraint):
             self.visualization_workspaces[i] = vis_ws
             self.kinematics[i] = kin
 
+    def model(self, *params):
+        """
+        Compute the model output for each observation, given params.
+
+        Parameters:
+        ----------
+        params : tuple
+            The parameters of the physical model
+
+        Returns:
+        -------
+        float
+            The model predictions for the observed data.
+        """
+        return sum(
+            self.physical_model(obs, ws, *params)
+            for obs, ws in zip(self.observations, self.constraint_workspaces)
+        )
+
     def logpdf(self, params, likelihood_params=None):
         """
         Calculate the log probability density function (logpdf) that the model
@@ -96,7 +115,7 @@ class ElasticDifferentialXSConstraint(Constraint):
         """
         return sum(
             self.likelihood.logpdf(
-                obs, self.model(obs, ws, *params), *likelihood_params
+                obs, self.physical_model(obs, ws, *params), *likelihood_params
             )
             for obs, ws in zip(self.observations, self.constraint_workspaces)
         )
@@ -119,7 +138,9 @@ class ElasticDifferentialXSConstraint(Constraint):
             The chi-squared statistic.
         """
         return sum(
-            self.likelihood.chi2(obs, self.model(obs, ws, *params), *likelihood_params)
+            self.likelihood.chi2(
+                obs, self.physical_model(obs, ws, *params), *likelihood_params
+            )
             for obs, ws in zip(self.observations, self.constraint_workspaces)
         )
 
@@ -147,7 +168,7 @@ class ElasticDifferentialXSConstraint(Constraint):
         ym = []
         logpdf = 0.0
         for obs, ws in zip(self.observations, self.constraint_workspaces):
-            y_pred = self.model(obs, ws, *params)
+            y_pred = self.physical_model(obs, ws, *params)
             ym.append(y_pred)
             logpdf += self.likelihood.logpdf(obs, y_pred, *likelihood_params)
 
