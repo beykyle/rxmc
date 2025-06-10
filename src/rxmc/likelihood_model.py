@@ -12,6 +12,7 @@ class LikelihoodModel:
     """
 
     def __init__(self):
+        self.params = None
         pass
 
     def residual(self, observation: Observation, ym: np.ndarray):

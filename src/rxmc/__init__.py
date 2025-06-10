@@ -5,8 +5,7 @@ from . import params
 from . import mcmc
 from . import observation
 
-from . import reaction_workspace
-from . import reaction_constraint
-from . import reaction_corpus
+from . import elastic_diffxs_constraint
+from . import elastic_diffxs_model
 
 from .__version__ import __version__

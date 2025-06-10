@@ -132,7 +132,9 @@ class TestLikelihoodWithSystematicError(unittest.TestCase):
             + self.observation.y_sys_err_bias**2 * np.outer(self.ym, self.ym)
             + self.observation.y_sys_err_offset**2 * np.ones((3, 3))
         )
-        self.expected_chi2 = self.delta.T @ np.linalg.inv(self.expected_covariance) @ self.delta
+        self.expected_chi2 = (
+            self.delta.T @ np.linalg.inv(self.expected_covariance) @ self.delta
+        )
         self.expected_logpdf = -0.5 * (
             self.expected_chi2
             + np.log(np.linalg.det(self.expected_covariance))

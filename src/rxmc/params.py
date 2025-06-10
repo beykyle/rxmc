@@ -7,7 +7,7 @@ import numpy as np
 
 
 class Parameter:
-    def __init__(self, name, dtype=float, unit="", latex_name=None):
+    def __init__(self, name, dtype=float, unit="", latex_name=None, bounds=None):
         """
         Parameters:
             name (str): Name of the parameter
@@ -18,6 +18,7 @@ class Parameter:
         self.name = name
         self.dtype = dtype
         self.unit = unit
+        self.bounds = bounds
         self.latex_name = latex_name if latex_name else name
 
 
