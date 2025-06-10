@@ -10,4 +10,3 @@ from jitr.xs.elastic import DifferentialWorkspace, ElasticXS
 from .corpus import Corpus
 
 # TODO
-
