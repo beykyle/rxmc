@@ -14,6 +14,7 @@ class Parameter:
             dtype (np.dtype): Data type of the parameter
             unit (str): Unit of the parameter
             latex_name (str): LaTeX representation of the parameter
+            bounds (tuple, optional): Bounds for the parameter as a tuple (min, max)
         """
         self.name = name
         self.dtype = dtype

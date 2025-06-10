@@ -2,30 +2,34 @@ import numpy as np
 
 import jitr
 
-from .physical_model import PhysicalModel
 from .likelihood_model import LikelihoodModel
-from .observation import Observation
+from .elastic_diffxs_model import ElasticDifferentialXSModel
+from .reaction_observation import ReactionObservation
 from .constraint import Constraint
 
 DEFAULT_LMAX = 20
 
+# TODO allow for writing and reading the precomputed workspaces to/from disk
+
 
 class ElasticDifferentialXSConstraint(Constraint):
     """
-    For each Observation, this class also precomputes (the model-independent)
-    quantities needed for the calculation of differential cross
-    sections (dXS/dA, dXS/dRuth, Ay) for elastic scattering reactions.
+    A `Constraint` for elastic differential cross sections and analyzing
+    powers.
+
+    For each `ReactionObservation`, this class also precomputes (the
+    model-independent) quantities needed for the calculation of differential
+    cross sections (dXS/dA, dXS/dRuth, Ay) for elastic scattering reactions.
 
     This precomputation is handled by jitr.xs.elastic.DifferentialWorkspace,
     which is initialized with the reaction and laboratory energy.
+
     """
 
     def __init__(
         self,
-        observations: list[Observation],
-        reactions: list[jitr.reactions.Reaction],
-        Elab: list[float],
-        physical_model: PhysicalModel,
+        observations: list[ReactionObservation],
+        physical_model: ElasticDifferentialXSModel,
         likelihood_model: LikelihoodModel,
         quantity: str,
         lmax: int = DEFAULT_LMAX,
@@ -33,14 +37,25 @@ class ElasticDifferentialXSConstraint(Constraint):
     ):
         """
         Params:
-            model: A callable that takes in a DifferentialWorkspace and an
-                OrderedDict of params and spits out the corresponding ElasticXS
-            quantity: The type of quantity to be calculated (e.g., "dXS/dA",
-                "dXS/dRuth", "Ay").
-            reaction: The reaction object containing details of the reaction.
-            Elab: The laboratory energy.
-            angles_rad_vis: Array of angles in radians for visualization.
-            lmax: Maximum angular momentum, defaults to 20.
+        ----------
+        observations: list[ReactionObservation]
+            List of ReactionObservations, each containing the reaction,
+            laboratory energy, and measurements.
+        physical_model: ElasticDifferentialXSModel
+            A callable that takes a
+            `jitr.xs.elastic.DifferentialWorkspace` and a tuple of params,
+            and returns the model predictions for the corresponding
+            observation.
+        likelihood_model: LikelihoodModel
+            The model used to calculate the likelihood of the model parameters
+            given the observed data.
+        quantity: str
+            The type of quantity to be calculated (e.g., "dXS/dA",
+            "dXS/dRuth", "Ay").
+        lmax: int
+            Maximum angular momentum, defaults to 20.
+        angles_rad_vis: np.ndarray
+            Array of angles in radians for visualization.
         """
         super().__init__(
             observations=observations,
@@ -48,30 +63,94 @@ class ElasticDifferentialXSConstraint(Constraint):
             likelihood_model=likelihood_model,
         )
         self.quantity = quantity
-        self.reactions = reactions
-        self.Elab = Elab
         self.lmax = lmax
         self.constraint_workspaces = []
         self.visualization_workspaces = []
-        self.kinematics = []
+        self.angles_rad_vis = angles_rad_vis
+
+        check_angle_grid(angles_rad_vis, "angles_rad_vis")
 
         for i in range(len(observations)):
-            if self.Elab[i] <= 0:
-                raise ValueError("Elab must be positive.")
+            self.constraint_workspaces.append([])
+            self.visualization_workspaces.append([])
+            for j in range(self.observations[i].n_measurements):
+                angles_rad_constraint = self.observations[i].x[j]
+                check_angle_grid(angles_rad_constraint, "angles_rad_constraint")
+                constraint_ws, vis_ws, kinematics = set_up_solver(
+                    reaction=self.observations[i].reaction,
+                    Elab=self.observations[i].Elab,
+                    angle_rad_constraint=angles_rad_constraint,
+                    angle_rad_vis=self.angles_rad_vis,
+                    lmax=self.lmax,
+                )
+                self.constraint_workspaces[i].append(constraint_ws)
+                self.visualization_workspaces[i].append(vis_ws)
 
-            check_angle_grid(self.observations[i].x, f"observation[{i}].x")
-            check_angle_grid(angles_rad_vis, "angles_rad_vis")
+    def chi2_observation(self, obs, workspaces, *params):
+        """
+        Calculate the chi-squared statistic (or Mahalanobis distance) between
+        the model prediction, given the parameters, and the observed data for
+        a single observation.
 
-            constraint_ws, vis_ws, kin = set_up_solver(
-                self.reactions[i],
-                self.Elab[i],
-                self.observations[i].x,
-                angles_rad_vis,
-                self.lmax,
-            )
-            self.constraint_workspaces[i] = constraint_ws
-            self.visualization_workspaces[i] = vis_ws
-            self.kinematics[i] = kin
+        Parameters:
+        ----------
+        obs : ReactionObservation
+            The observed data that the model will attempt to reproduce.
+        workspaces : list[DifferentialWorkspace]
+            The precomputed workspaces corresponding to the observation.
+        params : tuple
+            The parameters of the physical model
+
+        Returns:
+        -------
+        float
+            The chi-squared statistic.
+        """
+
+    def logpdf_observation(self, obs, workspaces, *params):
+        """
+        Calculate the log probability density function (logpdf) that the model
+        predictions, given the parameters, reproduce the observed data for a
+        single observation.
+
+        Parameters:
+        ----------
+        obs : ReactionObservation
+            The observed data that the model will attempt to reproduce.
+        workspaces : list[DifferentialWorkspace]
+            The precomputed workspaces corresponding to the observation.
+        params : tuple
+            The parameters of the physical model
+
+        Returns:
+        -------
+        float
+            The log probability density of the observation given the
+            parameters.
+        """
+        # TODO concatenate model predictions into 1d array and pass into
+        # LikelihoodModel
+        ym = np.concat([self.model_observation(obs, ws, *params) for ws in workspaces])
+
+    def model_observation(self, obs, workspaces, *params):
+        """
+        Compute the model output for a single observation, given params.
+
+        Parameters:
+        ----------
+        obs : ReactionObservation
+            The observed data that the model will attempt to reproduce.
+        workspaces : list[DifferentialWorkspace]
+            The precomputed workspaces corresponding to the observation.
+        params : tuple
+            The parameters of the physical model
+
+        Returns:
+        -------
+        float
+            The model prediction for the observed data.
+        """
+        return [self.physical_model(obs, ws, *params) for ws in workspaces]
 
     def model(self, *params):
         """
@@ -87,10 +166,10 @@ class ElasticDifferentialXSConstraint(Constraint):
         float
             The model predictions for the observed data.
         """
-        return sum(
-            self.physical_model(obs, ws, *params)
-            for obs, ws in zip(self.observations, self.constraint_workspaces)
-        )
+        return [
+            self.model_observation(obs, workspaces)
+            for obs, workspaces in zip(self.observations, self.constraint_workspaces)
+        ]
 
     def logpdf(self, params, likelihood_params=None):
         """
@@ -114,9 +193,7 @@ class ElasticDifferentialXSConstraint(Constraint):
             parameters.
         """
         return sum(
-            self.likelihood.logpdf(
-                obs, self.physical_model(obs, ws, *params), *likelihood_params
-            )
+            self.logpdf_observation(obs, ws, *params)
             for obs, ws in zip(self.observations, self.constraint_workspaces)
         )
 
@@ -236,24 +313,3 @@ def check_angle_grid(angles_rad: np.ndarray, name: str):
         raise ValueError(f"{name} must be 1D, is {len(angles_rad.shape)}D")
     if angles_rad[0] < 0 or angles_rad[-1] > np.pi:
         raise ValueError(f"{name} must be on [0,pi)")
-
-
-def extract_dXS_dA(
-    xs: jitr.xs.elastic.ElasticXS, ws: jitr.xs.elastic.DifferentialWorkspace
-) -> np.ndarray:
-    """Extracts dXS/dA in b/Sr"""
-    return xs.dsdo / 1000
-
-
-def extract_dXS_dRuth(
-    xs: jitr.xs.elastic.ElasticXS, ws: jitr.xs.elastic.DifferentialWorkspace
-) -> np.ndarray:
-    """Extracts dXS/dRuth"""
-    return xs.dsdo / ws.rutherford
-
-
-def extract_Ay(
-    xs: jitr.xs.elastic.ElasticXS, ws: jitr.xs.elastic.DifferentialWorkspace
-) -> np.ndarray:
-    """Extracts Ay"""
-    return xs.Ay

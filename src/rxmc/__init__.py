@@ -5,6 +5,7 @@ from . import params
 from . import mcmc
 from . import observation
 
+from . import reaction_observation
 from . import elastic_diffxs_constraint
 from . import elastic_diffxs_model
 

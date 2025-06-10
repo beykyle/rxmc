@@ -3,34 +3,42 @@ import numpy as np
 from .params import Parameter
 from .constraint import Constraint
 
-# TODO implement a version in which each constraint has its own
-# likelihood model and parameters
-
 
 class Corpus:
     """
-    A collection of constraints that can be used to fit a common
+    A collection of independent `Constraint`s that can be used to fit a common
     physical model.
+
+    Each `Constraint` represents a set of `Observation`s and a `LikelihoodModel`.
+    Each `Constraint` must share the same `PhysicalModel` parameters, but may
+    have different `LikelihoodModel` parameters.
+
+    This class is designed to aggregate multiple constraints, so that, for a
+    given set of physical model parameters (and, optionally, likelihood model
+    parameters), a log likelihood can be computed.
+
+    Optionally, weights can be assigned to each constraint, which will
+    scale the contribution of each constraint to the total log likelihood.
     """
 
     def __init__(
         self,
         constraints: list[Constraint],
         weights: np.ndarray = None,
+        likelihood_params: list[Parameter] = None,
     ):
         self.constraints = constraints
         for constraint in self.constraints:
             self.model_params = self.constraints[0].model.params
-            self.likelihood_params = self.constraints[0].likelihood_model.params
+            self.likelihood_params = []
+            self.n_likelihood_params = 0
         for constraint in constraints:
             if constraint.model.params != self.model_params:
                 raise ValueError(
                     "All constraints must use the same physical model parameters"
                 )
-            if constraint.likelihood_model.params != self.likelihood_params:
-                raise ValueError(
-                    "All constraints must use the same likelihood model parameters"
-                )
+            self.likelihood_params.append(constraint.likelihood.params)
+            self.n_likelihood_params += constraint.n_likelihood_params
 
         self.n_params = len(self.model_params) + len(self.likelihood_params)
         self.n_data_pts = sum(c.observation.n_data_pts for c in constraints)
@@ -51,62 +59,7 @@ class Corpus:
         if not np.isclose(np.sum(weights), len(self.constraints)):
             raise ValueError("weights must sum to 1")
 
-    def model(self, model_params):
-        """
-        Compute the model output for each constraint, given model_params
-
-
-        Parameters
-        ----------
-        model_params : tuple
-            The parameters of the physical model.
-
-        Returns
-        -------
-        list
-        """
-        return np.hstack([c.model(*model_params) for c in self.constraints])
-
-    def residual(self, model_params):
-        """
-        Compute the residuals for the given parameters.
-
-        Parameters
-        ----------
-        model_params : tuple
-            The parameters of the physical model.
-
-        Returns
-        -------
-        np.ndarray
-            Residuals for the given parameters.
-        """
-        return np.hstack(
-            [c.observation.residual(c.model(*model_params)) for c in self.constraints]
-        )
-
-    def chi2(self, model_params, likelihood_params=None):
-        """
-        Compute the weighted chi-squared value for the given parameters.
-
-        Parameters
-        ----------
-        model_params : tuple
-            The parameters of the physical model.
-        likelihood_params : tuple, optional
-            Additional parameters for the likelihood model, if any.
-
-        Returns
-        -------
-        float
-            Chi-squared value for the given parameters.
-        """
-        return sum(
-            c.chi2(model_params, likelihood_params) * w
-            for w, c in zip(self.weights, self.constraints)
-        )
-
-    def logpdf(self, model_params, likelihood_params=None):
+    def logpdf(self, model_params, likelihood_params: list[tuple] = None):
         """
         Returns the log-pdf that the Model, given params, reproduces y
 
@@ -114,43 +67,22 @@ class Corpus:
         ----------
         model_params : tuple
             The parameters of the physical model.
-        likelihood_params : tuple, optional
-            Additional parameters for the likelihood model, if any.
+        likelihood_params : list[tuple], optional
+            A list of tuples containing additional parameters
+            for the likelihood model for each constraint, in the order
+            of self.constraints. Defaults to None, meaning none of the
+            constraints have additional likelihood parameters. In the case
+            that some constraints have additional likelihood parameters,
+            and some don't, the list must have the same length as
+            self.constraints, with entries containing tupples corresponding
+            to constraints taking in parameters and None for those that do not.
 
         Returns
         -------
         float
         """
+        likelihood_params = likelihood_params or [None] * len(self.constraints)
         return sum(
-            c.logpdf(model_params, likelihood_params) * w
-            for w, c in zip(self.weights, self.constraints)
-        )
-
-    def num_pts_within_interval(self, ylow: np.ndarray, yhigh: np.ndarray, xlim=None):
-        """
-        Compute the empirical coverage within the given interval by summing
-        the number of points within the interval.
-
-        Parameters
-        ----------
-        ylow : np.ndarray
-            Lower bounds of the interval.
-        yhigh : np.ndarray
-            Upper bounds of the interval.
-        xlim : tuple, optional
-            If provided, only consider points where self.x is within
-            this range. Defaults to None, meaning all points are
-            considered.
-
-        Returns
-        -------
-        float
-            Empirical coverage within the given interval.
-        """
-        return (
-            sum(
-                c.num_pts_within_interval(ylow, yhigh, xlim=xlim)
-                for c in self.constraints
-            )
-            / self.n_data_pts
+            c.logpdf(model_params, lp) * w
+            for w, c, lp in zip(self.weights, self.constraints, likelihood_params)
         )

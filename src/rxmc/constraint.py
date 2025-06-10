@@ -1,3 +1,5 @@
+import numpy as np
+
 from .physical_model import PhysicalModel
 from .likelihood_model import LikelihoodModel
 from .observation import Observation
@@ -11,7 +13,7 @@ class Constraint:
     observation given the model predictions.
 
     This class is meant to be a box that takes in model params and spits out
-    the log likelihood.
+    the log likelihood or other staisticsT
     """
 
     def __init__(
@@ -22,7 +24,6 @@ class Constraint:
     ):
         """
         Initialize the Constraint with some Observations, a PhysicalModel, and
-        LikelihoodModel.
 
         Parameters:
         ----------
@@ -34,8 +35,10 @@ class Constraint:
             The model that defines the likelihood of the observation given the
             physical model prediction.
         """
+        self.observations = observations
         self.physical_model = physical_model
         self.likelihood = likelihood_model
+        self.n_data_pts = sum(obs.n_data_pts for obs in self.observations)
 
     def model(self, model_params):
         """
@@ -127,3 +130,53 @@ class Constraint:
             logpdf += self.likelihood.logpdf(obs, y_pred, *likelihood_params)
 
         return logpdf, ym
+
+    def num_pts_within_interval(
+        self, ylow: list[np.ndarray], yhigh: list[np.ndarray], xlim=None
+    ):
+        """
+        Count the number of points within the specified interval for each
+        observation.
+
+        Parameters:
+        ----------
+        ylow : list[np.ndarray]
+            Lower bounds of the intervals for each observation.
+        yhigh : list[np.ndarray]
+            Upper bounds of the intervals for each observation.
+        xlim : tuple, optional
+            Limits for the x-axis, if applicable.
+
+        Returns:
+        -------
+        int
+            The total number of points within the specified intervals across
+            all observations.
+        """
+        return sum(
+            obs.num_pts_within_interval(ylow[i], yhigh[i], xlim)
+            for i, obs in enumerate(self.observations)
+        )
+
+    def empirical_coverage(
+        self, ylow: list[np.ndarray], yhigh: list[np.ndarray], xlim=None
+    ):
+        """
+        Calculate the empirical coverage of the model predictions within the
+        specified intervals for each observation.
+
+        Parameters:
+        ----------
+        ylow : list[np.ndarray]
+            Lower bounds of the intervals for each observation.
+        yhigh : list[np.ndarray]
+            Upper bounds of the intervals for each observation.
+        xlim : tuple, optional
+            Limits for the x-axis, if applicable.
+
+        Returns:
+        -------
+        float
+            The empirical coverage across all observations.
+        """
+        return self.num_pts_within_interval(ylow, yhigh, xlim) / self.n_data_pts
