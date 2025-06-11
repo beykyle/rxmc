@@ -283,12 +283,16 @@ class TestUnknownNormalization(unittest.TestCase):
         )
 
         def test_covariance(self):
-            cov = self.likelihood.covariance(self.observation, self.ym, self.normalization_err)
+            cov = self.likelihood.covariance(
+                self.observation, self.ym, self.normalization_err
+            )
             self.assertequal(cov.shape, (3, 3))
             np.testing.assert_array_almost_equal(cov, self.expected_covariance)
 
         def test_chi2(self):
-            chi2_value = self.likelihood.chi2(self.observation, self.ym, self.normalization_err)
+            chi2_value = self.likelihood.chi2(
+                self.observation, self.ym, self.normalization_err
+            )
             self.assertalmostequal(chi2_value, self.expected_chi2)
 
         def test_logpdf(self):
