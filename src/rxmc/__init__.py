@@ -6,7 +6,6 @@ from . import mcmc
 from . import observation
 
 from . import elastic_diffxs_observation
-from . import elastic_diffxs_constraint
 from . import elastic_diffxs_model
 
 from .__version__ import __version__
