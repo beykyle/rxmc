@@ -21,7 +21,7 @@ class ElasticDifferentialXSObservation(Observation):
     `y_sys_err_bias` corresponds to the COMMON `ERR-SYS` value in the
     EXFOR entry).
 
-    The order of `reactions` and `Elab` must match the order of `measurements`.
+    The order of `reactions` must match the order of `measurements`.
 
     Also included in `ReactionObservation` are the precomputed workspaces
     for the differential cross section calculations, which are set up
@@ -34,7 +34,6 @@ class ElasticDifferentialXSObservation(Observation):
         self,
         measurements: list[Distribution],
         reactions: list[jitr.reactions.Reaction],
-        Elab: list[float],
         quantity: str,
         y_sys_err_bias: float = 0,
         y_sys_err_offset: float = 0,
@@ -50,8 +49,6 @@ class ElasticDifferentialXSObservation(Observation):
             List of measurements, each containing x, y, and associated errors.
         reactions : list[jitr.reactions.Reaction]
             List of reactions associated with the measurements.
-        Elab : list[float]
-            Laboratory energies for the reactions.
         quantity: str
             The type of quantity to be calculated (e.g., "dXS/dA",
             "dXS/dRuth", "Ay").
@@ -74,7 +71,6 @@ class ElasticDifferentialXSObservation(Observation):
         self.measurements = measurements
         self.n_measurements = len(measurements)
         self.reactions = reactions
-        self.Elab = Elab
         self.quantity = quantity
         self.lmax = lmax
         self.angles_rad_vis = angles_rad_vis
@@ -83,10 +79,6 @@ class ElasticDifferentialXSObservation(Observation):
 
         if len(reactions) != self.n_measurements:
             raise ValueError("Number of reactions must match number of measurements.")
-        if len(Elab) != self.n_measurements:
-            raise ValueError(
-                "Number of laboratory energies must match number of measurements."
-            )
 
         self.visualization_workspaces = []
         self.constraint_workspaces = []
@@ -95,7 +87,7 @@ class ElasticDifferentialXSObservation(Observation):
             check_angle_grid(angles_rad_constraint, f"measurements[{i}].x")
             constraint_ws, vis_ws, kinematics = set_up_solver(
                 reaction=self.reactions[i],
-                Elab=self.Elab[i],
+                Elab=m.Einc,
                 angle_rad_constraint=angles_rad_constraint,
                 angle_rad_vis=self.angles_rad_vis,
                 lmax=self.lmax,
