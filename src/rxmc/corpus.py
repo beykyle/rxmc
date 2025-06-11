@@ -41,7 +41,9 @@ class Corpus:
             self.n_likelihood_params += constraint.likelihood.n_params
 
         self.n_params = len(self.model_params) + len(self.likelihood_params)
-        self.n_data_pts = sum( sum(obs.n_data_pts for obs in c.observations) for c in constraints)
+        self.n_data_pts = sum(
+            sum(obs.n_data_pts for obs in c.observations) for c in constraints
+        )
         self.n_dof = self.n_data_pts - self.n_params
         if self.n_dof < 0:
             raise ValueError(

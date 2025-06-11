@@ -65,6 +65,11 @@ def run_chain(
     batch_size: int = None,
     rank: int = 0,
     proposal_cov_scale_factor: float = 100,
+    starting_point=None,
+    proposal_distribution=None,
+    likelihood_prior=None,
+    likelihood_starting_point=None,
+    likelihood_proposal_distribution=None,
     verbose: bool = True,
     output: Path = None,
 ):
@@ -82,6 +87,15 @@ def run_chain(
         rank (int): MPI rank for the current process.
         proposal_cov_scale_factor (float): Scale factor for the proposal
             covariance.
+        starting_point (numpy.ndarray, optional): Initial point for the chain.
+        proposal_distribution (callable, optional): Custom proposal distribution
+            function that takes a point and returns a new proposed point.
+        likelihood_prior (object, optional): Prior distribution for the likelihood.
+        likelihood_starting_point (numpy.ndarray, optional): Initial point for
+            the likelihood chain.
+        likelihood_proposal_distribution (callable, optional): Custom proposal
+            distribution for the likelihood that takes a point and returns a new
+            proposed point.
         verbose (bool): Flag to print extra logging information.
         output (Path, optional): Output directory for saving chain batches.
 
@@ -129,20 +143,69 @@ def run_chain(
     prior = prior
     corpus = corpus
 
-    def log_likelihood(x):
-        return prior.logpdf(x) + corpus.logpdf(x)
+    gibbs_sampling_on = likelihood_prior is not None
 
     # proposal distribution
-    proposal_cov = prior.cov / proposal_cov_scale_factor
-    proposal_mean = np.zeros_like(prior.mean)
+    if proposal_distribution is None:
 
-    def proposal(x):
-        return x + stats.multivariate_normal.rvs(
-            mean=proposal_mean, cov=proposal_cov, random_state=rng
-        )
+        def proposal(x):
+            return x + stats.multivariate_normal.rvs(
+                mean=np.zeros_like(prior.mean),
+                cov=prior.cov / proposal_cov_scale_factor,
+                random_state=rng,
+            )
 
-    # starting location
+    else:
+        proposal = proposal_distribution
+
+    if likelihood_proposal_distribution is None and likelihood_prior is not None:
+
+        def likelihood_proposal(y):
+            return y + stats.multivariate_normal.rvs(
+                mean=np.zeros_like(likelihood_prior.mean),
+                cov=likelihood_prior.cov / proposal_cov_scale_factor,
+                random_state=rng,
+            )
+
+    elif likelihood_proposal_distribution is not None:
+        if not hasattr(likelihood_proposal_distribution, "rvs"):
+            raise ValueError(
+                "likelihood_proposal_distribution must be a "
+                "scipy.stats distribution object with a .rvs() method."
+            )
+
+    # starting location for model params
     x0 = proposal(prior.mean)
+    if starting_point is not None:
+        if isinstance(starting_point, np.ndarray):
+            x0 = starting_point
+        elif isinstance(starting_point, (list, tuple)):
+            x0 = np.array(starting_point)
+        else:
+            raise ValueError("starting_point must be an array-like object.")
+
+    # starting location for likelihood params
+    y0 = ()
+    if likelihood_starting_point is not None:
+        if isinstance(likelihood_starting_point, np.ndarray):
+            y0 = likelihood_starting_point
+        elif isinstance(likelihood_starting_point, (list, tuple)):
+            y0 = np.array(likelihood_starting_point)
+        else:
+            raise ValueError("likelihood_starting_point must be an array-like object.")
+    elif likelihood_proposal_distribution is not None and likelihood_prior is not None:
+        y0 = likelihood_proposal_distribution(likelihood_prior.mean)
+    elif likelihood_prior is not None:
+        y0 = likelihood_prior.mean
+
+    if gibbs_sampling_on:
+        pass
+        # TODO define two log_likelihood functions, one for the
+        # model and one for the likelihood
+    else:
+
+        def log_likelihood(x):
+            return corpus.logpdf(x) + prior.logpdf(x)
 
     # run burn-in
     for i, steps_in_batch in enumerate(burn_batches):
@@ -153,6 +216,7 @@ def run_chain(
             proposal,
             rng=rng,
         )
+        # TODO if gibbs_sampling_on, update y0 here
         if verbose:
             print(
                 f"Rank: {rank}. Burn-in batch {i+1}/{len(burn_batches)}"

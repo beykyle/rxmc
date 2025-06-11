@@ -15,7 +15,6 @@ class LikelihoodModel:
         self.params = None
         self.n_params = 0
 
-
     def residual(self, observation: Observation, ym: np.ndarray):
         """
         Returns the residual between the model prediction ym and
@@ -212,6 +211,7 @@ class LikelihoodWithSystematicError(LikelihoodModel):
             point, then this should be set to 0.01. Default is 0.0.
         """
         self.fractional_uncorrelated_error = fractional_uncorrelated_error
+        super().__init__()
 
     def covariance(self, observation: Observation, ym: np.ndarray):
         """
