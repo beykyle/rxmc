@@ -8,7 +8,7 @@ from rxmc.likelihood_model import (
     ParametricLikelihoodModel,
     UnknownNoiseErrorModel,
     UnknownNoiseFractionErrorModel,
-    UnknownBiasErrorModel,
+    UnknownNormalizationErrorModel,
     mahalanobis_distance_cholesky,
     log_likelihood,
 )
@@ -120,7 +120,7 @@ class TestLikelihoodWithSystematicError(unittest.TestCase):
             x=np.array([0.0, 1.0, 2.0]),
             y=np.array([10.0, 15.0, 20.0]),
             y_stat_err=np.array([0.1, 0.1, 0.1]),
-            y_sys_err_bias=0.04,
+            y_sys_err_normalization=0.04,
             y_sys_err_offset=0.2,
         )
         self.ym = self.observation.y + np.array([1.0, -1.0, 0.0])
@@ -129,7 +129,7 @@ class TestLikelihoodWithSystematicError(unittest.TestCase):
         self.expected_covariance = (
             np.diag(self.observation.y_stat_err**2)
             + self.likelihood.fractional_uncorrelated_error**2 * np.diag(self.ym**2)
-            + self.observation.y_sys_err_bias**2 * np.outer(self.ym, self.ym)
+            + self.observation.y_sys_err_normalization**2 * np.outer(self.ym, self.ym)
             + self.observation.y_sys_err_offset**2 * np.ones((3, 3))
         )
         self.expected_chi2 = (
@@ -166,7 +166,7 @@ class TestUnknownNoiseFrac(unittest.TestCase):
             x=np.array([0.0, 1.0, 2.0]),
             y=np.array([10.0, 15.0, 20.0]),
             y_stat_err=np.array([0.1, 0.1, 0.1]),
-            y_sys_err_bias=0.04,
+            y_sys_err_normalization=0.04,
             y_sys_err_offset=0.2,
         )
         self.ym = self.observation.y + np.array([1.0, -1.0, 0.0])
@@ -176,7 +176,7 @@ class TestUnknownNoiseFrac(unittest.TestCase):
         self.expected_covariance = (
             np.diag(self.noise_fraction * 2 * self.observation.y**2)
             + self.likelihood.fractional_uncorrelated_error**2 * np.diag(self.ym**2)
-            + self.observation.y_sys_err_bias**2 * np.outer(self.ym, self.ym)
+            + self.observation.y_sys_err_normalization**2 * np.outer(self.ym, self.ym)
             + self.observation.y_sys_err_offset**2 * np.ones((3, 3))
         )
         self.expected_chi2 = self.delta.t @ self.expected_covariance @ self.delta
@@ -217,7 +217,7 @@ class TestUnknownNoise(unittest.TestCase):
             x=np.array([0.0, 1.0, 2.0]),
             y=np.array([10.0, 15.0, 20.0]),
             y_stat_err=np.array([0.1, 0.1, 0.1]),
-            y_sys_err_bias=0.04,
+            y_sys_err_normalization=0.04,
             y_sys_err_offset=0.2,
         )
         self.ym = self.observation.y + np.array([1.0, -1.0, 0.0])
@@ -227,7 +227,7 @@ class TestUnknownNoise(unittest.TestCase):
         self.expected_covariance = (
             np.diag(self.noise**2)
             + self.likelihood.fractional_uncorrelated_error**2 * np.diag(self.ym**2)
-            + self.observation.y_sys_err_bias**2 * np.outer(self.ym, self.ym)
+            + self.observation.y_sys_err_normalization**2 * np.outer(self.ym, self.ym)
             + self.observation.y_sys_err_offset**2 * np.ones((3, 3))
         )
         self.expected_chi2 = self.delta.t @ self.expected_covariance @ self.delta
@@ -251,7 +251,7 @@ class TestUnknownNoise(unittest.TestCase):
             self.assertalmostequal(logpdf_value, self.expected_logpdf)
 
 
-class TestUnknownBias(unittest.TestCase):
+class TestUnknownNormalization(unittest.TestCase):
 
     def setup(self):
         self.param = Parameter(
@@ -262,17 +262,17 @@ class TestUnknownBias(unittest.TestCase):
             x=np.array([0.0, 1.0, 2.0]),
             y=np.array([10.0, 15.0, 20.0]),
             y_stat_err=np.array([0.1, 0.1, 0.1]),
-            y_sys_err_bias=0.04,
+            y_sys_err_normalization=0.04,
             y_sys_err_offset=0.2,
         )
         self.ym = self.observation.y + np.array([1.0, -1.0, 0.0])
         self.delta = self.observation.y - self.ym
-        self.likelihood = UnknownBiasErrorModel(self.likelihood_params, 0.01)
-        self.bias_err = 0.312
+        self.likelihood = UnknownNormalizationErrorModel(self.likelihood_params, 0.01)
+        self.normalization_err = 0.312
         self.expected_covariance = (
             np.diag(self.observation.y_stat_err**2)
             + self.likelihood.fractional_uncorrelated_error**2 * np.diag(self.ym**2)
-            + self.bias_err**2 * np.outer(self.ym, self.ym)
+            + self.normalization_err**2 * np.outer(self.ym, self.ym)
             + self.observation.y_sys_err_offset**2 * np.ones((3, 3))
         )
         self.expected_chi2 = self.delta.t @ self.expected_covariance @ self.delta
@@ -283,17 +283,17 @@ class TestUnknownBias(unittest.TestCase):
         )
 
         def test_covariance(self):
-            cov = self.likelihood.covariance(self.observation, self.ym, self.bias_err)
+            cov = self.likelihood.covariance(self.observation, self.ym, self.normalization_err)
             self.assertequal(cov.shape, (3, 3))
             np.testing.assert_array_almost_equal(cov, self.expected_covariance)
 
         def test_chi2(self):
-            chi2_value = self.likelihood.chi2(self.observation, self.ym, self.bias_err)
+            chi2_value = self.likelihood.chi2(self.observation, self.ym, self.normalization_err)
             self.assertalmostequal(chi2_value, self.expected_chi2)
 
         def test_logpdf(self):
             logpdf_value = self.likelihood.logpdf(
-                self.observation, self.ym, self.bias_err
+                self.observation, self.ym, self.normalization_err
             )
             self.assertalmostequal(logpdf_value, self.expected_logpdf)
 
