@@ -51,7 +51,7 @@ class Constraint:
         """
         return [self.physical_model(obs, *model_params) for obs in self.observations]
 
-    def logpdf(self, model_params, likelihood_params=None):
+    def logpdf(self, model_params, likelihood_params=()):
         """
         Calculate the log probability density function (logpdf) that the
         model predictions, given the parameters, reproduce the observed data.
@@ -77,7 +77,7 @@ class Constraint:
             for obs in self.observations
         )
 
-    def chi2(self, model_params, likelihood_params=None):
+    def chi2(self, model_params, likelihood_params=()):
         """
         Calculate the chi-squared statistic (or Mahalanobis distance) between
         the model prediction, given the parameters, and the observed data.
@@ -101,7 +101,7 @@ class Constraint:
             for obs in self.observations
         )
 
-    def logpdf_and_ym(self, model_params, likelihood_params=None):
+    def logpdf_and_ym(self, model_params, likelihood_params=()):
         """
         Calculate the log probability density function (logpdf) that the model
         predictions, given the parameters, reproduce the observed data, and

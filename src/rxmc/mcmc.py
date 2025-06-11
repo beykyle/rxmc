@@ -2,7 +2,7 @@ from pathlib import Path
 from scipy import stats
 import numpy as np
 
-from rxmc import params, corpus
+from rxmc import corpus
 
 
 def metropolis_hastings(
@@ -130,7 +130,7 @@ def run_chain(
     corpus = corpus
 
     def log_likelihood(x):
-        return prior.logpdf(x) + corpus.logpdf(params.to_ordered_dict(x, corpus.params))
+        return prior.logpdf(x) + corpus.logpdf(x)
 
     # proposal distribution
     proposal_cov = prior.cov / proposal_cov_scale_factor

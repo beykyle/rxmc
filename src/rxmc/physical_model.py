@@ -29,7 +29,7 @@ class PhysicalModel:
         raise NotImplementedError("Subclasses must implement the evaluate method.")
 
     def __call__(self, observation: Observation, *params) -> np.ndarray:
-        return self.evaluate(observation, params)
+        return self.evaluate(observation, *params)
 
 
 class Polynomial(PhysicalModel):

@@ -29,19 +29,19 @@ class Corpus:
     ):
         self.constraints = constraints
         for constraint in self.constraints:
-            self.model_params = self.constraints[0].model.params
+            self.model_params = self.constraints[0].physical_model.params
             self.likelihood_params = []
             self.n_likelihood_params = 0
         for constraint in constraints:
-            if constraint.model.params != self.model_params:
+            if constraint.physical_model.params != self.model_params:
                 raise ValueError(
                     "All constraints must use the same physical model parameters"
                 )
             self.likelihood_params.append(constraint.likelihood.params)
-            self.n_likelihood_params += constraint.n_likelihood_params
+            self.n_likelihood_params += constraint.likelihood.n_params
 
         self.n_params = len(self.model_params) + len(self.likelihood_params)
-        self.n_data_pts = sum(c.observation.n_data_pts for c in constraints)
+        self.n_data_pts = sum( sum(obs.n_data_pts for obs in c.observations) for c in constraints)
         self.n_dof = self.n_data_pts - self.n_params
         if self.n_dof < 0:
             raise ValueError(
@@ -55,9 +55,10 @@ class Corpus:
             raise ValueError(
                 "weights must be a 1D array with the same shape as constraints"
             )
-        self.weights = weights * len(self.constraints)
-        if not np.isclose(np.sum(weights), len(self.constraints)):
-            raise ValueError("weights must sum to 1")
+        else:
+            if not np.isclose(np.sum(weights), len(self.constraints)):
+                raise ValueError("weights must sum to number of constraints")
+        self.weights = weights
 
     def logpdf(self, model_params, likelihood_params: list[tuple] = None):
         """
@@ -75,13 +76,14 @@ class Corpus:
             that some constraints have additional likelihood parameters,
             and some don't, the list must have the same length as
             self.constraints, with entries containing tupples corresponding
-            to constraints taking in parameters and None for those that do not.
+            to constraints taking in parameters and () (empty tuple) for
+            those that do not.
 
         Returns
         -------
         float
         """
-        likelihood_params = likelihood_params or [None] * len(self.constraints)
+        likelihood_params = likelihood_params or [()] * len(self.constraints)
         return sum(
             c.logpdf(model_params, lp) * w
             for w, c, lp in zip(self.weights, self.constraints, likelihood_params)

@@ -13,7 +13,8 @@ class LikelihoodModel:
 
     def __init__(self):
         self.params = None
-        pass
+        self.n_params = 0
+
 
     def residual(self, observation: Observation, ym: np.ndarray):
         """
@@ -107,7 +108,7 @@ class FixedCovarianceLikelihood(LikelihoodModel):
     """
 
     def __init__(self):
-        pass
+        super().__init__()
 
     def covariance(self, observation: FixedCovarianceObservation, ym: np.ndarray):
         """
