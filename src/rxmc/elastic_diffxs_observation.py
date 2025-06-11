@@ -33,7 +33,7 @@ class ElasticDifferentialXSObservation(Observation):
     def __init__(
         self,
         measurements: list[Distribution],
-        reactions: list[jitr.reaction.Reaction],
+        reactions: list[jitr.reactions.Reaction],
         Elab: list[float],
         quantity: str,
         y_sys_err_bias: float = 0,
@@ -48,7 +48,7 @@ class ElasticDifferentialXSObservation(Observation):
         ----------
         measurements : list[Distribution]
             List of measurements, each containing x, y, and associated errors.
-        reactions : list[jitr.reaction.Reaction]
+        reactions : list[jitr.reactions.Reaction]
             List of reactions associated with the measurements.
         Elab : list[float]
             Laboratory energies for the reactions.

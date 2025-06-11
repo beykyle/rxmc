@@ -4,7 +4,7 @@ import numpy as np
 import jitr
 
 from .physical_model import PhysicalModel
-from .elastic_diff_xs_observation import ElasticDifferentialXSObservation
+from .elastic_diffxs_observation import ElasticDifferentialXSObservation
 
 
 class ElasticDifferentialXSModel(PhysicalModel):
