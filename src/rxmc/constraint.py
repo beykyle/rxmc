@@ -156,6 +156,23 @@ class Constraint:
 
         return logpdf, ym
 
+    def predict(self, *model_params):
+        """
+        Generate predictions for each observation using the physical model
+        with the provided parameters.
+
+        Parameters:
+        ----------
+        *model_params : tuple
+            The parameters of the physical model.
+
+        Returns:
+        -------
+        list[np.ndarray]
+            The predicted values for each observation.
+        """
+        return [self.physical_model(obs, *model_params) for obs in self.observations]
+
     def num_pts_within_interval(
         self, ylow: list[np.ndarray], yhigh: list[np.ndarray], xlim=None
     ):

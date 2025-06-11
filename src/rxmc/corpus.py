@@ -132,3 +132,19 @@ class Corpus:
                 self.weights, self.constraints, likelihood_params, ym
             )
         )
+
+    def predict(self, *model_params):
+        """
+        Returns the model predictions for the given model parameters.
+
+        Parameters
+        ----------
+        *model_params : tuple
+            The parameters of the physical model.
+
+        Returns
+        -------
+        list
+            A list of model predictions for each constraint.
+        """
+        return [c.predict(*model_params) for c in self.constraints]
