@@ -15,7 +15,6 @@ class LikelihoodModel:
         self.params = None
         self.n_params = 0
 
-
     def residual(self, observation: Observation, ym: np.ndarray):
         """
         Returns the residual between the model prediction ym and

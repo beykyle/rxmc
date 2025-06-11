@@ -1,3 +1,4 @@
+from typing import Optional, Union
 import numpy as np
 
 
@@ -11,34 +12,74 @@ class Observation:
         The independent variable data.
     y : np.ndarray
         The dependent variable data.
-    y_stat_err : np.ndarray, optional
-        The statistical error associated with y. Defaults to an array of
-        zeros with the same shape as y.
-    y_sys_err_bias : float, optional
-        The systematic error bias associated with y. Defaults to 0.0.
-    y_sys_err_offset : float, optional
-        The systematic error offset associated with y. Defaults to 0.0.
+    y_stat_err : np.ndarray
+        The statistical errors associated with the dependent variable data.
+    y_sys_err_offset : np.ndarray
+        The systematic errors associated with an offset to the dependent
+        variable data.
+    y_sys_err_normalization : np.ndarray
+        The systematic errors associated with a normalization of the
+        dependent variable data.
+    n_data_pts : int
+        The number of data points in the observation.
+    stat_cov : np.ndarray
+        The statistical covariance matrix, which is diagonal with the
+        squares of the statistical errors.
+    sys_cov_offset : np.ndarray
+        The systematic covariance matrix for the offset errors, which is
+        the outer product of the systematic error offsets.
+    fractional_sys_cov_normalization : np.ndarray
+        The fractional systematic covariance matrix for the normalization
+        errors. When multiplied element-wise with the outer product of the
+        true y-values, it gives the systematic covariance matrix for the
+        normalization errors.
     """
 
     def __init__(
         self,
         x: np.ndarray,
         y: np.ndarray,
-        y_stat_err=None,
-        y_sys_err_bias=0.0,
-        y_sys_err_offset=0.0,
+        y_stat_err: Optional[np.ndarray] = None,
+        y_sys_err_offset: Optional[Union[np.ndarray, float, int]] = None,
+        y_sys_err_normalization: Optional[np.ndarray] = None,
     ):
+        """
+        Initialize the DataHandler with data points and their statistical and systematic errors.
+
+        Parameters
+        ----------
+        x : np.ndarray
+            The x data points.
+        y : np.ndarray
+            The y data points.
+        y_stat_err : Optional[np.ndarray], optional
+            The statistical errors in y, defaults to an array of zeros with the same shape as y if not provided.
+        y_sys_err_offset : Optional[Union[np.ndarray, float, int]], optional
+            The systematic offset errors in y. Can be a scalar, array-like, or None.
+            Defaults to scalar 0 if not provided.
+        y_sys_err_normalization : Optional[np.ndarray], optional
+            The systematic normalization errors in y, not applied in current logic, can be handled similarly.
+        """
         self.n_data_pts = x.shape[0]
         self.x = x
         self.y = y
         if self.x.shape != self.y.shape:
             raise ValueError(
-                "x and y mustr have the same shape, they have shapes "
-                f" {x.shape} and {y.shape}"
+                "x and y must have the same shape, they have shapes "
+                f"{x.shape} and {y.shape}"
             )
-        self.y_stat_err = y_stat_err if y_stat_err is not None else np.zeros_like(y)
-        self.y_sys_err_bias = y_sys_err_bias
-        self.y_sys_err_offset = y_sys_err_offset
+
+        self.y_sys_err_normalization = ensure_array_like(y_sys_err_normalization,
+                                                         reference_shape=self.y.shape)
+        self.y_stat_err = ensure_array_like(y_stat_err, reference_shape=self.y.shape)
+        self.y_sys_err_offset = ensure_array_like(y_sys_err_offset,
+                                                  reference_shape=self.y.shape)
+        self.stat_cov = np.diag(self.y_stat_err**2)
+        self.sys_cov_offset = np.outer(self.y_sys_err_offset, self.y_sys_err_offset)
+        self.fractional_sys_cov_normalization = (
+            np.ones_like(self.systematic_covariance_offset)
+            * self.y_sys_err_normalization**2
+        )
 
     def residual(self, ym: np.ndarray):
         assert ym.shape == self.y.shape
@@ -80,6 +121,59 @@ class Observation:
                     self.observation.y[mask] < yhigh[mask],
                 )
             )
+        )
+
+
+class CombinedObservation(Observation):
+    """
+    A class to represent a combined observation, which is a collection of
+    multiple observations.q
+
+    Useful in the case that multiple observations are made that share
+    a global systematic error in offset or normalization, but also
+    have their own individual systematic errors.
+
+    Attributes
+    ----------
+    observations : list[Observation]
+        A list of Observation objects that are combined into this
+        CombinedObservation.
+    """
+
+    def __init__(
+        self,
+        observations: list[Observation],
+        global_sys_err_offset: float = 0.0,
+        global_sys_err_normalization: float = 0.0,
+    ):
+        """
+        Initializes the CombinedObservation with a list of observations.
+
+        Parameters
+        ----------
+        observations : list[Observation]
+            A list of Observation objects to be combined.
+        global_sys_err_offset : float, optional
+            A global systematic error offset applied to all observations.
+            Defaults to 0.0.
+        global_sys_err_normalization : float, optional
+            A global systematic error normalization applied to all observations.
+            Defaults to 0.0.
+        """
+        self.observations = observations
+        x = np.concatenate([obs.x for obs in observations])
+        y = np.concatenate([obs.y for obs in observations])
+        y_stat_err = np.concatenate([obs.y_stat_err for obs in observations])
+        y_sys_err_offset = np.concatenate(
+            [obs.y_sys_err_offset for obs in observations]
+        )  + global_sys_err_offset
+
+        super().__init__(
+            x,
+            y,
+            y_stat_err=y_stat_err,
+            y_sys_err_offset=global_sys_err_offset,
+            y_sys_err_normalization=global_sys_err_normalization,
         )
 
 
@@ -136,3 +230,35 @@ class FixedCovarianceObservation(Observation):
         sign, self.log_det = np.linalg.slogdet(self.covariance)
         if sign != +1:
             raise ValueError("Invalid covariance matrix! Must be positive definite.")
+
+
+def ensure_array_like(target: Optional[Union[np.ndarray, float, int]], reference_shape: tuple) -> np.ndarray:
+    """
+    Ensure that the target variable is an array-like structure matching the shape of a reference shape.
+
+    Parameters
+    ----------
+    target : Optional[Union[np.ndarray, float, int]]
+        Variable that could be scalar, array-like, or None.
+    reference_shape : tuple
+        The shape that the output array should match.
+
+    Returns
+    -------
+    np.ndarray
+        An array matching the reference shape with the content of target.
+    """
+    if target is None:
+        # Default to a scalar 0
+        return np.zeros(reference_shape)
+    elif np.isscalar(target):
+        # If it is a scalar, broadcast to the reference shape
+        return np.full(reference_shape, target)
+    else:
+        # Assume numpy will broadcast if input is an array-like
+        target_array = np.array(target)
+        if target_array.shape != reference_shape:
+            raise ValueError(
+                f"Input array must have shape {reference_shape}, but has shape {target_array.shape}."
+            )
+        return target_array
