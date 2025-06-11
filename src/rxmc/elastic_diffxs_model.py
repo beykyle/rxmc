@@ -1,8 +1,10 @@
+from typing import Callable
 import numpy as np
 
 import jitr
 
 from .physical_model import PhysicalModel
+from .elastic_diff_xs_observation import ElasticDifferentialXSObservation
 
 
 class ElasticDifferentialXSModel(PhysicalModel):
@@ -18,38 +20,49 @@ class ElasticDifferentialXSModel(PhysicalModel):
     cross section using the provided interaction parameters.
 
     The model is initialized with two interactions: one for the central
-    potential and one for the spin-orbit interaction. The `calculate_subparams`
-    function is used to extract the parameters needed for each interaction.
+    potential and one for the spin-orbit interaction. The
+    `calculate_central_and_spin_orbit_interaction` function is used to extract
+    the parameters needed for each interaction.
     """
 
     def __init__(
         self,
         quantity: str,
-        interaction_central,
-        interaction_spin_orbit,
-        calculate_subparams,
+        interaction_central: Callable[[float, tuple], complex],
+        interaction_spin_orbit: Callable[[float, tuple], complex],
+        calculate_central_and_spin_orbit_interaction:
+            Callable[[tuple, jitr.xs.elastic.DifferentialWorkspace], tuple],
+        model_name: str = None,
     ):
         """
         Initialize the ElasticDifferentialXSModel with the interactions and
         a function to calculate the subparameters.
         Parameters:
         ----------
-        quantity: str
+        quantity : str
             The type of quantity to be calculated (e.g., "dXS/dA",
             "dXS/dRuth", "Ay").
-        interaction_central: jitr.xs.elastic.Interaction
-            The interaction for the central potential.
-        interaction_spin_orbit: jitr.xs.elastic.Interaction
-            The interaction for the spin-orbit potential.
-        calculate_subparams: callable
-            A function that takes in the model parameters and the
-            DifferentialWorkspace, and returns a tuple of arguments for
-            the central and spin-orbit interactions.
+        interaction_central : Callable
+            Function that returns the central interaction potential for a given
+            energy and parameters.
+        interaction_spin_orbit : Callable
+            Function that returns the spin-orbit interaction potential for a
+            given energy and parameters.
+        calculate_central_and_spin_orbit_interaction : Callable
+            Function that takes the model parameters and a workspace, and
+            returns the parameters needed for the central and spin-orbit
+            interactions. Should return a tuple of size two, the first element
+            being the tuple of parameters taken in by `interaction_central` and
+            the second element being the tuple of parameters taken in by
+            `interaction_spin_orbit`.
+        model_name : str, optional
+            Name of the model, used for identification purposes.
+            Defaults to None.
         """
         self.quantity = quantity
         self.interaction_central = interaction_central
         self.interaction_spin_orbit = interaction_spin_orbit
-        self.calculate_subparams = calculate_subparams
+        self.calculate_central_and_spin_orbit_interaction = calculate_central_and_spin_orbit_interaction
 
         if self.quantity == "dXS/dA":
             self.extractor = extract_dXS_dA
@@ -58,36 +71,9 @@ class ElasticDifferentialXSModel(PhysicalModel):
         elif self.quantity == "Ay":
             self.extractor = extract_Ay
 
-    def xs(
-        self,
-        ws: jitr.xs.elastic.DifferentialWorkspace,
-        *params: tuple,
-    ) -> jitr.xs.elastic.ElasticXS:
-        """
-        Calculate the differential cross section for the given parameters.
-        Parameters:
-        ----------
-        ws : jitr.xs.elastic.DifferentialWorkspace
-            The workspace containing precomputed quantities for the reaction.
-        params : tuple
-            The parameters of the physical model.
-
-        Returns:
-        -------
-        jitr.xs.elastic.ElasticXS
-            The calculated differential cross section.
-        """
-        args_central, args_spin_orbit = self.calculate_subparams(*params, ws)
-        return ws.xs(
-            interaction_central=self.interaction_central,
-            interaction_spin_orbit=self.interaction_spin_orbit,
-            args_central=args_central,
-            args_spin_orbit=args_spin_orbit,
-        )
-
     def evaluate(
         self,
-        ws: jitr.xs.elastic.DifferentialWorkspace,
+        observation: ElasticDifferentialXSObservation,
         *params: tuple,
     ) -> np.ndarray:
         """
@@ -95,43 +81,61 @@ class ElasticDifferentialXSModel(PhysicalModel):
 
         Parameters:
         ----------
-        ws : jitr.xs.elastic.DifferentialWorkspace
-            The workspace containing precomputed quantities for the reaction.
+        observation : ElasticDifferentialXSObservation
+            The observation containing the reaction data and workspace.
         params : tuple
             The parameters of the physical model.
 
         Returns:
         -------
         np.ndarray
-            The evaluated differential cross section (either dXS/dA,
-            dXS/dRuth or Ay depending on self.quantity).
+            The evaluated differential data for each measurements in the
+            observation, concatenated into a single array in the same form and
+            order as `observation.y`.
         """
-        xs = self.xs(ws, *params)
-        return self.extractor(xs, ws)
+        ym = []
+        for ws in observation.constraint_workspaces:
+            xs = ws.xs(
+                self.interaction_central,
+                self.interaction_spin_orbit,
+                *self.calculate_central_and_spin_orbit_interaction(*params, ws),
+            )
+            ym.append(self.extractor(xs, ws))
 
-    def __call__(
+        return np.concatenate(ym, axis=0)
+
+    def visualizable_model_prediction(
         self,
-        ws: jitr.xs.elastic.DifferentialWorkspace,
+        observation: ElasticDifferentialXSObservation,
         *params: tuple,
     ) -> np.ndarray:
         """
-        Call the model to evaluate the differential cross section.
+        Visualize the model at the given parameters.
 
         Parameters:
         ----------
-        ws : jitr.xs.elastic.DifferentialWorkspace
-            The workspace containing precomputed quantities for the reaction.
+        observation : ElasticDifferentialXSObservation
+            The observation containing the reaction data and workspace.
         params : tuple
             The parameters of the physical model.
 
         Returns:
         -------
-        np.ndarray
-            The evaluated differential cross section.
+        list[np.ndarray]
+            A list of arrays, each containing the evaluated differential data
+            for each visualization workspace in the observation.
+            Each array corresponds to a different visualization workspace and
+            contains the same form and order as `observation.y`.
         """
-        # overwrite PhysicalModel's __call__ method because
-        # we use a DifferentialWorkspace instead of an Observation
-        return self.evaluate(ws, *params)
+        ym = []
+        for ws in observation.visualization_workspaces:
+            xs = ws.xs(
+                self.interaction_central,
+                self.interaction_spin_orbit,
+                *self.calculate_central_and_spin_orbit_interaction(*params, ws),
+            )
+            ym.append(self.extractor(xs, ws))
+        return ym
 
 
 def extract_dXS_dA(
