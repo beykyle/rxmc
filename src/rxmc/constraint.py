@@ -77,6 +77,31 @@ class Constraint:
             for obs in self.observations
         )
 
+    def logpdf_conditional_model_params(self, ym: list, *likelihood_params):
+        """
+        Returns the log-pdf that the model predictions ym, for the
+        likelihood_params provided, reproduces the observations in the
+        constraints.
+
+        Parameters:
+        ----------
+        ym : list
+            The model predictions for the observed data.
+        likelihood_params : tuple, optional
+            Additional parameters for the likelihood model, if any.
+
+
+        Returns:
+        -------
+        float
+            The log probability density of the observation given the
+            parameters.
+        """
+        return sum(
+            self.likelihood.logpdf(obs, y, *likelihood_params)
+            for obs, y in zip(self.observations, ym)
+        )
+
     def chi2(self, model_params, likelihood_params=()):
         """
         Calculate the chi-squared statistic (or Mahalanobis distance) between
