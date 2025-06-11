@@ -143,8 +143,6 @@ def run_chain(
     prior = prior
     corpus = corpus
 
-    gibbs_sampling_on = likelihood_prior is not None
-
     # proposal distribution
     if proposal_distribution is None:
 
@@ -158,21 +156,7 @@ def run_chain(
     else:
         proposal = proposal_distribution
 
-    if likelihood_proposal_distribution is None and likelihood_prior is not None:
-
-        def likelihood_proposal(y):
-            return y + stats.multivariate_normal.rvs(
-                mean=np.zeros_like(likelihood_prior.mean),
-                cov=likelihood_prior.cov / proposal_cov_scale_factor,
-                random_state=rng,
-            )
-
-    elif likelihood_proposal_distribution is not None:
-        if not hasattr(likelihood_proposal_distribution, "rvs"):
-            raise ValueError(
-                "likelihood_proposal_distribution must be a "
-                "scipy.stats distribution object with a .rvs() method."
-            )
+    gibbs_sampling_on = likelihood_prior is not None
 
     # starting location for model params
     x0 = proposal(prior.mean)
@@ -185,23 +169,33 @@ def run_chain(
             raise ValueError("starting_point must be an array-like object.")
 
     # starting location for likelihood params
-    y0 = ()
-    if likelihood_starting_point is not None:
-        if isinstance(likelihood_starting_point, np.ndarray):
-            y0 = likelihood_starting_point
-        elif isinstance(likelihood_starting_point, (list, tuple)):
-            y0 = np.array(likelihood_starting_point)
+    if gibbs_sampling_on:
+        if likelihood_starting_point is not None:
+            if isinstance(likelihood_starting_point, np.ndarray):
+                y0 = likelihood_starting_point
+            elif isinstance(likelihood_starting_point, (list, tuple)):
+                y0 = np.array(likelihood_starting_point)
+            else:
+                raise ValueError(
+                    "likelihood_starting_point must be an array-like object."
+                )
         else:
-            raise ValueError("likelihood_starting_point must be an array-like object.")
-    elif likelihood_proposal_distribution is not None and likelihood_prior is not None:
-        y0 = likelihood_proposal_distribution(likelihood_prior.mean)
-    elif likelihood_prior is not None:
-        y0 = likelihood_prior.mean
+            y0 = likelihood_prior.mean
+    else:
+        y0 = None
 
     if gibbs_sampling_on:
-        pass
-        # TODO define two log_likelihood functions, one for the
-        # model and one for the likelihood
+
+        def log_likelihood(x):
+            return corpus.logpdf(x, y0) + prior.logpdf(x) + likelihood_prior.logpdf(y0)
+
+        def log_likelihood_conditional_model_param(x, ym, y):
+            return (
+                corpus.logpdf_conditional_model_params(ym, y)
+                + likelihood_prior.logpdf(y)
+                + prior.logpdf(x)
+            )
+
     else:
 
         def log_likelihood(x):
@@ -216,18 +210,34 @@ def run_chain(
             proposal,
             rng=rng,
         )
-        # TODO if gibbs_sampling_on, update y0 here
+        if gibbs_sampling_on:
+            x = batch_chain[-1]
+            # get ym
+            # TODO do this simultaneously with last
+            # step of the batch chain
+            ym = corpus.predict(x)
+            # sample batch of likelihood parameters
+            # conditional on ym
+            likelihood_batch_chain, _, _ = metropolis_hastings(
+                y0,
+                steps_in_batch,
+                lambda y: log_likelihood_conditional_model_param(x, ym, y),
+                likelihood_proposal_distribution,
+                rng=rng,
+            )
+            y0 = likelihood_batch_chain[-1]
+
+        x0 = batch_chain[-1]
         if verbose:
             print(
                 f"Rank: {rank}. Burn-in batch {i+1}/{len(burn_batches)}"
                 f" completed, {steps_in_batch} steps."
             )
 
-    # update starter location to tail of burn-in
-    if burnin > 0:
-        x0 = batch_chain[-1]
-
     # run real steps
+    likelihood_chain = []
+    likelihood_logl = []
+    likelihood_accepted = 0
     chain = []
     logl = []
     accepted = 0
@@ -246,16 +256,46 @@ def run_chain(
         chain.append(batch_chain)
         logl.append(batch_logl)
         x0 = batch_chain[-1]
+
+        # update proposal distribution?
+
+        # update likelihood model params (Gibbs sampling)
+        if gibbs_sampling_on:
+            x = batch_chain[-1]
+            # get ym
+            # TODO do this simultaneously with last
+            # step of the batch chain
+            ym = corpus.predict(x)
+            # sample batch of likelihood parameters
+            # conditional on ym
+            (
+                likelihood_batch_chain,
+                likelihood_batch_logl,
+                likelihood_accepted_in_batch,
+            ) = metropolis_hastings(
+                y0,
+                steps_in_batch,
+                lambda y: log_likelihood_conditional_model_param(x, ym, y),
+                likelihood_proposal_distribution,
+                rng=rng,
+            )
+
+            likelihood_accepted += likelihood_accepted_in_batch
+            likelihood_chain.append(likelihood_batch_chain)
+            likelihood_logl.append(likelihood_batch_logl)
+            y0 = likelihood_batch_chain[-1]
+
         if verbose:
             print(
                 f"Rank: {rank}. Batch: {i+1}/{len(batches)} completed, "
                 f"{steps_in_batch} steps. "
                 f"Acceptance frac: {accepted_in_batch/steps_in_batch:.3f}"
             )
-
-        # update proposal distribution?
-
-        # update unknown covariance factor estimate (Gibbs sampling)
+            if gibbs_sampling_on:
+                print(
+                    f"Likelihood acceptance frac: "
+                    f"{likelihood_accepted_in_batch/steps_in_batch:.3f}"
+                )
 
         # write record of batch chain to disk
         if output is not None:
