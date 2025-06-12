@@ -77,6 +77,31 @@ class Constraint:
             for obs in self.observations
         )
 
+    def logpdf_conditional_model_params(self, ym: list, *likelihood_params):
+        """
+        Returns the log-pdf that the model predictions ym, for the
+        likelihood_params provided, reproduces the observations in the
+        constraints.
+
+        Parameters:
+        ----------
+        ym : list
+            The model predictions for the observed data.
+        likelihood_params : tuple, optional
+            Additional parameters for the likelihood model, if any.
+
+
+        Returns:
+        -------
+        float
+            The log probability density of the observation given the
+            parameters.
+        """
+        return sum(
+            self.likelihood.logpdf(obs, y, *likelihood_params)
+            for obs, y in zip(self.observations, ym)
+        )
+
     def chi2(self, model_params, likelihood_params=()):
         """
         Calculate the chi-squared statistic (or Mahalanobis distance) between
@@ -130,6 +155,23 @@ class Constraint:
             logpdf += self.likelihood.logpdf(obs, y_pred, *likelihood_params)
 
         return logpdf, ym
+
+    def predict(self, *model_params):
+        """
+        Generate predictions for each observation using the physical model
+        with the provided parameters.
+
+        Parameters:
+        ----------
+        *model_params : tuple
+            The parameters of the physical model.
+
+        Returns:
+        -------
+        list[np.ndarray]
+            The predicted values for each observation.
+        """
+        return [self.physical_model(obs, *model_params) for obs in self.observations]
 
     def num_pts_within_interval(
         self, ylow: list[np.ndarray], yhigh: list[np.ndarray], xlim=None

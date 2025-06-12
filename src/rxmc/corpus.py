@@ -41,7 +41,9 @@ class Corpus:
             self.n_likelihood_params += constraint.likelihood.n_params
 
         self.n_params = len(self.model_params) + len(self.likelihood_params)
-        self.n_data_pts = sum( sum(obs.n_data_pts for obs in c.observations) for c in constraints)
+        self.n_data_pts = sum(
+            sum(obs.n_data_pts for obs in c.observations) for c in constraints
+        )
         self.n_dof = self.n_data_pts - self.n_params
         if self.n_dof < 0:
             raise ValueError(
@@ -62,7 +64,9 @@ class Corpus:
 
     def logpdf(self, model_params, likelihood_params: list[tuple] = None):
         """
-        Returns the log-pdf that the Model, given params, reproduces y
+        Returns the log-pdf that the PhysicalModel predictions, given
+        model_params, reproduce the observations in the constraints
+        according to the LikelihoodModel, given the likelihood_params.
 
         Parameters
         ----------
@@ -88,3 +92,59 @@ class Corpus:
             c.logpdf(model_params, lp) * w
             for w, c, lp in zip(self.weights, self.constraints, likelihood_params)
         )
+
+    def logpdf_conditional_model_params(self, ym: list, likelihood_params: list[tuple]):
+        """
+        Returns the log-pdf that the model predictions ym, for the
+        likelihood_params provided, reproduces the observations in the
+        constraints.
+
+        This is useful when the likelihood is parametric and the model is
+        computationally expensive to evaluate. In this case, by using Gibb's
+        sampling, in which the MCMC chain is broken into batches, where
+        each batch consists of first sampling the model parameters conditional
+        on a fixed likelihood parameter sample, and secondly sampling the
+        likelihood parameters conditional on the ym, using this method.
+
+        Parameters
+        ----------
+        ym : list
+            A list of model predictions corresponding to the observations
+            in each constraint.
+        likelihood_params : list[tuple], optional
+            A list of tuples containing additional parameters
+            for the likelihood model for each constraint, in the order
+            of self.constraints. Defaults to None, meaning none of the
+            constraints have additional likelihood parameters. In the case
+            that some constraints have additional likelihood parameters,
+            and some don't, the list must have the same length as
+            self.constraints, with entries containing tupples corresponding
+            to constraints taking in parameters and () (empty tuple) for
+            those that do not.
+
+        Returns
+        -------
+        float
+        """
+        return sum(
+            c.logpdf_conditional_model_params(y, lp) * w
+            for w, c, lp, y in zip(
+                self.weights, self.constraints, likelihood_params, ym
+            )
+        )
+
+    def predict(self, *model_params):
+        """
+        Returns the model predictions for the given model parameters.
+
+        Parameters
+        ----------
+        *model_params : tuple
+            The parameters of the physical model.
+
+        Returns
+        -------
+        list
+            A list of model predictions for each constraint.
+        """
+        return [c.predict(*model_params) for c in self.constraints]

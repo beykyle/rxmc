@@ -14,8 +14,8 @@ class Observation:
     y_stat_err : np.ndarray, optional
         The statistical error associated with y. Defaults to an array of
         zeros with the same shape as y.
-    y_sys_err_bias : float, optional
-        The systematic error bias associated with y. Defaults to 0.0.
+    y_sys_err_normalization : float, optional
+        The systematic error normalization associated with y. Defaults to 0.0.
     y_sys_err_offset : float, optional
         The systematic error offset associated with y. Defaults to 0.0.
     """
@@ -25,7 +25,7 @@ class Observation:
         x: np.ndarray,
         y: np.ndarray,
         y_stat_err=None,
-        y_sys_err_bias=0.0,
+        y_sys_err_normalization=0.0,
         y_sys_err_offset=0.0,
     ):
         self.n_data_pts = x.shape[0]
@@ -37,7 +37,7 @@ class Observation:
                 f" {x.shape} and {y.shape}"
             )
         self.y_stat_err = y_stat_err if y_stat_err is not None else np.zeros_like(y)
-        self.y_sys_err_bias = y_sys_err_bias
+        self.y_sys_err_normalization = y_sys_err_normalization
         self.y_sys_err_offset = y_sys_err_offset
 
     def residual(self, ym: np.ndarray):

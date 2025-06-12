@@ -30,8 +30,9 @@ class ElasticDifferentialXSModel(PhysicalModel):
         quantity: str,
         interaction_central: Callable[[float, tuple], complex],
         interaction_spin_orbit: Callable[[float, tuple], complex],
-        calculate_central_and_spin_orbit_interaction:
-            Callable[[tuple, jitr.xs.elastic.DifferentialWorkspace], tuple],
+        calculate_central_and_spin_orbit_interaction: Callable[
+            [tuple, jitr.xs.elastic.DifferentialWorkspace], tuple
+        ],
         model_name: str = None,
     ):
         """
@@ -62,7 +63,9 @@ class ElasticDifferentialXSModel(PhysicalModel):
         self.quantity = quantity
         self.interaction_central = interaction_central
         self.interaction_spin_orbit = interaction_spin_orbit
-        self.calculate_central_and_spin_orbit_interaction = calculate_central_and_spin_orbit_interaction
+        self.calculate_central_and_spin_orbit_interaction = (
+            calculate_central_and_spin_orbit_interaction
+        )
 
         if self.quantity == "dXS/dA":
             self.extractor = extract_dXS_dA

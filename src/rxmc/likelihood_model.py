@@ -15,7 +15,6 @@ class LikelihoodModel:
         self.params = None
         self.n_params = 0
 
-
     def residual(self, observation: Observation, ym: np.ndarray):
         """
         Returns the residual between the model prediction ym and
@@ -185,7 +184,7 @@ class LikelihoodWithSystematicError(LikelihoodModel):
     Note that this is equivalent to the alternative method to handle systematic
     errors described by Barlow, R (2021) 'Combining experiments with systematic
     errors', in which nuisance parameters are introduced corresponding to the
-    normalization and additive bias of the observation.
+    normalization and additive normalization of the observation.
 
     The advantage of this approach is that it does not require introducing
     nuisance parameters, but instead encodes the correlation between the data
@@ -212,6 +211,7 @@ class LikelihoodWithSystematicError(LikelihoodModel):
             point, then this should be set to 0.01. Default is 0.0.
         """
         self.fractional_uncorrelated_error = fractional_uncorrelated_error
+        super().__init__()
 
     def covariance(self, observation: Observation, ym: np.ndarray):
         """
@@ -230,8 +230,8 @@ class LikelihoodWithSystematicError(LikelihoodModel):
                 \Sigma_{ij}^{sys} = \eta**2 y_m(x_i, \alpha) y_m(x_j, \alpha) + \omega,
             \]
         where $\eta$ is the uncertainty in the overall normalization of the
-        observation (`observation.y_sys_err_bias`) and $\omega$ is the uncertainty in
-        the additive bias to the observation (`observation.y_sys_err_offset`).
+        observation (`observation.y_sys_err_normalization`) and $\omega$ is the uncertainty in
+        the additive normalization to the observation (`observation.y_sys_err_offset`).
 
         Here, also, $y_m(x_i, \alpha)$ is the model prediction for the i-th
         observation.
@@ -249,7 +249,7 @@ class LikelihoodWithSystematicError(LikelihoodModel):
             Covariance matrix of the observation.
         """
         sigma_sys = systematic_covariance(
-            observation.y_sys_err_bias,
+            observation.y_sys_err_normalization,
             observation.y_sys_err_offset,
             ym,
         )
@@ -412,7 +412,7 @@ class UnknownNoiseErrorModel(ParametricLikelihoodModel):
             Covariance matrix of the observation.
         """
         sigma_sys = systematic_covariance(
-            observation.y_sys_err_bias, observation.y_sys_err_offset, ym
+            observation.y_sys_err_normalization, observation.y_sys_err_offset, ym
         )
         sigma_stat = statistical_covariance(np.ones_like(ym) * noise)
         sigma_model = uncorrelated_model_covariance(
@@ -480,7 +480,7 @@ class UnknownNoiseFractionErrorModel(ParametricLikelihoodModel):
             Covariance matrix of the observation.
         """
         sigma_sys = systematic_covariance(
-            observation.y_sys_err_bias, observation.y_sys_err_offset, ym
+            observation.y_sys_err_normalization, observation.y_sys_err_offset, ym
         )
         sigma_stat = statistical_covariance(ym * noise_fraction)
         sigma_model = uncorrelated_model_covariance(
@@ -490,21 +490,21 @@ class UnknownNoiseFractionErrorModel(ParametricLikelihoodModel):
         return sigma_sys + sigma_stat + sigma_model
 
 
-class UnknownBiasErrorModel(ParametricLikelihoodModel):
+class UnknownNormalizationErrorModel(ParametricLikelihoodModel):
     """
-    A ParametricLikelihoodModel in which the systematic bias in normalization
+    A ParametricLikelihoodModel in which the systematic normalization in normalization
     of the observation is a parameter, $\eta$.
     """
 
     def __init__(self, fractional_uncorrelated_error: float = 0):
         self.fractional_uncorrelated_error = fractional_uncorrelated_error
         likelihood_params = [
-            Parameter("y_sys_err_bias", float, latex_name=r"\eta"),
+            Parameter("y_sys_err_normalization", float, latex_name=r"\eta"),
         ]
         super().__init__(likelihood_params)
 
     def covariance(
-        self, observation: Observation, ym: np.ndarray, y_sys_err_bias: float
+        self, observation: Observation, ym: np.ndarray, y_sys_err_normalization: float
     ):
         """
         Returns the following covariance matrix:
@@ -522,9 +522,9 @@ class UnknownBiasErrorModel(ParametricLikelihoodModel):
                 \Sigma_{ij}^{sys} = \eta**2 y_m(x_i, \alpha) y_m(x_j, \alpha) + \omega,
             \]
         where $\eta$ is the uncertainty in the overall normalization of the
-        observation (`y_sys_err_bias` - in this case, this value is a parameter,
+        observation (`y_sys_err_normalization` - in this case, this value is a parameter,
         and  corresponding value in `observation` is ignored) and $\omega$ is
-        the uncertainty in the additive bias to the observation
+        the uncertainty in the additive normalization to the observation
         (`observation.y_sys_err_offset`).
 
         Here, also, $y_m(x_i, \alpha)$ is the model prediction for the i-th
@@ -536,7 +536,7 @@ class UnknownBiasErrorModel(ParametricLikelihoodModel):
             The observation object containing the observed data.
         ym : np.ndarray
             Model prediction for the observation.
-        y_sys_err_bias: float
+        y_sys_err_normalization: float
             Uncertainty in the overall normalization of the observation.
 
         Returns
@@ -545,7 +545,7 @@ class UnknownBiasErrorModel(ParametricLikelihoodModel):
             Covariance matrix of the observation.
         """
         sigma_sys = systematic_covariance(
-            y_sys_err_bias, observation.y_sys_err_offset, ym
+            y_sys_err_normalization, observation.y_sys_err_offset, ym
         )
         sigma_stat = statistical_covariance(observation.y_stat_err)
         sigma_model = uncorrelated_model_covariance(
@@ -592,7 +592,7 @@ def log_likelihood(mahalanobis: float, log_det: float, n: int):
 
 
 def systematic_covariance(
-    y_sys_err_bias: float, y_sys_err_offset: float, ym: np.ndarray
+    y_sys_err_normalization: float, y_sys_err_offset: float, ym: np.ndarray
 ):
     """
     Returns the systematic covariance matrix:
@@ -600,8 +600,8 @@ def systematic_covariance(
             \Sigma_{ij}^{sys} = \eta**2 y_m(x_i, \alpha) y_m(x_j, \alpha) + \omega,
         \]
     where $\eta$ is the uncertainty in the overal normalization of the
-    observation (`observation.y_sys_err_bias`) and $\omega$ is the uncertainty in
-    the additive bias to the observation (`observation.y_sys_err_offset`).
+    observation (`observation.y_sys_err_normalization`) and $\omega$ is the uncertainty in
+    the additive normalization to the observation (`observation.y_sys_err_offset`).
 
     Here, $y_m(x_i, \alpha)$ is the model prediction for the i-th
     observation.
@@ -610,10 +610,10 @@ def systematic_covariance(
 
     Parameters
     ----------
-    y_sys_err_bias : float
+    y_sys_err_normalization : float
         Uncertainty in the overall normalization of the observation.
     y_sys_err_offset : float
-        Uncertainty in the additive bias to the observation.
+        Uncertainty in the additive normalization to the observation.
     ym : np.ndarray
         Model prediction for the observation.
 
@@ -622,11 +622,11 @@ def systematic_covariance(
     np.ndarray
         Systematic covariance matrix.
     """
-    eta = y_sys_err_bias
+    eta = y_sys_err_normalization
     omega = y_sys_err_offset
-    covariance_bias = eta**2 * np.outer(ym, ym)
-    covariance_offset = omega**2 * np.ones_like(covariance_bias)
-    return covariance_bias + covariance_offset
+    covariance_normalization = eta**2 * np.outer(ym, ym)
+    covariance_offset = omega**2 * np.ones_like(covariance_normalization)
+    return covariance_normalization + covariance_offset
 
 
 def statistical_covariance(y_stat_err: np.ndarray):
