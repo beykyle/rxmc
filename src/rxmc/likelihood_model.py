@@ -10,12 +10,37 @@ class LikelihoodModel:
     A class to represent a likelihood model for comparing an Observation
     to a PhysicalModel.
 
-    The default behavior is that the covariance matrix is dependent on the values
+    The default behavior uses the following covariance matrix:
+        \[
+            \Sigma_{ij} = \sigma^2_{i}^{stat} \delta_{ij}
+                        + \Sigma_{ij}^{sys}
+                        + \gamma^2 y_m^2(x_i, \alpha)
+        \]
+    where $sigma^2_{i}^{stat}$ is the statistical variance of the i-th
+    observation, (`observation.y_stat_err`) and $\gamma$ is the
+    fractional uncorrelated error (`self.fractional_uncorrelated_error`).
+
+    Here, $Sigma_{ij}^{sys}$ is the systematic covariance matrix:
+        \[
+            \Sigma_{ij}^{sys} = \eta**2 y_m(x_i, \alpha) y_m(x_j, \alpha) + \omega,
+        \]
+    where $\eta$ is the uncertainty in the overall normalization of the
+    observation (`observation.y_sys_err_normalization`) and $\omega$ is the
+    uncertainty in the additive normalization to the observation
+    (`observation.y_sys_err_offset`).
+
+    Here, also, $y_m(x_i, \alpha)$ is the model prediction for the i-th
+    observation. Thus the covariance matrix is dependent on the values
     of the PhysicalModel and its parameters, as is the case when systematic
     errors are present in the observation, following D'Agostini, G. (1993) 'On
     the use of the covariance matrix to fit correlated data'
 
-    Note that this is equivalent to the alternative method to handle systematic
+    Note that if there is no systematic uncertainty encoded in the `observation`
+    and `self.fractional_uncorrelated_error` takes the default value of 0, the
+    covariance matrix becomes diaginal, and the `chi2` function reduces to the
+    simple and familiar $\chi^2$ form.
+
+    Note also that this is equivalent to the alternative method to handle systematic
     errors described by Barlow, R (2021) 'Combining experiments with systematic
     errors', in which nuisance parameters are introduced corresponding to the
     normalization and additive offset bias of the observation.
@@ -23,13 +48,6 @@ class LikelihoodModel:
     The advantage of this approach is that it does not require introducing
     nuisance parameters, but instead encodes the correlation between the data
     points in the observation in the covariance matrix directly.
-
-    Attributes:
-    ----------
-    fractional_uncorrelated_error : float
-        Fractional uncorrelated error in the model prediction. For example,
-        if one expects the model to be correct to 1% in any given data point,
-        then this should be set to 0.01. Default is 0.0.
     """
 
     def __init__(self, fractional_uncorrelated_error: float = 0.0):
@@ -39,10 +57,11 @@ class LikelihoodModel:
 
         Parameters
         ----------
-        fractional_uncorrelated_error : float, optional
+        fractional_uncorrelated_error : float
             Fractional uncorrelated error in the model prediction. For example,
-            if one expects the model to be correct to 1% in any given data
-            point, then this should be set to 0.01. Default is 0.0.
+            if one expects the model to be correct to 1% in any given data point,
+            then this should be set to 0.01. This is sometimes used to represent
+            the uncorrelated uncertainty in the model prediction. Default is 0.0.
         """
         self.fractional_uncorrelated_error = fractional_uncorrelated_error
         self.params = None
@@ -117,7 +136,6 @@ class LikelihoodModel:
             Residual vector.
         """
         return observation.residual(ym)
-
 
     def chi2(self, observation: Observation, ym: np.ndarray):
         """
