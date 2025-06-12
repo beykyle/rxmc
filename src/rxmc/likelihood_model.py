@@ -76,9 +76,9 @@ class LikelihoodModel:
         mahalanobis, _ = mahalanobis_distance_cholesky(observation.y, ym, cov)
         return mahalanobis
 
-    def logpdf(self, observation: Observation, ym: np.ndarray):
+    def log_likelihood(self, observation: Observation, ym: np.ndarray):
         """
-        Returns the logpdf that ym reproduces y, given the covariance
+        Returns the log_likelihood that ym reproduces y, given the covariance
 
         Parameters
         ----------
@@ -103,7 +103,7 @@ class FixedCovarianceLikelihood(LikelihoodModel):
     parameters of the PhysicalModel.
 
     This allows for the use of precomputed inverse covariance matrices which
-    can speed up the calculation of the chi-squared statistic and logpdf.
+    can speed up the calculation of the chi-squared statistic and log_likelihood.
     """
 
     def __init__(self):
@@ -151,9 +151,9 @@ class FixedCovarianceLikelihood(LikelihoodModel):
         delta = observation.residual(ym)
         return delta.T @ observation.cov_inv @ delta
 
-    def logpdf(self, observation: FixedCovarianceObservation, ym: np.ndarray):
+    def log_likelihood(self, observation: FixedCovarianceObservation, ym: np.ndarray):
         """
-        Returns the logpdf that ym reproduces y, given the fixed
+        Returns the log_likelihood that ym reproduces y, given the fixed
         covariance matrix
 
         Parameters
@@ -184,7 +184,7 @@ class LikelihoodWithSystematicError(LikelihoodModel):
     Note that this is equivalent to the alternative method to handle systematic
     errors described by Barlow, R (2021) 'Combining experiments with systematic
     errors', in which nuisance parameters are introduced corresponding to the
-    normalization and additive normalization of the observation.
+    normalization and additive offset bias of the observation.
 
     The advantage of this approach is that it does not require introducing
     nuisance parameters, but instead encodes the correlation between the data
@@ -221,11 +221,11 @@ class LikelihoodWithSystematicError(LikelihoodModel):
                             + \Sigma_{ij}^{sys}
                             + \gamma^2 y_m^2(x_i, \alpha)
             \]
-        where sigma^2_{i}^{stat} is the statistical variance of the i-th
+        where $sigma^2_{i}^{stat}$ is the statistical variance of the i-th
         observation, (`observation.y_stat_err`) and $\gamma$ is the
         fractional uncorrelated error (`self.fractional_uncorrelated_error`).
 
-        Here, Sigma_{ij}^{sys} is the systematic covariance matrix:
+        Here, $Sigma_{ij}^{sys}$ is the systematic covariance matrix:
             \[
                 \Sigma_{ij}^{sys} = \eta**2 y_m(x_i, \alpha) y_m(x_j, \alpha) + \omega,
             \]
@@ -263,12 +263,12 @@ class LikelihoodWithSystematicError(LikelihoodModel):
 
 class ParametricLikelihoodModel(LikelihoodModel):
     """
-    A class to represent a likelihood model for comparing an Observation
-    to a PhysicalModel, in which the LikelihoodModel has it's own parameters
+    A class to represent a likelihood model for comparing an `Observation`
+    to a `PhysicalModel`, in which the `LikelihoodModel` has it's own parameters
     to calculate the covariance, aside from the parameters of the
-    PhysicalModel. This is useful when the covariance is unknown, and one
-    would like to calibrate the likelihood parameters to an observation,
-    along with the parameters of a PhysicalModel.
+    `PhysicalModel`. This is useful when the covariance is unknown, and one
+    would like to calibrate the likelihood parameters to an `Observation`,
+    along with the parameters of a `PhysicalModel`.
     """
 
     def __init__(self, likelihood_params: list[Parameter]):
@@ -279,7 +279,7 @@ class ParametricLikelihoodModel(LikelihoodModel):
     def chi2(self, observation: Observation, ym: np.ndarray, *likelihood_params):
         """
         Calculate the generalised chi-squared statistic. This is the
-        Malahanobis distance between y and ym
+        Malahanobis distance between `Observation.y` and `ym`.
 
         Parameters
         ----------
@@ -301,9 +301,11 @@ class ParametricLikelihoodModel(LikelihoodModel):
         mahalanobis, _ = mahalanobis_distance_cholesky(observation.y, ym, cov)
         return mahalanobis
 
-    def logpdf(self, observation: Observation, ym: np.ndarray, *likelihood_params):
+    def log_likelihood(
+        self, observation: Observation, ym: np.ndarray, *likelihood_params
+    ):
         """
-        Returns the logpdf that ym reproduces y, given the covariance
+        Returns the log likelihood that `ym` reproduces `observation.y`
 
         Parameters
         ----------
@@ -326,7 +328,7 @@ class ParametricLikelihoodModel(LikelihoodModel):
     def covariance(self, observation: Observation, ym: np.ndarray, *likelihood_params):
         """
         Returns the covariance matrix determined by the likelihood model,
-        which is dependent on the parameters of the likelihood model.
+        which is dependent on `likelihood_params`
 
         Parameters
         ----------
@@ -394,8 +396,9 @@ class UnknownNoiseErrorModel(ParametricLikelihoodModel):
             \sigma^2_{i}^{stat} = \epsilon^2 \delta_{ij}
         \]
 
-        (note this class ignores `observation.y_stat_err`) and $\gamma$ is the
-        fractional uncorrelated error (`self.fractional_uncorrelated_error`).
+        (note this class ignores `observation.y_stat_err`, substituting it with
+        the variable `noise`) and $\gamma$ is the fractional uncorrelated
+        error (`self.fractional_uncorrelated_error`).
 
         Parameters
         ----------
@@ -424,7 +427,7 @@ class UnknownNoiseErrorModel(ParametricLikelihoodModel):
 
 class UnknownNoiseFractionErrorModel(ParametricLikelihoodModel):
     """
-    A ParametricLikelihoodModel in which each data point in the observation
+    A `ParametricLikelihoodModel` in which each data point in the observation
     has the a statistical error corresponding to a fixed fraction of it's value,
     the fraction being a parameter, $epsilon$.
 
@@ -462,7 +465,8 @@ class UnknownNoiseFractionErrorModel(ParametricLikelihoodModel):
             \Sigma_{ij}^{stat} = \epsilon^2 y(x_i)^2 \delta_{ij}
         \]
 
-        (note this class ignores `observation.y_stat_err`) and $\gamma$ is the
+        (note this class ignores `observation.y_stat_err`, substituting it with
+        the variable `noise_fraction` multiplied by `ym`) and $\gamma$ is the
         fractional uncorrelated error (`self.fractional_uncorrelated_error`).
 
         Parameters
@@ -492,8 +496,8 @@ class UnknownNoiseFractionErrorModel(ParametricLikelihoodModel):
 
 class UnknownNormalizationErrorModel(ParametricLikelihoodModel):
     """
-    A ParametricLikelihoodModel in which the systematic normalization in normalization
-    of the observation is a parameter, $\eta$.
+    A ParametricLikelihoodModel in which the systematic uncertainty
+    of the normalization of the observation is a parameter, $\eta$.
     """
 
     def __init__(self, fractional_uncorrelated_error: float = 0):
@@ -513,11 +517,11 @@ class UnknownNormalizationErrorModel(ParametricLikelihoodModel):
                             + \Sigma_{ij}^{sys}
                             + \gamma^2 y_m^2(x_i, \alpha)
             \]
-        where sigma^2_{i}^{stat} is the statistical variance of the i-th
+        where $sigma^2_{i}^{stat}$ is the statistical variance of the i-th
         observation, (`observation.y_stat_err`) and $\gamma$ is the
         fractional uncorrelated error (`self.fractional_uncorrelated_error`).
 
-        Here, Sigma_{ij}^{sys} is the systematic covariance matrix:
+        Here, $Sigma_{ij}^{sys}$ is the systematic covariance matrix:
             \[
                 \Sigma_{ij}^{sys} = \eta**2 y_m(x_i, \alpha) y_m(x_j, \alpha) + \omega,
             \]

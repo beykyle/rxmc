@@ -13,7 +13,8 @@ class Constraint:
     observation given the model predictions.
 
     This class is meant to be a box that takes in model params and spits out
-    the log likelihood or other staisticsT
+    the log likelihood or other staistics
+
     """
 
     def __init__(
@@ -51,9 +52,9 @@ class Constraint:
         """
         return [self.physical_model(obs, *model_params) for obs in self.observations]
 
-    def logpdf(self, model_params, likelihood_params=()):
+    def log_likelihood(self, model_params, likelihood_params=()):
         """
-        Calculate the log probability density function (logpdf) that the
+        Calculate the log probability density function that the
         model predictions, given the parameters, reproduce the observed data.
 
         Parameters:
@@ -71,15 +72,15 @@ class Constraint:
             parameters.
         """
         return sum(
-            self.likelihood.logpdf(
+            self.likelihood.log_likelihood(
                 obs, self.physical_model(obs, *model_params), *likelihood_params
             )
             for obs in self.observations
         )
 
-    def logpdf_conditional_model_params(self, ym: list, *likelihood_params):
+    def marginal_log_likelihood(self, ym: list, *likelihood_params):
         """
-        Returns the log-pdf that the model predictions ym, for the
+        Returns the log likelihood that the model predictions ym, for the
         likelihood_params provided, reproduces the observations in the
         constraints.
 
@@ -98,7 +99,7 @@ class Constraint:
             parameters.
         """
         return sum(
-            self.likelihood.logpdf(obs, y, *likelihood_params)
+            self.likelihood.log_likelihood(obs, y, *likelihood_params)
             for obs, y in zip(self.observations, ym)
         )
 
@@ -125,36 +126,6 @@ class Constraint:
             )
             for obs in self.observations
         )
-
-    def logpdf_and_ym(self, model_params, likelihood_params=()):
-        """
-        Calculate the log probability density function (logpdf) that the model
-        predictions, given the parameters, reproduce the observed data, and
-        returns it along with the model predictions.
-
-        Parameters:
-        ----------
-        model_params : tuple
-            The parameters of the physical model
-        likelihood_params : tuple, optional
-            Additional parameters for the likelihood model, if any.
-
-        Returns:
-        -------
-        float
-            The log probability density of the observation given the
-            parameters.
-        list
-            The model predictions for the observed data.
-        """
-        ym = []
-        logpdf = 0.0
-        for obs in self.observations:
-            y_pred = self.physical_model(obs, *model_params)
-            ym.append(y_pred)
-            logpdf += self.likelihood.logpdf(obs, y_pred, *likelihood_params)
-
-        return logpdf, ym
 
     def predict(self, *model_params):
         """

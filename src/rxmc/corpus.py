@@ -1,6 +1,5 @@
 import numpy as np
 
-from .params import Parameter
 from .constraint import Constraint
 
 
@@ -24,20 +23,39 @@ class Corpus:
     def __init__(
         self,
         constraints: list[Constraint],
+        parametric_constraints: list[Constraint],
         weights: np.ndarray = None,
-        likelihood_params: list[Parameter] = None,
     ):
         self.constraints = constraints
+        self.parametric_constraints = parametric_constraints
+        self.model_params = self.constraints[0].physical_model.params
+        self.n_likelihood_params = 0
+
+        # check the regular constraints
         for constraint in self.constraints:
-            self.model_params = self.constraints[0].physical_model.params
-            self.likelihood_params = []
-            self.n_likelihood_params = 0
-        for constraint in constraints:
             if constraint.physical_model.params != self.model_params:
                 raise ValueError(
                     "All constraints must use the same physical model parameters"
                 )
-            self.likelihood_params.append(constraint.likelihood.params)
+            if constraint.likelihood.n_params > 0:
+                raise ValueError(
+                    "Constraint with parametric likelihood model "
+                    "found in the `constraints` list; should be "
+                    "in the `parametric_constraints` list"
+                )
+
+        # check the parametric constraints
+        for constraint in self.parametric_constraints:
+            if constraint.physical_model.params != self.model_params:
+                raise ValueError(
+                    "All constraints must use the same physical model parameters"
+                )
+            if constraint.likelihood.n_params == 0:
+                raise ValueError(
+                    "Constraint with out parametric likelihood "
+                    "model found in the `parametric_constraints` "
+                    "list; should be in the `constraints` list"
+                )
             self.n_likelihood_params += constraint.likelihood.n_params
 
         self.n_params = len(self.model_params) + len(self.likelihood_params)
@@ -62,7 +80,7 @@ class Corpus:
                 raise ValueError("weights must sum to number of constraints")
         self.weights = weights
 
-    def logpdf(self, model_params, likelihood_params: list[tuple] = None):
+    def log_likelihood(self, model_params, likelihood_params: list[tuple] = None):
         """
         Returns the log-pdf that the PhysicalModel predictions, given
         model_params, reproduce the observations in the constraints
@@ -74,77 +92,28 @@ class Corpus:
             The parameters of the physical model.
         likelihood_params : list[tuple], optional
             A list of tuples containing additional parameters
-            for the likelihood model for each constraint, in the order
-            of self.constraints. Defaults to None, meaning none of the
-            constraints have additional likelihood parameters. In the case
-            that some constraints have additional likelihood parameters,
-            and some don't, the list must have the same length as
-            self.constraints, with entries containing tupples corresponding
-            to constraints taking in parameters and () (empty tuple) for
-            those that do not.
+            for the likelihood model for each parameteric constraint,
+            corresponding to the order of `self.parametric_constraints`.
+            Defaults to None, meaning none of the constraints have
+            parametric likelihoods.
 
         Returns
         -------
         float
+            the log likelihood
         """
-        likelihood_params = likelihood_params or [()] * len(self.constraints)
-        return sum(
-            c.logpdf(model_params, lp) * w
-            for w, c, lp in zip(self.weights, self.constraints, likelihood_params)
+        assert len(likelihood_params) == len(self.parametric_constraints)
+
+        # sum log likelihood over regular constraints
+        ll = sum(
+            c.logpdf(model_params) * w for w, c in zip(self.weights, self.constraints)
         )
-
-    def logpdf_conditional_model_params(self, ym: list, likelihood_params: list[tuple]):
-        """
-        Returns the log-pdf that the model predictions ym, for the
-        likelihood_params provided, reproduces the observations in the
-        constraints.
-
-        This is useful when the likelihood is parametric and the model is
-        computationally expensive to evaluate. In this case, by using Gibb's
-        sampling, in which the MCMC chain is broken into batches, where
-        each batch consists of first sampling the model parameters conditional
-        on a fixed likelihood parameter sample, and secondly sampling the
-        likelihood parameters conditional on the ym, using this method.
-
-        Parameters
-        ----------
-        ym : list
-            A list of model predictions corresponding to the observations
-            in each constraint.
-        likelihood_params : list[tuple], optional
-            A list of tuples containing additional parameters
-            for the likelihood model for each constraint, in the order
-            of self.constraints. Defaults to None, meaning none of the
-            constraints have additional likelihood parameters. In the case
-            that some constraints have additional likelihood parameters,
-            and some don't, the list must have the same length as
-            self.constraints, with entries containing tupples corresponding
-            to constraints taking in parameters and () (empty tuple) for
-            those that do not.
-
-        Returns
-        -------
-        float
-        """
-        return sum(
-            c.logpdf_conditional_model_params(y, lp) * w
-            for w, c, lp, y in zip(
-                self.weights, self.constraints, likelihood_params, ym
+        # also sum log likelihood over constraints that take in parameters
+        # for the likelihood model, as well as just the physical model
+        ll += sum(
+            c.logpdf(model_params, lp) * w
+            for w, c, lp in zip(
+                self.weights, self.parametric_constraints, likelihood_params
             )
         )
-
-    def predict(self, *model_params):
-        """
-        Returns the model predictions for the given model parameters.
-
-        Parameters
-        ----------
-        *model_params : tuple
-            The parameters of the physical model.
-
-        Returns
-        -------
-        list
-            A list of model predictions for each constraint.
-        """
-        return [c.predict(*model_params) for c in self.constraints]
+        return ll
