@@ -23,7 +23,7 @@ class Corpus:
     def __init__(
         self,
         constraints: list[Constraint],
-        parametric_constraints: list[Constraint],
+        parametric_constraints: list[Constraint] = [],
         weights: np.ndarray = None,
     ):
         self.constraints = constraints
@@ -58,7 +58,7 @@ class Corpus:
                 )
             self.n_likelihood_params += constraint.likelihood.n_params
 
-        self.n_params = len(self.model_params) + len(self.likelihood_params)
+        self.n_params = len(self.model_params) + self.n_likelihood_params
         self.n_data_pts = sum(
             sum(obs.n_data_pts for obs in c.observations) for c in constraints
         )
@@ -80,7 +80,7 @@ class Corpus:
                 raise ValueError("weights must sum to number of constraints")
         self.weights = weights
 
-    def log_likelihood(self, model_params, likelihood_params: list[tuple] = None):
+    def log_likelihood(self, model_params, likelihood_params: list[tuple] = []):
         """
         Returns the log-pdf that the PhysicalModel predictions, given
         model_params, reproduce the observations in the constraints
@@ -106,12 +106,13 @@ class Corpus:
 
         # sum log likelihood over regular constraints
         ll = sum(
-            c.logpdf(model_params) * w for w, c in zip(self.weights, self.constraints)
+            c.log_likelihood(model_params) * w
+            for w, c in zip(self.weights, self.constraints)
         )
         # also sum log likelihood over constraints that take in parameters
         # for the likelihood model, as well as just the physical model
         ll += sum(
-            c.logpdf(model_params, lp) * w
+            c.log_likelihood(model_params, lp) * w
             for w, c, lp in zip(
                 self.weights, self.parametric_constraints, likelihood_params
             )

@@ -71,10 +71,12 @@ class Walker:
         # attributes that are updated during sampling
         self.pm_params = []
         self.lm_params = [[] for sampler in self.likelihood_sample_confs]
-        self.current_pm_params = self.pm_params[0]
-        self.current_lm_params = self.lm_params[0]
-        self.log_posterior = []
-        self.log_posterior_lm = [[] for _ in range(len(self.likelihood_sample_confs))]
+        self.current_pm_params = self.model_sample_conf.starting_location
+        self.current_lm_params = [
+            conf.starting_location for conf in self.likelihood_sample_confs
+        ]
+        self.chain_log_posterior = []
+        self.chain_log_posterior_lm = [[] for _ in self.likelihood_sample_confs]
 
     def run_model_batch(self, n_steps, x0, likelihood_params=[]):
         """
@@ -169,7 +171,7 @@ class Walker:
         return chains, logp, accepted
 
     def log_likelihood(self, model_params, likelihood_params):
-        return self.corpus.logpdf(model_params, likelihood_params)
+        return self.corpus.log_likelihood(model_params, likelihood_params)
 
     def log_posterior(self, model_params, likelihood_params):
         return self.log_likelihood(model_params, likelihood_params) + self.log_prior(
@@ -204,14 +206,14 @@ class Walker:
         n_steps: int,
         burnin: int = 0,
         batch_size: int = None,
-        rank: int = 0,
         verbose: bool = True,
         output: Path = None,
     ):
         """
         Runs the MCMC chain with the specified parameters. Updates
         the values of `self.current_lm_params`, `self.current_pm_params`,
-        `self.pm_params`, `self.lm_params` and `self.log_posterior`.
+        `self.pm_params`, `self.lm_params`, `self.chain_log_posterior`, and
+        `self.chain_log_posterior_lm`.
 
         Parameters:
         -----------
@@ -221,8 +223,6 @@ class Walker:
                 Number of steps per batch.
             burnin : int
                 Number of extra burn-in steps to do before active steps
-            rank : int
-                MPI rank for the current process.
             verbose : bool
                 Flag to print extra logging information.
             output : Path, optional
@@ -268,7 +268,7 @@ class Walker:
 
             if verbose:
                 print(
-                    f"Rank: {rank}. Burn-in batch {i+1}/{len(burn_batches)}"
+                    f"Burn-in batch {i+1}/{len(burn_batches)}"
                     f" completed, {steps_in_batch} steps."
                 )
 
@@ -286,7 +286,7 @@ class Walker:
             self.current_pm_params = batch_chain[-1]
             accepted += accepted_in_batch
             self.pm_params.append(batch_chain)
-            self.log_posterior.append(batch_logp)
+            self.chain_log_posterior.append(batch_logp)
 
             if self.gibbs_sampling:
                 # Gibb's sample likelihood model parameters
@@ -302,11 +302,11 @@ class Walker:
                 for i in range(len(self.likelihood_sample_confs)):
                     accepted_lm[i] += accepted_in_batch[i]
                     self.lm_params[i].append(batch_chains[i])
-                    self.log_posterior_lm[i].append(batch_logps[i])
+                    self.chain_log_posterior_lm[i].append(batch_logps[i])
 
             if verbose:
                 msg = (
-                    f"Rank: {rank}. Batch: {i+1}/{len(batches)} completed, "
+                    f"Batch: {i+1}/{len(batches)} completed, "
                     f"{steps_in_batch} steps. "
                     f"\n  Model parameter acceptance fraction: "
                     f"{accepted_in_batch/steps_in_batch:.3f}"
@@ -321,9 +321,9 @@ class Walker:
             self.pm_params = np.concatenate(self.pm_params, axis=0)
             self.lm_params = [np.concatenate(c, axis=0) for c in self.lm_params]
 
-            self.log_posterior = np.concatenate(self.log_posterior, axis=0)
-            self.log_posterior_lm = [
-                np.concatenate(c, axis=0) for c in self.log_posterior_lm
+            self.chain_log_posterior = np.concatenate(self.chain_log_posterior, axis=0)
+            self.chain_log_posterior_lm = [
+                np.concatenate(c, axis=0) for c in self.chain_log_posterior_lm
             ]
 
             final_acceptance_frac = accepted / n_steps

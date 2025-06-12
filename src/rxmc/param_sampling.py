@@ -44,7 +44,7 @@ class SamplingConfig:
         self.prior = prior
         self.sampling_algorithm = sampling_algorithm
 
-        self._validate_object(
+        _validate_object(
             prior,
             "prior",
             required_methods=["logpdf"],
@@ -74,7 +74,7 @@ class SamplingConfig:
         self.proposal = proposal
 
 
-def _validate_object(obj, name: str, required_attributes, required_methods):
+def _validate_object(obj, name: str, required_attributes=[], required_methods=[]):
     # Check for required attributes
     for attr in required_attributes:
         if not hasattr(obj, attr):
