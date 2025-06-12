@@ -70,8 +70,11 @@ class Walker:
 
         # attributes that are updated during sampling
         # each time `self.walk` is called these records will be updated
-        self.model_chain = np.empty((0,len(self.model_sample_conf.params)))
-        self.likelihood_chain = [np.empty((0,len(sampler.params))) for sampler in self.likelihood_sample_confs]
+        self.model_chain = np.empty((0, len(self.model_sample_conf.params)))
+        self.likelihood_chain = [
+            np.empty((0, len(sampler.params)))
+            for sampler in self.likelihood_sample_confs
+        ]
         self.current_model_chain = self.model_sample_conf.starting_location
         self.current_likelihood_chain = [
             conf.starting_location for conf in self.likelihood_sample_confs
