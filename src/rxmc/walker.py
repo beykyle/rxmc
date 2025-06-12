@@ -69,14 +69,15 @@ class Walker:
                 )
 
         # attributes that are updated during sampling
-        self.pm_params = []
-        self.lm_params = [[] for sampler in self.likelihood_sample_confs]
-        self.current_pm_params = self.model_sample_conf.starting_location
-        self.current_lm_params = [
+        # each time `self.walk` is called these records will be updated
+        self.model_chain = np.empty((0,len(self.model_sample_conf.params)))
+        self.likelihood_chain = [np.empty((0,len(sampler.params))) for sampler in self.likelihood_sample_confs]
+        self.current_model_chain = self.model_sample_conf.starting_location
+        self.current_likelihood_chain = [
             conf.starting_location for conf in self.likelihood_sample_confs
         ]
-        self.chain_log_posterior = []
-        self.chain_log_posterior_lm = [[] for _ in self.likelihood_sample_confs]
+        self.log_posterior_record = []
+        self.log_posterior_record_lm = [[] for _ in self.likelihood_sample_confs]
 
     def run_model_batch(self, n_steps, x0, likelihood_params=[]):
         """
@@ -211,9 +212,9 @@ class Walker:
     ):
         """
         Runs the MCMC chain with the specified parameters. Updates
-        the values of `self.current_lm_params`, `self.current_pm_params`,
-        `self.pm_params`, `self.lm_params`, `self.chain_log_posterior`, and
-        `self.chain_log_posterior_lm`.
+        the values of `self.current_likelihood_chain`, `self.current_model_chain`,
+        `self.model_chain`, `self.likelihood_chain`, `self.log_posterior_record`, and
+        `self.log_posterior_record_lm`.
 
         Parameters:
         -----------
@@ -245,26 +246,31 @@ class Walker:
         if burnin == 0:
             burn_batches = []
 
+        pm_chain = []
+        pm_logp = []
+        lm_chains = [[] for _ in self.likelihood_sample_confs]
+        lm_logp = [[] for _ in self.likelihood_sample_confs]
+
         # burn in
         for i, steps_in_batch in enumerate(burn_batches):
             # Gibb's sample physical model parameters
             batch_chain, _, _ = self.run_model_batch(
                 steps_in_batch,
-                self.current_pm_params,
-                self.current_lm_params,
+                self.current_model_chain,
+                self.current_likelihood_chain,
             )
 
-            self.current_pm_params = batch_chain[-1]
+            self.current_model_chain = batch_chain[-1]
 
             if self.gibbs_sampling:
                 # Gibb's sample likelihood model parameters
                 batch_chains, _, _ = self.run_likelihood_batches(
                     steps_in_batch,
-                    self.current_lm_params,
-                    self.current_pm_params,
+                    self.current_likelihood_chain,
+                    self.current_model_chain,
                 )
 
-                self.current_lm_params = [c[-1] for c in batch_chains]
+                self.current_likelihood_chain = [c[-1] for c in batch_chains]
 
             if verbose:
                 print(
@@ -279,30 +285,30 @@ class Walker:
             # Gibb's sample physical model parameters
             batch_chain, batch_logp, accepted_in_batch = self.run_model_batch(
                 steps_in_batch,
-                self.current_pm_params,
-                self.current_lm_params,
+                self.current_model_chain,
+                self.current_likelihood_chain,
             )
 
-            self.current_pm_params = batch_chain[-1]
+            self.current_model_chain = batch_chain[-1]
             accepted += accepted_in_batch
-            self.pm_params.append(batch_chain)
-            self.chain_log_posterior.append(batch_logp)
+            pm_chain.append(batch_chain)
+            pm_logp.append(batch_logp)
 
             if self.gibbs_sampling:
                 # Gibb's sample likelihood model parameters
                 batch_chains, batch_logps, accepted_in_batch = (
                     self.run_likelihood_batches(
                         steps_in_batch,
-                        self.current_lm_params,
-                        self.current_pm_params,
+                        self.current_likelihood_chain,
+                        self.current_model_chain,
                     )
                 )
 
-                self.current_lm_params = [c[-1] for c in batch_chains]
+                self.current_likelihood_chain = [c[-1] for c in batch_chains]
                 for i in range(len(self.likelihood_sample_confs)):
                     accepted_lm[i] += accepted_in_batch[i]
-                    self.lm_params[i].append(batch_chains[i])
-                    self.chain_log_posterior_lm[i].append(batch_logps[i])
+                    lm_chains[i].append(batch_chains[i])
+                    lm_logp[i].append(batch_logps[i])
 
             if verbose:
                 msg = (
@@ -318,12 +324,24 @@ class Walker:
                     )
                 print(msg)
 
-            self.pm_params = np.concatenate(self.pm_params, axis=0)
-            self.lm_params = [np.concatenate(c, axis=0) for c in self.lm_params]
+            # concatenate chains from each batch
+            pm_chain = np.concatenate(pm_chain, axis=0)
+            lm_chains = [np.concatenate(c) for c in lm_chains]
+            pm_logp = np.concatenate(pm_logp, axis=0)
+            lm_logp = [np.concatenate(c) for c in lm_logp]
 
-            self.chain_log_posterior = np.concatenate(self.chain_log_posterior, axis=0)
-            self.chain_log_posterior_lm = [
-                np.concatenate(c, axis=0) for c in self.chain_log_posterior_lm
+            # concatenate full chains to the record
+            self.model_chain = np.concatenate([self.model_chain, pm_chain], axis=0)
+            self.likelihood_chain = [
+                np.concatenate([old_chain, new_chain], axis=0)
+                for old_chain, new_chain in zip(self.likelihood_chain, lm_chains)
+            ]
+            self.log_posterior_record = np.concatenate(
+                [self.log_posterior_record, pm_logp], axis=0
+            )
+            self.log_posterior_record_lm = [
+                np.concatenate([old_logp, new_logp], axis=0)
+                for old_logp, new_logp in zip(self.log_posterior_record_lm, lm_logp)
             ]
 
             final_acceptance_frac = accepted / n_steps
