@@ -8,12 +8,96 @@ from .params import Parameter
 class LikelihoodModel:
     """
     A class to represent a likelihood model for comparing an Observation
-    to a PhysicalModel
+    to a PhysicalModel.
+
+    The default behavior is that the covariance matrix is dependent on the values
+    of the PhysicalModel and its parameters, as is the case when systematic
+    errors are present in the observation, following D'Agostini, G. (1993) 'On
+    the use of the covariance matrix to fit correlated data'
+
+    Note that this is equivalent to the alternative method to handle systematic
+    errors described by Barlow, R (2021) 'Combining experiments with systematic
+    errors', in which nuisance parameters are introduced corresponding to the
+    normalization and additive offset bias of the observation.
+
+    The advantage of this approach is that it does not require introducing
+    nuisance parameters, but instead encodes the correlation between the data
+    points in the observation in the covariance matrix directly.
+
+    Attributes:
+    ----------
+    fractional_uncorrelated_error : float
+        Fractional uncorrelated error in the model prediction. For example,
+        if one expects the model to be correct to 1% in any given data point,
+        then this should be set to 0.01. Default is 0.0.
     """
 
-    def __init__(self):
+    def __init__(self, fractional_uncorrelated_error: float = 0.0):
+        """
+        Initializes the LikelihoodWithSystematicError, optionally with
+        a fractional uncorrelated error.
+
+        Parameters
+        ----------
+        fractional_uncorrelated_error : float, optional
+            Fractional uncorrelated error in the model prediction. For example,
+            if one expects the model to be correct to 1% in any given data
+            point, then this should be set to 0.01. Default is 0.0.
+        """
+        self.fractional_uncorrelated_error = fractional_uncorrelated_error
         self.params = None
         self.n_params = 0
+
+    def covariance(self, observation: Observation, ym: np.ndarray):
+        """
+        Default covariance model. Derived classes of `LikelihoodModel` will
+        override this.
+
+        Returns the following covariance matrix:
+            \[
+                \Sigma_{ij} = \sigma^2_{i}^{stat} \delta_{ij}
+                            + \Sigma_{ij}^{sys}
+                            + \gamma^2 y_m^2(x_i, \alpha)
+            \]
+        where $sigma^2_{i}^{stat}$ is the statistical variance of the i-th
+        observation, (`observation.y_stat_err`) and $\gamma$ is the
+        fractional uncorrelated error (`self.fractional_uncorrelated_error`).
+
+        Here, $Sigma_{ij}^{sys}$ is the systematic covariance matrix:
+            \[
+                \Sigma_{ij}^{sys} = \eta**2 y_m(x_i, \alpha) y_m(x_j, \alpha) + \omega,
+            \]
+        where $\eta$ is the uncertainty in the overall normalization of the
+        observation (`observation.y_sys_err_normalization`) and $\omega$ is the
+        uncertainty in the additive normalization to the observation
+        (`observation.y_sys_err_offset`).
+
+        Here, also, $y_m(x_i, \alpha)$ is the model prediction for the i-th
+        observation.
+
+        Parameters
+        ----------
+        ym : np.ndarray
+            Model prediction for the observation.
+        observation : Observation
+            The observation object containing the observed data.
+
+        Returns
+        -------
+        np.ndarray
+            Covariance matrix of the observation.
+        """
+        sigma_sys = systematic_covariance(
+            observation.y_sys_err_normalization,
+            observation.y_sys_err_offset,
+            ym,
+        )
+        sigma_model = uncorrelated_model_covariance(
+            self.fractional_uncorrelated_error,
+            ym,
+        )
+        sigma_stat = statistical_covariance(observation.y_stat_err)
+        return sigma_sys + sigma_model + sigma_stat
 
     def residual(self, observation: Observation, ym: np.ndarray):
         """
@@ -34,26 +118,6 @@ class LikelihoodModel:
         """
         return observation.residual(ym)
 
-    def covariance(self, observation: Observation, ym: np.ndarray):
-        """
-        Returns the covariance matrix determined by the likelihood model.
-
-        Parameters
-        ----------
-        observation : Observation
-            The observation object containing the observed data.
-        ym : np.ndarray
-            Model prediction for the observation.
-
-        Returns
-        -------
-        np.ndarray
-            Covariance matrix of the observation.
-        """
-        raise NotImplementedError(
-            "This method should be implemented in subclasses to return the "
-            "covariance matrix."
-        )
 
     def chi2(self, observation: Observation, ym: np.ndarray):
         """
@@ -172,93 +236,6 @@ class FixedCovarianceLikelihood(LikelihoodModel):
         # covariance matrix
         mahalanobis = self.chi2(observation, ym)
         return log_likelihood(mahalanobis, observation.log_det, observation.n_data_pts)
-
-
-class LikelihoodWithSystematicError(LikelihoodModel):
-    """
-    LikelihoodModel in which the covariance matrix is dependent on the values
-    of the PhysicalModel and its parameters, as is the case when systematic
-    errors are present in the observation, following D'Agostini, G. (1993) 'On
-    the use of the covariance matrix to fit correlated data'
-
-    Note that this is equivalent to the alternative method to handle systematic
-    errors described by Barlow, R (2021) 'Combining experiments with systematic
-    errors', in which nuisance parameters are introduced corresponding to the
-    normalization and additive offset bias of the observation.
-
-    The advantage of this approach is that it does not require introducing
-    nuisance parameters, but instead encodes the correlation between the data
-    points in the observation in the covariance matrix directly.
-
-    Attributes:
-    ----------
-    fractional_uncorrelated_error : float
-        Fractional uncorrelated error in the model prediction. For example,
-        if one expects the model to be correct to 1% in any given data point,
-        then this should be set to 0.01. Default is 0.0.
-    """
-
-    def __init__(self, fractional_uncorrelated_error: float = 0.0):
-        """
-        Initializes the LikelihoodWithSystematicError, optionally with
-        a fractional uncorrelated error.
-
-        Parameters
-        ----------
-        fractional_uncorrelated_error : float, optional
-            Fractional uncorrelated error in the model prediction. For example,
-            if one expects the model to be correct to 1% in any given data
-            point, then this should be set to 0.01. Default is 0.0.
-        """
-        self.fractional_uncorrelated_error = fractional_uncorrelated_error
-        super().__init__()
-
-    def covariance(self, observation: Observation, ym: np.ndarray):
-        """
-        Returns the following covariance matrix:
-            \[
-                \Sigma_{ij} = \sigma^2_{i}^{stat} \delta_{ij}
-                            + \Sigma_{ij}^{sys}
-                            + \gamma^2 y_m^2(x_i, \alpha)
-            \]
-        where $sigma^2_{i}^{stat}$ is the statistical variance of the i-th
-        observation, (`observation.y_stat_err`) and $\gamma$ is the
-        fractional uncorrelated error (`self.fractional_uncorrelated_error`).
-
-        Here, $Sigma_{ij}^{sys}$ is the systematic covariance matrix:
-            \[
-                \Sigma_{ij}^{sys} = \eta**2 y_m(x_i, \alpha) y_m(x_j, \alpha) + \omega,
-            \]
-        where $\eta$ is the uncertainty in the overall normalization of the
-        observation (`observation.y_sys_err_normalization`) and $\omega$ is the uncertainty in
-        the additive normalization to the observation (`observation.y_sys_err_offset`).
-
-        Here, also, $y_m(x_i, \alpha)$ is the model prediction for the i-th
-        observation.
-
-        Parameters
-        ----------
-        ym : np.ndarray
-            Model prediction for the observation.
-        observation : Observation
-            The observation object containing the observed data.
-
-        Returns
-        -------
-        np.ndarray
-            Covariance matrix of the observation.
-        """
-        sigma_sys = systematic_covariance(
-            observation.y_sys_err_normalization,
-            observation.y_sys_err_offset,
-            ym,
-        )
-        sigma_model = uncorrelated_model_covariance(
-            self.fractional_uncorrelated_error,
-            ym,
-        )
-        sigma_stat = statistical_covariance(observation.y_stat_err)
-        return sigma_sys + sigma_model + sigma_stat
 
 
 class ParametricLikelihoodModel(LikelihoodModel):
