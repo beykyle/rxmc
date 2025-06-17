@@ -22,13 +22,21 @@ class Corpus:
 
     def __init__(
         self,
-        constraints: list[Constraint],
+        constraints: list[Constraint] = [],
         parametric_constraints: list[Constraint] = [],
         weights: np.ndarray = None,
     ):
+        if len(constraints) > 0:
+            self.model_params = constraints[0].physical_model.params
+        elif len(parametric_constraints) > 0:
+            self.model_params = parametric_constraints[0].physical_model.params
+        else:
+            raise ValueError(
+                "Either 'constraints' or 'parametric_constraints' must not be empty"
+            )
+
         self.constraints = constraints
         self.parametric_constraints = parametric_constraints
-        self.model_params = self.constraints[0].physical_model.params
         self.n_likelihood_params = 0
 
         # check the regular constraints
@@ -60,12 +68,13 @@ class Corpus:
 
         self.n_params = len(self.model_params) + self.n_likelihood_params
         self.n_data_pts = sum(
-            sum(obs.n_data_pts for obs in c.observations) for c in constraints
+            sum(obs.n_data_pts for obs in c.observations)
+            for c in constraints + parametric_constraints
         )
         self.n_dof = self.n_data_pts - self.n_params
         if self.n_dof < 0:
             raise ValueError(
-                f"Model under-constrained! {self.n_params} free parameters"
+                f"Model under-constrained! {self.n_params} free parameters "
                 f"and {self.n_data_pts} data points"
             )
 

@@ -75,8 +75,8 @@ class Walker:
             np.empty((0, len(sampler.params)))
             for sampler in self.likelihood_sample_confs
         ]
-        self.current_model_chain = self.model_sample_conf.starting_location
-        self.current_likelihood_chain = [
+        self.current_model_params = self.model_sample_conf.starting_location
+        self.current_likelihood_params = [
             conf.starting_location for conf in self.likelihood_sample_confs
         ]
         self.log_posterior_record = []
@@ -148,7 +148,7 @@ class Walker:
             # precompute the model prediction for just this constraint,
             # as the physical model parameters (and thus the physical
             # model prediction) will be fixed for this walk
-            ym = constraint.predict(model_params)
+            ym = constraint.predict(*model_params)
 
             # the posterior pdf of this walk only accounts for the
             # observables in the constraint containing the likelihood
@@ -161,16 +161,16 @@ class Walker:
 
             # run a chain over the parameter space of just this
             # likelihood model
-            chain, logp, accepted = lm_conf.sampling_algorithm(
+            batch_chain, batch_logp, accepted_in_batch = lm_conf.sampling_algorithm(
                 x0=starting_locations[i],
                 n_steps=n_steps,
                 log_posterior=log_posterior,
                 propose=lm_conf.proposal,
                 rng=self.rng,
             )
-            chains.append(chain)
-            logp.append(logp)
-            accepted.append(accepted)
+            chains.append(batch_chain)
+            logp.append(batch_logp)
+            accepted.append(accepted_in_batch)
 
         return chains, logp, accepted
 
@@ -215,7 +215,7 @@ class Walker:
     ):
         """
         Runs the MCMC chain with the specified parameters. Updates
-        the values of `self.current_likelihood_chain`, `self.current_model_chain`,
+        the values of `self.current_likelihood_params`, `self.current_model_params`,
         `self.model_chain`, `self.likelihood_chain`, `self.log_posterior_record`, and
         `self.log_posterior_record_lm`.
 
@@ -259,21 +259,21 @@ class Walker:
             # Gibb's sample physical model parameters
             batch_chain, _, _ = self.run_model_batch(
                 steps_in_batch,
-                self.current_model_chain,
-                self.current_likelihood_chain,
+                self.current_model_params,
+                self.current_likelihood_params,
             )
 
-            self.current_model_chain = batch_chain[-1]
+            self.current_model_params = batch_chain[-1]
 
             if self.gibbs_sampling:
                 # Gibb's sample likelihood model parameters
                 batch_chains, _, _ = self.run_likelihood_batches(
                     steps_in_batch,
-                    self.current_likelihood_chain,
-                    self.current_model_chain,
+                    self.current_likelihood_params,
+                    self.current_model_params,
                 )
 
-                self.current_likelihood_chain = [c[-1] for c in batch_chains]
+                self.current_likelihood_params = [c[-1] for c in batch_chains]
 
             if verbose:
                 print(
@@ -288,30 +288,30 @@ class Walker:
             # Gibb's sample physical model parameters
             batch_chain, batch_logp, accepted_in_batch = self.run_model_batch(
                 steps_in_batch,
-                self.current_model_chain,
-                self.current_likelihood_chain,
+                self.current_model_params,
+                self.current_likelihood_params,
             )
 
-            self.current_model_chain = batch_chain[-1]
+            self.current_model_params = batch_chain[-1]
             accepted += accepted_in_batch
             pm_chain.append(batch_chain)
             pm_logp.append(batch_logp)
 
             if self.gibbs_sampling:
                 # Gibb's sample likelihood model parameters
-                batch_chains, batch_logps, accepted_in_batch = (
+                batch_chains, batch_logps, accepted_in_batch_lm = (
                     self.run_likelihood_batches(
                         steps_in_batch,
-                        self.current_likelihood_chain,
-                        self.current_model_chain,
+                        self.current_likelihood_params,
+                        self.current_model_params,
                     )
                 )
 
-                self.current_likelihood_chain = [c[-1] for c in batch_chains]
-                for i in range(len(self.likelihood_sample_confs)):
-                    accepted_lm[i] += accepted_in_batch[i]
-                    lm_chains[i].append(batch_chains[i])
-                    lm_logp[i].append(batch_logps[i])
+                self.current_likelihood_params = [c[-1] for c in batch_chains]
+                for j in range(len(self.likelihood_sample_confs)):
+                    accepted_lm[j] += accepted_in_batch_lm[j]
+                    lm_chains[j].append(batch_chains[j])
+                    lm_logp[j].append(batch_logps[j])
 
             if verbose:
                 msg = (
@@ -323,34 +323,34 @@ class Walker:
                 if self.gibbs_sampling:
                     msg += (
                         f"\n  Likelihood parameter acceptance fractions: "
-                        f"{[a/steps_in_batch for a in accepted_lm]}"
+                        f"{[a/steps_in_batch for a in accepted_in_batch_lm]}"
                     )
                 print(msg)
 
             # concatenate chains from each batch
-            pm_chain = np.concatenate(pm_chain, axis=0)
-            lm_chains = [np.concatenate(c) for c in lm_chains]
-            pm_logp = np.concatenate(pm_logp, axis=0)
-            lm_logp = [np.concatenate(c) for c in lm_logp]
+            pm_chain = [np.concatenate(pm_chain, axis=0)]
+            lm_chains = [[np.concatenate(c)] for c in lm_chains]
+            pm_logp = [np.concatenate(pm_logp, axis=0)]
+            lm_logp = [[np.concatenate(c)] for c in lm_logp]
 
-            # concatenate full chains to the record
-            self.model_chain = np.concatenate([self.model_chain, pm_chain], axis=0)
-            self.likelihood_chain = [
-                np.concatenate([old_chain, new_chain], axis=0)
-                for old_chain, new_chain in zip(self.likelihood_chain, lm_chains)
-            ]
-            self.log_posterior_record = np.concatenate(
-                [self.log_posterior_record, pm_logp], axis=0
-            )
-            self.log_posterior_record_lm = [
-                np.concatenate([old_logp, new_logp], axis=0)
-                for old_logp, new_logp in zip(self.log_posterior_record_lm, lm_logp)
-            ]
+        # concatenate full chains to the record
+        self.model_chain = np.concatenate([self.model_chain] + pm_chain, axis=0)
+        self.likelihood_chain = [
+            np.concatenate([old_chain] + new_chain, axis=0)
+            for old_chain, new_chain in zip(self.likelihood_chain, lm_chains)
+        ]
+        self.log_posterior_record = np.concatenate(
+            [self.log_posterior_record]+ pm_logp, axis=0
+        )
+        self.log_posterior_record_lm = [
+            np.concatenate([old_logp] + new_logp, axis=0)
+            for old_logp, new_logp in zip(self.log_posterior_record_lm, lm_logp)
+        ]
 
-            final_acceptance_frac = accepted / n_steps
-            final_acceptance_frac_lm = [a / n_steps for a in accepted_lm]
+        final_acceptance_frac = accepted / n_steps
+        final_acceptance_frac_lm = [a / n_steps for a in accepted_lm]
 
-            if self.gibbs_sampling:
-                return final_acceptance_frac, final_acceptance_frac_lm
-            else:
-                return final_acceptance_frac
+        if self.gibbs_sampling:
+            return final_acceptance_frac, final_acceptance_frac_lm
+        else:
+            return final_acceptance_frac

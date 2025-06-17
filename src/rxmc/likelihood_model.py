@@ -267,9 +267,9 @@ class ParametricLikelihoodModel(LikelihoodModel):
     """
 
     def __init__(self, likelihood_params: list[Parameter]):
+        super().__init__()
         self.params = likelihood_params
         self.n_params = len(likelihood_params)
-        super().__init__()
 
     def chi2(self, observation: Observation, ym: np.ndarray, *likelihood_params):
         """
