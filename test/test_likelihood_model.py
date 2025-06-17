@@ -10,25 +10,8 @@ from rxmc.likelihood_model import (
 )
 
 
-class TestLikelihoodModel(unittest.TestCase):
-
+class TestFixedCovarianceLikelihoodDiagCovariance(unittest.TestCase):
     def setUp(self):
-        self.observation = Observation(
-            x=np.array([0.0, 1.0, 2.0]), y=np.array([10.0, 15.0, 20.0])
-        )
-        self.likelihood_model = LikelihoodModel()
-
-    def test_residual(self):
-        delta = np.array([1.0, -1.0, 0.0])
-        ym = self.observation.y - delta
-        residual = self.likelihood_model.residual(self.observation, ym)
-        np.testing.assert_array_equal(residual, delta)
-
-
-class TestFixedCovarianceLikelihood(unittest.TestCase):
-
-    def setUp(self):
-        # Mock observation and model prediction
         self.observation = FixedCovarianceObservation(
             x=np.array([0.0, 1.0, 2.0]),
             y=np.array([10.0, 15.0, 20.0]),
@@ -36,42 +19,37 @@ class TestFixedCovarianceLikelihood(unittest.TestCase):
                 [1.0, 1.0, 1.0],
             ),
         )
-
         self.delta = np.array([1.0, -1.0, 0.0])
         self.ym = self.observation.y + self.delta
         self.ym_same = self.observation.y
-
-        # Create the FixedCovarianceLikelihood instance
-        self.likelihood_instance = FixedCovarianceLikelihood()
+        self.likelihood = FixedCovarianceLikelihood()
 
     def test_covariance(self):
-        cov = self.likelihood_instance.covariance(self.observation, self.ym)
+        cov = self.likelihood.covariance(self.observation, self.ym)
         np.testing.assert_array_equal(cov, self.observation.covariance)
 
     def test_chi2(self):
-        chi2_value = self.likelihood_instance.chi2(self.observation, self.ym)
-        expected_chi2 = np.linalg.norm(self.delta)
+        chi2_value = self.likelihood.chi2(self.observation, self.ym)
+        expected_chi2 = np.dot(self.delta, self.delta)
         self.assertAlmostEqual(chi2_value, expected_chi2)
 
     def test_log_likelihood(self):
-        log_likelihood_value = self.likelihood_instance.log_likelihood(
-            self.observation, self.ym
-        )
+        log_likelihood_value = self.likelihood.log_likelihood(self.observation, self.ym)
         expected_log_likelihood = -0.5 * (
-            np.dot(self.delta, self.delta) + np.log(3) + 3 * np.log(2 * np.pi)
+            np.dot(self.delta, self.delta) + np.log(1) + 3 * np.log(2 * np.pi)
         )
         self.assertAlmostEqual(log_likelihood_value, expected_log_likelihood)
 
     def test_chi2_same_(self):
-        chi2_value = self.likelihood_instance.chi2(self.observation, self.ym_same)
+        chi2_value = self.likelihood.chi2(self.observation, self.ym_same)
         expected_chi2 = 0.0
         self.assertAlmostEqual(chi2_value, expected_chi2)
 
     def test_log_likelihood_same_(self):
-        log_likelihood_value = self.likelihood_instance.log_likelihood(
+        log_likelihood_value = self.likelihood.log_likelihood(
             self.observation, self.ym_same
         )
-        expected_log_likelihood = 0.0
+        expected_log_likelihood = -0.5 * (np.log(1) + 3 * np.log(2 * np.pi))
         self.assertAlmostEqual(log_likelihood_value, expected_log_likelihood)
 
 
@@ -92,29 +70,26 @@ class TestFixedCovarianceLikelihood(unittest.TestCase):
         )
         self.delta = np.array([1.0, -1.0, 0.0])
         self.ym = self.observation.y - self.delta
-        self.likelihood_instance = FixedCovarianceLikelihood()
+        self.likelihood = FixedCovarianceLikelihood()
         self.expected_chi2 = self.delta @ np.linalg.inv(self.cov) @ self.delta
         self.expected_log_likelihood = -0.5 * (
             self.expected_chi2 + np.log(np.linalg.det(self.cov)) + 3 * np.log(2 * np.pi)
         )
 
     def test_covariance(self):
-        cov = self.likelihood_instance.covariance(self.observation, self.ym)
+        cov = self.likelihood.covariance(self.observation, self.ym)
         np.testing.assert_array_equal(cov, self.observation.covariance)
 
     def test_chi2(self):
-        chi2_value = self.likelihood_instance.chi2(self.observation, self.ym)
+        chi2_value = self.likelihood.chi2(self.observation, self.ym)
         self.assertAlmostEqual(chi2_value, self.expected_chi2)
 
     def test_log_likelihood(self):
-        log_likelihood_value = self.likelihood_instance.log_likelihood(
-            self.observation, self.ym
-        )
+        log_likelihood_value = self.likelihood.log_likelihood(self.observation, self.ym)
         self.assertAlmostEqual(log_likelihood_value, self.expected_log_likelihood)
 
 
 class TestLikelihoodModel(unittest.TestCase):
-
     def setUp(self):
         self.observation = Observation(
             x=np.array([0.0, 1.0, 2.0]),
@@ -156,63 +131,53 @@ class TestLikelihoodModel(unittest.TestCase):
 
 
 class TestUnknownNoiseFrac(unittest.TestCase):
-
-    def setup(self):
-        self.param = Parameter(
-            "noise",
-        )
-        self.likelihood_params = [self.param]
+    def setUp(self):
         self.observation = Observation(
             x=np.array([0.0, 1.0, 2.0]),
             y=np.array([10.0, 15.0, 20.0]),
             y_stat_err=np.array([0.1, 0.1, 0.1]),
-            y_sys_err_normalization=0.04,
-            y_sys_err_offset=0.2,
+            y_sys_err_normalization=0.00,
+            y_sys_err_offset=0.0,
         )
         self.ym = self.observation.y + np.array([1.0, -1.0, 0.0])
-        self.delta = self.observation.y - ym
-        self.likelihood = UnknownNoiseFractionErrorModel(self.likelihood_params, 0.01)
+        self.delta = self.observation.y - self.ym
+        self.likelihood = UnknownNoiseFractionErrorModel(0.00)
         self.noise_fraction = 0.312
         self.expected_covariance = (
-            np.diag(self.noise_fraction * 2 * self.observation.y**2)
+            np.diag((self.noise_fraction * self.ym) ** 2)
             + self.likelihood.fractional_uncorrelated_error**2 * np.diag(self.ym**2)
             + self.observation.y_sys_err_normalization**2 * np.outer(self.ym, self.ym)
             + self.observation.y_sys_err_offset**2 * np.ones((3, 3))
         )
-        self.expected_chi2 = self.delta.t @ self.expected_covariance @ self.delta
+        self.expected_chi2 = (
+            self.delta.T @ np.linalg.inv(self.expected_covariance) @ self.delta
+        )
         self.expected_log_likelihood = -0.5 * (
             self.expected_chi2
             + np.log(np.linalg.det(self.expected_covariance))
             + 3 * np.log(2 * np.pi)
         )
 
-        def test_covariance(self):
-            cov = self.likelihood.covariance(
-                self.observation, self.ym, self.noise_fraction
-            )
-            self.assertequal(cov.shape, (3, 3))
-            np.testing.assert_array_almost_equal(cov, self.expected_covariance)
+    def test_covariance(self):
+        cov = self.likelihood.covariance(self.observation, self.ym, self.noise_fraction)
+        self.assertEqual(cov.shape, (3, 3))
+        np.testing.assert_array_almost_equal(cov, self.expected_covariance)
 
-        def test_chi2(self):
-            chi2_value = self.likelihood.chi2(
-                self.observation, self.ym, self.noise_fraction
-            )
-            self.assertalmostequal(chi2_value, self.expected_chi2)
+    def test_chi2(self):
+        chi2_value = self.likelihood.chi2(
+            self.observation, self.ym, self.noise_fraction
+        )
+        self.assertAlmostEqual(chi2_value, self.expected_chi2)
 
-        def test_log_likelihood(self):
-            log_likelihood_value = self.likelihood.log_likelihood(
-                self.observation, self.ym, self.noise_fraction
-            )
-            self.assertalmostequal(log_likelihood_value, self.expected_log_likelihood)
+    def test_log_likelihood(self):
+        log_likelihood_value = self.likelihood.log_likelihood(
+            self.observation, self.ym, self.noise_fraction
+        )
+        self.assertAlmostEqual(log_likelihood_value, self.expected_log_likelihood)
 
 
 class TestUnknownNoise(unittest.TestCase):
-
-    def setup(self):
-        self.param = Parameter(
-            "noise",
-        )
-        self.likelihood_params = [self.param]
+    def setUp(self):
         self.observation = Observation(
             x=np.array([0.0, 1.0, 2.0]),
             y=np.array([10.0, 15.0, 20.0]),
@@ -220,46 +185,43 @@ class TestUnknownNoise(unittest.TestCase):
             y_sys_err_normalization=0.04,
             y_sys_err_offset=0.2,
         )
-        self.ym = self.observation.y + np.array([1.0, -1.0, 0.0])
-        self.ym = self.observation.y - self.delta
-        self.likelihood = UnknownNoiseErrorModel(self.likelihood_params, 0.01)
+        self.delta = np.array([1.0, -1.0, 0.0])
+        self.ym = self.observation.y + self.delta
+        self.likelihood = UnknownNoiseErrorModel(0.01)
         self.noise = 0.312
         self.expected_covariance = (
-            np.diag(self.noise**2)
+            np.diag(np.ones_like(self.ym) * self.noise**2)
             + self.likelihood.fractional_uncorrelated_error**2 * np.diag(self.ym**2)
             + self.observation.y_sys_err_normalization**2 * np.outer(self.ym, self.ym)
             + self.observation.y_sys_err_offset**2 * np.ones((3, 3))
         )
-        self.expected_chi2 = self.delta.t @ self.expected_covariance @ self.delta
+        self.expected_chi2 = (
+            self.delta.T @ np.linalg.inv(self.expected_covariance) @ self.delta
+        )
         self.expected_log_likelihood = -0.5 * (
             self.expected_chi2
             + np.log(np.linalg.det(self.expected_covariance))
             + 3 * np.log(2 * np.pi)
         )
 
-        def test_covariance(self):
-            cov = self.likelihood.covariance(self.observation, self.ym, self.noise)
-            self.assertequal(cov.shape, (3, 3))
-            np.testing.assert_array_almost_equal(cov, self.expected_covariance)
+    def test_covariance(self):
+        cov = self.likelihood.covariance(self.observation, self.ym, self.noise)
+        self.assertEqual(cov.shape, (3, 3))
+        np.testing.assert_array_almost_equal(cov, self.expected_covariance)
 
-        def test_chi2(self):
-            chi2_value = self.likelihood.chi2(self.observation, self.ym, self.noise)
-            self.assertalmostequal(chi2_value, self.expected_chi2)
+    def test_chi2(self):
+        chi2_value = self.likelihood.chi2(self.observation, self.ym, self.noise)
+        self.assertAlmostEqual(chi2_value, self.expected_chi2)
 
-        def test_log_likelihood(self):
-            log_likelihood_value = self.likelihood.log_likelihood(
-                self.observation, self.ym, self.noise
-            )
-            self.assertalmostequal(log_likelihood_value, self.expected_log_likelihood)
+    def test_log_likelihood(self):
+        log_likelihood_value = self.likelihood.log_likelihood(
+            self.observation, self.ym, self.noise
+        )
+        self.assertAlmostEqual(log_likelihood_value, self.expected_log_likelihood)
 
 
 class TestUnknownNormalization(unittest.TestCase):
-
-    def setup(self):
-        self.param = Parameter(
-            "noise",
-        )
-        self.likelihood_params = [self.param]
+    def setUp(self):
         self.observation = Observation(
             x=np.array([0.0, 1.0, 2.0]),
             y=np.array([10.0, 15.0, 20.0]),
@@ -269,7 +231,7 @@ class TestUnknownNormalization(unittest.TestCase):
         )
         self.ym = self.observation.y + np.array([1.0, -1.0, 0.0])
         self.delta = self.observation.y - self.ym
-        self.likelihood = UnknownNormalizationErrorModel(self.likelihood_params, 0.01)
+        self.likelihood = UnknownNormalizationErrorModel(0.01)
         self.normalization_err = 0.312
         self.expected_covariance = (
             np.diag(self.observation.y_stat_err**2)
@@ -277,31 +239,33 @@ class TestUnknownNormalization(unittest.TestCase):
             + self.normalization_err**2 * np.outer(self.ym, self.ym)
             + self.observation.y_sys_err_offset**2 * np.ones((3, 3))
         )
-        self.expected_chi2 = self.delta.t @ self.expected_covariance @ self.delta
+        self.expected_chi2 = (
+            self.delta.T @ np.linalg.inv(self.expected_covariance) @ self.delta
+        )
         self.expected_log_likelihood = -0.5 * (
             self.expected_chi2
             + np.log(np.linalg.det(self.expected_covariance))
             + 3 * np.log(2 * np.pi)
         )
 
-        def test_covariance(self):
-            cov = self.likelihood.covariance(
-                self.observation, self.ym, self.normalization_err
-            )
-            self.assertequal(cov.shape, (3, 3))
-            np.testing.assert_array_almost_equal(cov, self.expected_covariance)
+    def test_covariance(self):
+        cov = self.likelihood.covariance(
+            self.observation, self.ym, self.normalization_err
+        )
+        self.assertEqual(cov.shape, (3, 3))
+        np.testing.assert_array_almost_equal(cov, self.expected_covariance)
 
-        def test_chi2(self):
-            chi2_value = self.likelihood.chi2(
-                self.observation, self.ym, self.normalization_err
-            )
-            self.assertalmostequal(chi2_value, self.expected_chi2)
+    def test_chi2(self):
+        chi2_value = self.likelihood.chi2(
+            self.observation, self.ym, self.normalization_err
+        )
+        self.assertAlmostEqual(chi2_value, self.expected_chi2)
 
-        def test_log_likelihood(self):
-            log_likelihood_value = self.likelihood.log_likelihood(
-                self.observation, self.ym, self.normalization_err
-            )
-            self.assertalmostequal(log_likelihood_value, self.expected_log_likelihood)
+    def test_log_likelihood(self):
+        log_likelihood_value = self.likelihood.log_likelihood(
+            self.observation, self.ym, self.normalization_err
+        )
+        self.assertAlmostEqual(log_likelihood_value, self.expected_log_likelihood)
 
 
 if __name__ == "__main__":

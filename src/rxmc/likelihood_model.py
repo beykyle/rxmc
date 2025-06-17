@@ -291,7 +291,6 @@ class ParametricLikelihoodModel(LikelihoodModel):
             Chi-squared statistic.
         """
         assert len(likelihood_params) == self.n_params
-
         cov = self.covariance(observation, ym, *likelihood_params)
         mahalanobis, _ = mahalanobis_distance_cholesky(observation.y, ym, cov)
         return mahalanobis
@@ -410,14 +409,16 @@ class UnknownNoiseErrorModel(ParametricLikelihoodModel):
             Covariance matrix of the observation.
         """
         sigma_sys = systematic_covariance(
-            observation.y_sys_err_normalization, observation.y_sys_err_offset, ym
+            observation.y_sys_err_normalization,
+            observation.y_sys_err_offset,
+            ym,
         )
-        sigma_stat = statistical_covariance(np.ones_like(ym) * noise)
         sigma_model = uncorrelated_model_covariance(
             self.fractional_uncorrelated_error,
             ym,
         )
-        return sigma_sys + sigma_stat + sigma_model
+        sigma_stat = statistical_covariance(np.ones_like(ym) * noise)
+        return sigma_sys + sigma_model + sigma_stat
 
 
 class UnknownNoiseFractionErrorModel(ParametricLikelihoodModel):
@@ -479,14 +480,16 @@ class UnknownNoiseFractionErrorModel(ParametricLikelihoodModel):
             Covariance matrix of the observation.
         """
         sigma_sys = systematic_covariance(
-            observation.y_sys_err_normalization, observation.y_sys_err_offset, ym
+            observation.y_sys_err_normalization,
+            observation.y_sys_err_offset,
+            ym,
         )
-        sigma_stat = statistical_covariance(ym * noise_fraction)
         sigma_model = uncorrelated_model_covariance(
             self.fractional_uncorrelated_error,
             ym,
         )
-        return sigma_sys + sigma_stat + sigma_model
+        sigma_stat = statistical_covariance(ym * noise_fraction)
+        return sigma_sys + sigma_model + sigma_stat
 
 
 class UnknownNormalizationErrorModel(ParametricLikelihoodModel):
@@ -546,11 +549,11 @@ class UnknownNormalizationErrorModel(ParametricLikelihoodModel):
         sigma_sys = systematic_covariance(
             y_sys_err_normalization, observation.y_sys_err_offset, ym
         )
-        sigma_stat = statistical_covariance(observation.y_stat_err)
         sigma_model = uncorrelated_model_covariance(
             self.fractional_uncorrelated_error,
             ym,
         )
+        sigma_stat = statistical_covariance(observation.y_stat_err)
         return sigma_sys + sigma_stat + sigma_model
 
 
