@@ -340,7 +340,7 @@ class Walker:
             for old_chain, new_chain in zip(self.likelihood_chain, lm_chains)
         ]
         self.log_posterior_record = np.concatenate(
-            [self.log_posterior_record]+ pm_logp, axis=0
+            [self.log_posterior_record] + pm_logp, axis=0
         )
         self.log_posterior_record_lm = [
             np.concatenate([old_logp] + new_logp, axis=0)
