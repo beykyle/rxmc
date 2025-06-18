@@ -25,7 +25,41 @@ class Corpus:
         constraints: list[Constraint] = [],
         parametric_constraints: list[Constraint] = [],
         weights: np.ndarray = None,
+        weights_parametric: np.ndarray = None,
     ):
+        """
+        Initialize the Corpus with a list of constraints and parametric constraints.
+        Parameters
+        ----------
+        constraints : list[Constraint]
+            A list of `Constraint` objects that do not have parametric likelihoods.
+        parametric_constraints : list[Constraint]
+            A list of `Constraint` objects that have parametric likelihoods.
+        weights : np.ndarray, optional
+            A 1D array of weights for the regular constraints, which will scale
+            the contribution of each constraint to the total log likelihood.
+        weights_parametric : np.ndarray, optional
+            A 1D array of weights for the parametric constraints, which will scale
+            the contribution of each constraint to the total log likelihood.
+            Defaults to None, meaning all parametric constraints are equally weighted.
+
+        Raises
+        -------
+        ValueError
+            If the constraints or parametric_constraints are empty,
+            or if the physical model parameters do not match across constraints,
+            or if the likelihood models are incorrectly assigned to the lists.
+        ValueError
+            If the number of data points is less than the number of parameters,
+            indicating an under-constrained model.
+        ValueError
+            If the weights do not match the number of constraints or do not sum to
+            the number of constraints.
+        ValueError
+            If the constraints and parametric_constraints do not share the same
+            physical model parameters, or if there are mismatches in the likelihood
+            models assigned to the constraints.
+        """
         if len(constraints) > 0:
             self.model_params = constraints[0].physical_model.params
         elif len(parametric_constraints) > 0:
@@ -89,6 +123,23 @@ class Corpus:
                 raise ValueError("weights must sum to number of constraints")
         self.weights = weights
 
+        if weights_parametric is None:
+            weights_parametric = np.ones(
+                (len(self.parametric_constraints),), dtype=float
+            )
+        elif weights_parametric.shape != (len(self.parametric_constraints),):
+            raise ValueError(
+                "weights_parametric must be a 1D array with the same shape as parametric_constraints"
+            )
+        else:
+            if not np.isclose(
+                np.sum(weights_parametric), len(self.parametric_constraints)
+            ):
+                raise ValueError(
+                    "weights_parametric must sum to number of parametric constraints"
+                )
+        self.weights_parametric = weights_parametric
+
     def log_likelihood(self, model_params, likelihood_params: list[tuple] = []):
         """
         Returns the log-pdf that the PhysicalModel predictions, given
@@ -123,7 +174,7 @@ class Corpus:
         ll += sum(
             c.log_likelihood(model_params, lp) * w
             for w, c, lp in zip(
-                self.weights, self.parametric_constraints, likelihood_params
+                self.weights_parametric, self.parametric_constraints, likelihood_params
             )
         )
         return ll

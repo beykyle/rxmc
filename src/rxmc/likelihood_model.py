@@ -439,7 +439,9 @@ class UnknownNoiseFractionErrorModel(ParametricLikelihoodModel):
     def __init__(self, fractional_uncorrelated_error: float = 0):
         self.fractional_uncorrelated_error = fractional_uncorrelated_error
         likelihood_params = [
-            Parameter("noise_fraction", float, latex_name=r"\epsilon"),
+            Parameter(
+                "noise_fraction", float, latex_name=r"\epsilon", unit="dimensionless"
+            ),
         ]
         super().__init__(likelihood_params)
 
@@ -501,7 +503,12 @@ class UnknownNormalizationErrorModel(ParametricLikelihoodModel):
     def __init__(self, fractional_uncorrelated_error: float = 0):
         self.fractional_uncorrelated_error = fractional_uncorrelated_error
         likelihood_params = [
-            Parameter("y_sys_err_normalization", float, latex_name=r"\eta"),
+            Parameter(
+                "y_sys_err_normalization",
+                float,
+                latex_name=r"\eta",
+                unit="dimensionless",
+            ),
         ]
         super().__init__(likelihood_params)
 

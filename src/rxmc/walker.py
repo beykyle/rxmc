@@ -75,9 +75,12 @@ class Walker:
             np.empty((0, len(sampler.params)))
             for sampler in self.likelihood_sample_confs
         ]
-        self.current_model_params = self.model_sample_conf.starting_location
+        self.current_model_params = np.atleast_1d(
+            self.model_sample_conf.starting_location
+        )
         self.current_likelihood_params = [
-            conf.starting_location for conf in self.likelihood_sample_confs
+            np.atleast_1d(conf.starting_location)
+            for conf in self.likelihood_sample_confs
         ]
         self.log_posterior_record = []
         self.log_posterior_record_lm = [[] for _ in self.likelihood_sample_confs]
@@ -142,6 +145,7 @@ class Walker:
         chains = []
         logp = []
         accepted = []
+
         for i, lm_conf in enumerate(self.likelihood_sample_confs):
             constraint = self.corpus.parametric_constraints[i]
             current_x = self.current_likelihood_params
@@ -164,7 +168,7 @@ class Walker:
             # TODO test, fix and use marginal logl
             def log_posterior(x):
                 current_x[i] = x
-                return self.log_posterior(model_params, [x])
+                return self.log_posterior(model_params, current_x)
 
             # run a chain over the parameter space of just this
             # likelihood model
