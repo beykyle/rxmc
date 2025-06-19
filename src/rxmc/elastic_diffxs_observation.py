@@ -10,24 +10,12 @@ DEFAULT_LMAX = 20
 
 class ElasticDifferentialXSObservation(Observation):
     """
-    A `ReactionObservation` represents a single experiment, and may contain
-    multiple data sets corresponding to different reactions or energies, which
-    may be correlated in the `LikelihoodModel`. An example could be cross
-    sections from an EXFOR entry, which contains multiple subentries for
-    different reactions but has a COMMON field that indicates `ERR-SYS`
-    for all subentries - this would imply that the `LikelihoodModel`
-    should account for the correlation (e.g. by using a
-    `LikelihoodWithSystematicError` in which the attribute
-    `y_sys_err_normalization` corresponds to the COMMON `ERR-SYS` value in the
-    EXFOR entry).
+    Observation for elastic differential cross sections.
 
-    The order of `reactions` must match the order of `measurements`.
-
-    Also included in `ReactionObservation` are the precomputed workspaces
-    for the differential cross section calculations, which are set up
-    using `jitr.xs.elastic.DifferentialWorkspace`. This is done do that,
-    for any physical model, the compute time to get a log likelihood for a
-    given set of model parameters is minimized.
+    Internally, this involves initializing a
+    `jitr.xs.elastic.DifferentialWorkspace` which precomputes
+    things like boundary conditions to speed up computation of
+    observables for a given set of interaction parameter.
     """
 
     def __init__(
@@ -36,7 +24,7 @@ class ElasticDifferentialXSObservation(Observation):
         reaction: jitr.reactions.Reaction,
         quantity: str,
         lmax: int = DEFAULT_LMAX,
-        angles_vis: np.ndarray = np.linspace(0, np.pi, 100),
+        angles_vis: np.ndarray = np.linspace(0.01, np.pi, 100),
     ):
         """
         Initialize a ReactionObservation.
@@ -55,7 +43,6 @@ class ElasticDifferentialXSObservation(Observation):
         angles_vis: np.ndarray
             Array of angles in degrees for visualization.
         """
-        self.measurement = measurement
         self.reaction = reaction
         self.quantity = quantity
         self.lmax = lmax
@@ -64,14 +51,14 @@ class ElasticDifferentialXSObservation(Observation):
         angles_rad_vis = angles_vis * np.pi / 180
         check_angle_grid(angles_rad_vis, "angles_rad_vis")
 
-        angles_rad_constraint = self.measurement.x * np.pi / 180
+        angles_rad_constraint = measurement.x * np.pi / 180
         check_angle_grid(
             angles_rad_constraint,
-            f"x values for subentry: {self.measurement.subentry}",
+            f"x values for subentry: {measurement.subentry}",
         )
         constraint_ws, vis_ws, kinematics = set_up_solver(
             reaction=self.reaction,
-            Elab=self.measurement.Einc,
+            Elab=measurement.Einc,
             angle_rad_constraint=angles_rad_constraint,
             angle_rad_vis=angles_rad_vis,
             lmax=self.lmax,
@@ -80,35 +67,55 @@ class ElasticDifferentialXSObservation(Observation):
         self.visualization_workspace = vis_ws
 
         # convert measurement to correct quantity and normalize to `b/sr`
-        if self.quantity == "dXS/dRuth" and self.measurement.quantity == "dXS/dA":
-            assert self.measurement.y_units == "b/Sr"
-            # convert diff xs in b/sr to dimensionless Rutherford
-            norm = self.constraint_workspaces[-1].rutherford / 1000
-        elif self.quantity == "dXS/dA" and self.measurement.quantity == "dXS/dRuth":
-            # convert dimensionless Rutherford to diff xs in mb/sr
-            norm = 1000.0 / self.constraint_workspaces[-1].rutherford
-        elif self.quantity == "dXS/dA" and self.measurement.quantity == "dXS/dA":
-            assert self.measurement.y_units == "b/Sr"
-            # convert into mb/sr
-            norm =  1.0 / 1000
-        else:
-            norm = 1.0
-            if self.quantity != self.measurement.quantity:
+        if self.quantity == "dXS/dRuth" and measurement.quantity == "dXS/dA":
+            if measurement.y_units != "b/Sr":
                 raise ValueError(
-                    f"Quantity mismatch: {self.quantity} != {self.measurement.quantity}"
+                    f"In {measurement.subentry}: expected y_units to be 'b/Sr', "
+                    f"got {measurement.y_units}"
                 )
-            if self.measurement.y_units != "b/sr":
+            # convert diff xs in b/sr to dimensionless Rutherford
+            ruth_bsr = self.constraint_workspace.rutherford / 1000
+            norm = ruth_bsr
+        elif self.quantity == "dXS/dA" and measurement.quantity == "dXS/dRuth":
+            # convert dimensionless Rutherford to diff xs in mb/sr
+            norm = 1 / self.constraint_workspace.rutherford
+        elif self.quantity == "dXS/dA" and measurement.quantity == "dXS/dA":
+            if measurement.y_units != "b/Sr":
                 raise ValueError(
-                    f"Measurement y_units must be 'b/sr', got {self.measurement.y_units}"
+                    f"In {measurement.subentry}: expected y_units to be 'b/Sr', "
+                    f"got {measurement.y_units}"
                 )
 
-        assert np.allclose(self.measurement.general_systematic_err, 0)
+            # convert into b/sr to mb/sr
+            norm = 1.0e-3
+        elif self.quantity == "dXS/dRuth" and measurement.quantity == "dXS/dRuth":
+            if measurement.y_units == "no-dim":
+                raise ValueError(
+                    f"In {measurement.subentry}: expected y_units to be 'b/Sr', "
+                    f"got {measurement.y_units}"
+                )
+            norm = 1.0
+        elif self.quantity == "Ay" and measurement.quantity == "Ay":
+            if measurement.y_units == "no-dim":
+                raise ValueError(
+                    f"In {measurement.subentry}: expected y_units to be 'no-dim', "
+                    f"got {measurement.y_units}"
+                )
+            norm = 1.0
+        else:
+            norm = 1.0
+            if self.quantity != measurement.quantity:
+                raise ValueError(
+                    f"Quantity mismatch: {self.quantity} != {measurement.quantity}"
+                )
+        # check if systematic errors are common to all angles
+
         super().__init__(
             x=angles_rad_constraint,
-            y=self.measurement.y * norm,
-            y_stat_err=self.measurement.statistical_err * norm,
-            y_sys_err_offset= self.measurement.systematic_offset_err * norm,
-            y_sys_err_normalization=self.measurement.systematic_norm_err,
+            y=measurement.y / norm,
+            y_stat_err=measurement.statistical_err / norm,
+            y_sys_err_offset=measurement.systematic_offset_err / norm,
+            y_sys_err_normalization=measurement.systematic_norm_err,
         )
 
 

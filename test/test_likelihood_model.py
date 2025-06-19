@@ -102,10 +102,11 @@ class TestLikelihoodModel(unittest.TestCase):
         self.delta = self.observation.y - self.ym
         self.likelihood = LikelihoodModel(0.01)
         self.expected_covariance = (
-            np.diag(self.observation.y_stat_err**2)
+            self.observation.statistical_covariance
+            + self.observation.systematic_offset_covariance
+            + self.observation.systematic_normalization_covariance
+            * np.outer(self.ym, self.ym)
             + self.likelihood.fractional_uncorrelated_error**2 * np.diag(self.ym**2)
-            + self.observation.y_sys_err_normalization**2 * np.outer(self.ym, self.ym)
-            + self.observation.y_sys_err_offset**2 * np.ones((3, 3))
         )
         self.expected_chi2 = (
             self.delta.T @ np.linalg.inv(self.expected_covariance) @ self.delta
@@ -145,9 +146,10 @@ class TestUnknownNoiseFrac(unittest.TestCase):
         self.noise_fraction = 0.312
         self.expected_covariance = (
             np.diag((self.noise_fraction * self.ym) ** 2)
+            + self.observation.systematic_offset_covariance
+            + self.observation.systematic_normalization_covariance
+            * np.outer(self.ym, self.ym)
             + self.likelihood.fractional_uncorrelated_error**2 * np.diag(self.ym**2)
-            + self.observation.y_sys_err_normalization**2 * np.outer(self.ym, self.ym)
-            + self.observation.y_sys_err_offset**2 * np.ones((3, 3))
         )
         self.expected_chi2 = (
             self.delta.T @ np.linalg.inv(self.expected_covariance) @ self.delta
@@ -191,9 +193,10 @@ class TestUnknownNoise(unittest.TestCase):
         self.noise = 0.312
         self.expected_covariance = (
             np.diag(np.ones_like(self.ym) * self.noise**2)
+            + self.observation.systematic_offset_covariance
+            + self.observation.systematic_normalization_covariance
+            * np.outer(self.ym, self.ym)
             + self.likelihood.fractional_uncorrelated_error**2 * np.diag(self.ym**2)
-            + self.observation.y_sys_err_normalization**2 * np.outer(self.ym, self.ym)
-            + self.observation.y_sys_err_offset**2 * np.ones((3, 3))
         )
         self.expected_chi2 = (
             self.delta.T @ np.linalg.inv(self.expected_covariance) @ self.delta
@@ -234,10 +237,10 @@ class TestUnknownNormalization(unittest.TestCase):
         self.likelihood = UnknownNormalizationErrorModel(0.01)
         self.normalization_err = 0.312
         self.expected_covariance = (
-            np.diag(self.observation.y_stat_err**2)
-            + self.likelihood.fractional_uncorrelated_error**2 * np.diag(self.ym**2)
+            self.observation.statistical_covariance
+            + self.observation.systematic_offset_covariance
             + self.normalization_err**2 * np.outer(self.ym, self.ym)
-            + self.observation.y_sys_err_offset**2 * np.ones((3, 3))
+            + self.likelihood.fractional_uncorrelated_error**2 * np.diag(self.ym**2)
         )
         self.expected_chi2 = (
             self.delta.T @ np.linalg.inv(self.expected_covariance) @ self.delta
