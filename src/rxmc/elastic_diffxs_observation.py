@@ -32,11 +32,9 @@ class ElasticDifferentialXSObservation(Observation):
 
     def __init__(
         self,
-        measurements: list[Distribution],
-        reactions: list[jitr.reactions.Reaction],
+        measurement: Distribution,
+        reaction: jitr.reactions.Reaction,
         quantity: str,
-        y_sys_err_normalization: float = 0,
-        y_sys_err_offset: np.ndarray = 0,
         lmax: int = DEFAULT_LMAX,
         angles_vis: np.ndarray = np.linspace(0, np.pi, 100),
     ):
@@ -52,87 +50,65 @@ class ElasticDifferentialXSObservation(Observation):
         quantity: str
             The type of quantity to be calculated (e.g., "dXS/dA",
             "dXS/dRuth", "Ay").
-        y_sys_err_normalization : float
-            Systematic error normalization for the y values, default is 0.
-        y_sys_err_offset : float, optional
-            Global systematic error offset for the y values, default is 0
         lmax: int
             Maximum angular momentum, defaults to 20.
         angles_vis: np.ndarray
             Array of angles in degrees for visualization.
         """
-        self.measurements = measurements
-        size = sum(len(m.x) for m in measurements)
-        self.n_measurements = len(measurements)
-        self.reactions = reactions
+        self.measurement = measurement
+        self.reaction = reaction
         self.quantity = quantity
         self.lmax = lmax
+
         self.angles_vis = angles_vis
         angles_rad_vis = angles_vis * np.pi / 180
-
         check_angle_grid(angles_rad_vis, "angles_rad_vis")
 
-        if len(reactions) != self.n_measurements:
-            raise ValueError("Number of reactions must match number of measurements.")
+        angles_rad_constraint = self.measurement.x * np.pi / 180
+        check_angle_grid(
+            angles_rad_constraint,
+            f"x values for subentry: {self.measurement.subentry}",
+        )
+        constraint_ws, vis_ws, kinematics = set_up_solver(
+            reaction=self.reaction,
+            Elab=self.measurement.Einc,
+            angle_rad_constraint=angles_rad_constraint,
+            angle_rad_vis=angles_rad_vis,
+            lmax=self.lmax,
+        )
+        self.constraint_workspace = constraint_ws
+        self.visualization_workspace = vis_ws
 
-        measurement_quantity = measurements[0].quantity
-        if any(m.quantity != measurement_quantity for m in measurements):
-            raise ValueError(
-                "All measurements must have the same quantity, "
-                f"but got {[m.quantity for m in measurements]}"
-            )
+        # convert measurement to correct quantity and normalize to `b/sr`
+        if self.quantity == "dXS/dRuth" and self.measurement.quantity == "dXS/dA":
+            assert self.measurement.y_units == "b/Sr"
+            # convert diff xs in b/sr to dimensionless Rutherford
+            norm = self.constraint_workspaces[-1].rutherford / 1000
+        elif self.quantity == "dXS/dA" and self.measurement.quantity == "dXS/dRuth":
+            # convert dimensionless Rutherford to diff xs in mb/sr
+            norm = 1000.0 / self.constraint_workspaces[-1].rutherford
+        elif self.quantity == "dXS/dA" and self.measurement.quantity == "dXS/dA":
+            assert self.measurement.y_units == "b/Sr"
+            # convert into mb/sr
+            norm =  1.0 / 1000
+        else:
+            norm = 1.0
+            if self.quantity != self.measurement.quantity:
+                raise ValueError(
+                    f"Quantity mismatch: {self.quantity} != {self.measurement.quantity}"
+                )
+            if self.measurement.y_units != "b/sr":
+                raise ValueError(
+                    f"Measurement y_units must be 'b/sr', got {self.measurement.y_units}"
+                )
 
-        self.visualization_workspaces = []
-        self.constraint_workspaces = []
-        x = []
-        y = []
-        y_stat_err = []
-        meas_err_normalization = []
-        meas_err_offset = []
-        for rxn, m in zip(self.reactions, self.measurements):
-            angles_rad_constraint = m.x * np.pi / 180
-            check_angle_grid(
-                angles_rad_constraint, f"x values for subentry: {m.subentry}"
-            )
-            constraint_ws, vis_ws, kinematics = set_up_solver(
-                reaction=rxn,
-                Elab=m.Einc,
-                angle_rad_constraint=angles_rad_constraint,
-                angle_rad_vis=angles_rad_vis,
-                lmax=self.lmax,
-            )
-            self.constraint_workspaces.append(constraint_ws)
-            self.visualization_workspaces.append(vis_ws)
-
-            # convert measurement to correct quantity and normalize to `b/sr`
-            if self.quantity == "dXS/dRuth" and m.quantity == "dXS/dA":
-                if m.y_units == "b/sr":
-                    norm = self.constraint_workspaces[-1].rutherford / 1000
-                else:
-                    raise ValueError(
-                        f"Measurement units mismatch: {m.y_units} != b/sr for subentry {m.subentry}"
-                    )
-            elif self.quantity == "dXS/dA" and m.quantity == "dXS/dRuth":
-                norm = 1000.0 / self.constraint_workspaces[-1].rutherford
-            else:
-                norm = 1.0
-                if self.quantity != m.quantity:
-                    raise ValueError(
-                        f"Quantity mismatch: {self.quantity} != {m.quantity}"
-                    )
-
-            x.append(angles_rad_constraint)
-            y.append(m.y / norm)
-            y_stat_err.append(m.y_stat_err / norm)
-            meas_err_offset.append(m.y_sys_err_offset / norm)
-            #  fractional error in normalization not normalized
-            meas_err_normalization.append(m.y_sys_err_normalization)
-
+        assert np.allclose(self.measurement.general_systematic_err, 0)
         super().__init__(
-            x=np.concatenate(x),
-            y=np.concatenate(y),
-            y_stat_err=np.concatenate(y_stat_err),
-            y_sys_err_offset=y_sys_err_offset,
+            x=angles_rad_constraint,
+            y=self.measurement.y * norm,
+            y_stat_err=self.measurement.statistical_err * norm,
+            y_sys_err_offset= self.measurement.systematic_offset_err * norm,
+            y_sys_err_normalization=self.measurement.systematic_norm_err,
         )
 
 
