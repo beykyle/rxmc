@@ -1,22 +1,44 @@
+from typing import Type
+
 import numpy as np
 
 from exfor_tools.distribution import Distribution
 import jitr
 
-from .observation import Observation
+from .observation import Observation, FixedCovarianceObservation
 
 DEFAULT_LMAX = 20
 
 
-class ElasticDifferentialXSObservation(Observation):
+class ElasticDifferentialXSObservation:
     """
     Observation for elastic differential cross sections.
+
+    This class dynamically inherits from `Observation` or any other
+    derived class of `Observation` based on the `ObservationClass`
+    parameter in the initializer. The default behavior is to inherit
+    from `Observation`, but users can specify a different subclass, such as
+    `FixedCovarianceObservation`, to precompute the covariance matrix inverse
+    in cases where the covariance is fixed.
+
+    It is designed to handle elastic differential cross section
+    measurements, specifically absolute differential cross sections,
+    Rutherford normalized differential cross sections, and analyzing
+    powers (Ay).
 
     Internally, this involves initializing a
     `jitr.xs.elastic.DifferentialWorkspace` which precomputes
     things like boundary conditions to speed up computation of
     observables for a given set of interaction parameter.
     """
+
+    def __new__(cls, ObservationClass: Type[Observation]):
+        if not issubclass(ObservationClass, Observation):
+            raise ValueError("ObservationClass must be a subclass of Observation")
+
+        # Create an instance of the chosen ObservationClass
+        instance = super().__new__(ObservationClass)
+        return instance
 
     def __init__(
         self,
@@ -25,9 +47,11 @@ class ElasticDifferentialXSObservation(Observation):
         quantity: str,
         lmax: int = DEFAULT_LMAX,
         angles_vis: np.ndarray = np.linspace(0.01, np.pi, 100),
+        error_kwargs: dict = None,
+        ObservationClass: Type[Observation] = Observation,
     ):
         """
-        Initialize a ReactionObservation.
+        Initialize a ReactionObservation instance.
 
         Parameters:
         ----------
@@ -42,6 +66,14 @@ class ElasticDifferentialXSObservation(Observation):
             Maximum angular momentum, defaults to 20.
         angles_vis: np.ndarray
             Array of angles in degrees for visualization.
+        error_kwargs: dict
+            Additional keyword arguments for error handling.
+        ObservationClass: Type[Observation]
+            The base class Type that this instance will inherit from;
+            must be a subclass of `Observation`. Defaults to the base
+            class `Observation`, but the user can supply any other subclass.
+            For example, if one wants the covariance to be precomputed one
+            can supply `FixedCovarianceObservation` instead here.
         """
         self.reaction = reaction
         self.quantity = quantity
@@ -56,6 +88,9 @@ class ElasticDifferentialXSObservation(Observation):
             angles_rad_constraint,
             f"x values for subentry: {measurement.subentry}",
         )
+
+        # set up workspaces to precompute things for the solver
+        # for quick evaluation of observables
         constraint_ws, vis_ws, kinematics = set_up_solver(
             reaction=self.reaction,
             Elab=measurement.Einc,
@@ -108,15 +143,16 @@ class ElasticDifferentialXSObservation(Observation):
                 raise ValueError(
                     f"Quantity mismatch: {self.quantity} != {measurement.quantity}"
                 )
-        # check if systematic errors are common to all angles
 
-        super().__init__(
+        # initialize the observation instance
+        args, kwargs = set_up_observation(
+            ObservationClass,
+            measurement=measurement,
+            normalization=norm,
             x=angles_rad_constraint,
-            y=measurement.y / norm,
-            y_stat_err=measurement.statistical_err / norm,
-            y_sys_err_offset=measurement.systematic_offset_err / norm,
-            y_sys_err_normalization=measurement.systematic_norm_err,
+            **error_kwargs if error_kwargs is not None else {},
         )
+        ObservationClass.__init__(self, *args, **kwargs)
 
 
 def set_up_solver(
@@ -173,6 +209,108 @@ def set_up_solver(
     )
 
     return constraint_ws, visualization_ws, kinematics
+
+
+def set_up_observation(
+    ObservationClass: Type[Observation],
+    measurement: Distribution,
+    normalization: np.ndarray,
+    x=None,
+    include_sys_norm_err=True,
+    include_sys_offset_err=True,
+    include_statistical_err=True,
+):
+    r"""
+    Set up an `Observation` from a `Distribution`.
+
+    This function converts a `Distribution` into an `Observation` object,
+    normalizing the y-values and handling systematic and statistical errors.
+
+    Parameters
+    ----------
+    ObservationClass : Type[Observation]
+        The class type of the `Observation` to be created. It must be a
+        subclass of `Observation`, such as `FixedCovarianceObservation`.
+    measurement : Distribution
+        The measurement data containing x, y, and associated errors.
+    normalization : np.ndarray
+        Normalization factor which the y-values and all dimensionfull
+        errors (e.g. all others than normalization errors) will be divided by.
+    include_sys_norm_err : bool, optional
+        Whether to include systematic normalization errors, by default True.
+    include_sys_offset_err : bool, optional
+        Whether to include systematic offset errors, by default True.
+    include_statistical_err : bool, optional
+        Whether to include statistical errors, by default True.
+    x : np.ndarray, optional
+        Custom x-values to use instead of the measurement's x-values.
+    Returns
+    -------
+        args: tuple
+            args for the ObservationClass initializer
+        kwargs: dict
+            kwargs for the ObservationClass initializer
+    """
+
+    x = x if x is not None else measurement.x
+    y = measurement.y / normalization
+    y_stat_err = (
+        measurement.statistical_err / normalization
+        if include_statistical_err
+        else np.zeros_like(y)
+    )
+
+    y_sys_err_offset = None
+    y_sys_err_offset_mask = None
+    if include_sys_offset_err:
+        y_sys_err_offset = measurement.systematic_offset_err / normalization
+        # check if systematic errors are common to all angles
+        if not np.all(y_sys_err_offset == y_sys_err_offset[0]):
+            # TODO
+            assert False, "Systematic errors are not common to all angles"
+        else:
+            y_sys_err_offset_mask = np.ones_like(y, dtype=bool)
+
+    y_sys_err_normalization = None
+    y_sys_err_normalization_mask = None
+    if include_sys_norm_err:
+        y_sys_err_normalization = measurement.systematic_norm_err
+        # check if systematic errors are common to all angles
+        ratio = y_sys_err_normalization / y
+        if not np.all(ratio == ratio[0]):
+            # TODO
+            assert False, "Systematic errors are not common to all angles"
+        else:
+            y_sys_err_normalization_mask = np.ones_like(y, dtype=bool)
+
+    if ObservationClass is Observation:
+        # If the base class is Observation, we can directly return it
+        args = (x, y)
+        kwargs = {
+            "y_stat_err": y_stat_err,
+            "y_sys_err_offset": y_sys_err_offset,
+            "y_sys_err_offset_mask": y_sys_err_offset_mask,
+            "y_sys_err_normalization": y_sys_err_normalization,
+            "y_sys_err_normalization_mask": y_sys_err_normalization_mask,
+        }
+        return args, kwargs
+    elif ObservationClass is FixedCovarianceObservation:
+        if y_sys_err_normalization is not None or not np.allclose(
+            y_sys_err_normalization, 0.0
+        ):
+            raise ValueError(
+                "FixedCovarianceObservation does not support systematic normalization errors."
+            )
+        covariance = np.diag(y_stat_err**2)
+        if y_sys_err_offset is not None:
+            covariance += np.outer(y_sys_err_offset, y_sys_err_offset)
+        args = (x, y, covariance)
+        return args
+    else:
+        # if a new ObservationClass is written, a case for it must be added here
+        raise NotImplementedError(
+            f"ObservationClass {ObservationClass} is not implemented."
+        )
 
 
 def check_angle_grid(angles_rad: np.ndarray, name: str):
