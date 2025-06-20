@@ -17,7 +17,7 @@ class LikelihoodModel:
                         + \gamma^2 y_m^2(x_i, \alpha)
         \]
     where $sigma^2_{i}^{stat}$ is the statistical variance of the i-th
-    observation, (`observation.y_stat_err`) and $\gamma$ is the
+    observation, (`observation.statistical_covariance`) and $\gamma$ is the
     fractional uncorrelated error (`self.fractional_uncorrelated_error`).
 
     Here, $Sigma_{ij}^{sys}$ is the systematic covariance matrix:
@@ -52,8 +52,8 @@ class LikelihoodModel:
 
     def __init__(self, fractional_uncorrelated_error: float = 0.0):
         """
-        Initializes the LikelihoodWithSystematicError, optionally with
-        a fractional uncorrelated error.
+        Initializes the LikelihoodModel, optionally with a fractional
+        uncorrelated error.
 
         Parameters
         ----------
@@ -79,7 +79,7 @@ class LikelihoodModel:
                             + \gamma^2 y_m^2(x_i, \alpha)
             \]
         where $sigma^2_{i}^{stat}$ is the statistical variance of the i-th
-        observation, (`observation.y_stat_err`) and $\gamma$ is the
+        observation, (`observation.statistical_covariance`) and $\gamma$ is the
         fractional uncorrelated error (`self.fractional_uncorrelated_error`).
 
         Here, $Sigma_{ij}^{sys}$ is the systematic covariance matrix:
@@ -106,17 +106,12 @@ class LikelihoodModel:
         np.ndarray
             Covariance matrix of the observation.
         """
-        sigma_sys = systematic_covariance(
-            observation.y_sys_err_normalization,
-            observation.y_sys_err_offset,
-            ym,
-        )
+        sigma = observation.covariance(ym)
         sigma_model = uncorrelated_model_covariance(
             self.fractional_uncorrelated_error,
             ym,
         )
-        sigma_stat = statistical_covariance(observation.y_stat_err)
-        return sigma_sys + sigma_model + sigma_stat
+        return sigma + sigma_model
 
     def residual(self, observation: Observation, ym: np.ndarray):
         """
@@ -140,7 +135,7 @@ class LikelihoodModel:
     def chi2(self, observation: Observation, ym: np.ndarray):
         """
         Calculate the generalised chi-squared statistic. This is the
-        Malahanobis distance between y and ym
+        Mahalanobis distance between y and ym
 
         Parameters
         ----------
@@ -208,12 +203,12 @@ class FixedCovarianceLikelihood(LikelihoodModel):
         np.ndarray
             Fixed covariance matrix.
         """
-        return observation.covariance
+        return observation.cov
 
     def chi2(self, observation: FixedCovarianceObservation, ym: np.ndarray):
         """
         Calculate the generalised chi-squared statistic. This is the
-        Malahanobis distance between y and ym
+        Mahalanobis distance between y and ym
 
         Parameters
         ----------
@@ -274,7 +269,7 @@ class ParametricLikelihoodModel(LikelihoodModel):
     def chi2(self, observation: Observation, ym: np.ndarray, *likelihood_params):
         """
         Calculate the generalised chi-squared statistic. This is the
-        Malahanobis distance between `Observation.y` and `ym`.
+        Mahalanobis distance between `Observation.y` and `ym`.
 
         Parameters
         ----------
@@ -390,7 +385,7 @@ class UnknownNoiseErrorModel(ParametricLikelihoodModel):
             \sigma^2_{i}^{stat} = \epsilon^2 \delta_{ij}
         \]
 
-        (note this class ignores `observation.y_stat_err`, substituting it with
+        (note this class ignores `observation.statistical_covariance`, substituting it with
         the variable `noise`) and $\gamma$ is the fractional uncorrelated
         error (`self.fractional_uncorrelated_error`).
 
@@ -408,10 +403,9 @@ class UnknownNoiseErrorModel(ParametricLikelihoodModel):
         np.ndarray
             Covariance matrix of the observation.
         """
-        sigma_sys = systematic_covariance(
-            observation.y_sys_err_normalization,
-            observation.y_sys_err_offset,
-            ym,
+        sigma_sys = (
+            observation.systematic_offset_covariance
+            + observation.systematic_normalization_covariance * np.outer(ym, ym)
         )
         sigma_model = uncorrelated_model_covariance(
             self.fractional_uncorrelated_error,
@@ -463,7 +457,7 @@ class UnknownNoiseFractionErrorModel(ParametricLikelihoodModel):
             \Sigma_{ij}^{stat} = \epsilon^2 y(x_i)^2 \delta_{ij}
         \]
 
-        (note this class ignores `observation.y_stat_err`, substituting it with
+        (note this class ignores `observation.statistical_covariance`, substituting it with
         the variable `noise_fraction` multiplied by `ym`) and $\gamma$ is the
         fractional uncorrelated error (`self.fractional_uncorrelated_error`).
 
@@ -481,10 +475,9 @@ class UnknownNoiseFractionErrorModel(ParametricLikelihoodModel):
         np.ndarray
             Covariance matrix of the observation.
         """
-        sigma_sys = systematic_covariance(
-            observation.y_sys_err_normalization,
-            observation.y_sys_err_offset,
-            ym,
+        sigma_sys = (
+            observation.systematic_offset_covariance
+            + observation.systematic_normalization_covariance * np.outer(ym, ym)
         )
         sigma_model = uncorrelated_model_covariance(
             self.fractional_uncorrelated_error,
@@ -523,7 +516,7 @@ class UnknownNormalizationErrorModel(ParametricLikelihoodModel):
                             + \gamma^2 y_m^2(x_i, \alpha)
             \]
         where $sigma^2_{i}^{stat}$ is the statistical variance of the i-th
-        observation, (`observation.y_stat_err`) and $\gamma$ is the
+        observation, (`observation.statistical_covariance`) and $\gamma$ is the
         fractional uncorrelated error (`self.fractional_uncorrelated_error`).
 
         Here, $Sigma_{ij}^{sys}$ is the systematic covariance matrix:
@@ -553,14 +546,15 @@ class UnknownNormalizationErrorModel(ParametricLikelihoodModel):
         np.ndarray
             Covariance matrix of the observation.
         """
-        sigma_sys = systematic_covariance(
-            y_sys_err_normalization, observation.y_sys_err_offset, ym
+        sigma_sys = (
+            observation.systematic_offset_covariance
+            + y_sys_err_normalization**2 * np.outer(ym, ym)
         )
         sigma_model = uncorrelated_model_covariance(
             self.fractional_uncorrelated_error,
             ym,
         )
-        sigma_stat = statistical_covariance(observation.y_stat_err)
+        sigma_stat = observation.statistical_covariance
         return sigma_sys + sigma_stat + sigma_model
 
 
@@ -600,44 +594,6 @@ def log_likelihood(mahalanobis: float, log_det: float, n: int):
     return -0.5 * (mahalanobis + log_det + n * np.log(2 * np.pi))
 
 
-def systematic_covariance(
-    y_sys_err_normalization: float, y_sys_err_offset: float, ym: np.ndarray
-):
-    """
-    Returns the systematic covariance matrix:
-        \[
-            \Sigma_{ij}^{sys} = \eta**2 y_m(x_i, \alpha) y_m(x_j, \alpha) + \omega,
-        \]
-    where $\eta$ is the uncertainty in the overal normalization of the
-    observation (`observation.y_sys_err_normalization`) and $\omega$ is the uncertainty in
-    the additive normalization to the observation (`observation.y_sys_err_offset`).
-
-    Here, $y_m(x_i, \alpha)$ is the model prediction for the i-th
-    observation.
-
-    See Barlow, R (2021) 'Combining experiments with systematic errors'
-
-    Parameters
-    ----------
-    y_sys_err_normalization : float
-        Uncertainty in the overall normalization of the observation.
-    y_sys_err_offset : float
-        Uncertainty in the additive normalization to the observation.
-    ym : np.ndarray
-        Model prediction for the observation.
-
-    Returns
-    -------
-    np.ndarray
-        Systematic covariance matrix.
-    """
-    eta = y_sys_err_normalization
-    omega = y_sys_err_offset
-    covariance_normalization = eta**2 * np.outer(ym, ym)
-    covariance_offset = omega**2 * np.ones_like(covariance_normalization)
-    return covariance_normalization + covariance_offset
-
-
 def statistical_covariance(y_stat_err: np.ndarray):
     """
     Returns the statistical covariance matrix:
@@ -645,7 +601,7 @@ def statistical_covariance(y_stat_err: np.ndarray):
             \Sigma_{ij}^{stat} = \sigma^2_{i}^{stat} \delta_{ij}
         \]
     where $\sigma^2_{i}^{stat}$ is the statistical variance of the i-th
-    observation (`observation.y_stat_err`).
+    observation (`observation.statistical_covariance`).
 
     Parameters
     ----------

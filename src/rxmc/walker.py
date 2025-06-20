@@ -148,7 +148,6 @@ class Walker:
 
         for i, lm_conf in enumerate(self.likelihood_sample_confs):
             constraint = self.corpus.parametric_constraints[i]
-            current_x = self.current_likelihood_params
 
             # precompute the model prediction for just this constraint,
             # as the physical model parameters (and thus the physical
@@ -159,23 +158,17 @@ class Walker:
             # observables in the constraint containing the likelihood
             # model whose parameters we're sampling, rather than the
             # whole corpus
-            def log_posterior(x):
-                current_x[i] = x
+            def log_posterior_lm(x):
                 return lm_conf.prior.logpdf(x) + constraint.marginal_log_likelihood(
-                    ym, current_x
+                    ym, x
                 )
-
-            # TODO test, fix and use marginal logl
-            def log_posterior(x):
-                current_x[i] = x
-                return self.log_posterior(model_params, current_x)
 
             # run a chain over the parameter space of just this
             # likelihood model
             batch_chain, batch_logp, accepted_in_batch = lm_conf.sampling_algorithm(
                 x0=starting_locations[i],
                 n_steps=n_steps,
-                log_posterior=log_posterior,
+                log_posterior=log_posterior_lm,
                 propose=lm_conf.proposal,
                 rng=self.rng,
             )

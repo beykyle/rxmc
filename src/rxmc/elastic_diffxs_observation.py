@@ -1,47 +1,57 @@
+from typing import Type
+
 import numpy as np
 
 from exfor_tools.distribution import Distribution
 import jitr
 
-from .observation import Observation
+from .observation import Observation, FixedCovarianceObservation
 
 DEFAULT_LMAX = 20
 
 
-class ElasticDifferentialXSObservation(Observation):
+class ElasticDifferentialXSObservation:
     """
-    A `ReactionObservation` represents a single experiment, and may contain
-    multiple data sets corresponding to different reactions or energies, which
-    may be correlated in the `LikelihoodModel`. An example could be cross
-    sections from an EXFOR entry, which contains multiple subentries for
-    different reactions but has a COMMON field that indicates `ERR-SYS`
-    for all subentries - this would imply that the `LikelihoodModel`
-    should account for the correlation (e.g. by using a
-    `LikelihoodWithSystematicError` in which the attribute
-    `y_sys_err_normalization` corresponds to the COMMON `ERR-SYS` value in the
-    EXFOR entry).
+    Observation for elastic differential cross sections.
 
-    The order of `reactions` must match the order of `measurements`.
+    This class dynamically inherits from `Observation` or any other
+    derived class of `Observation` based on the `ObservationClass`
+    parameter in the initializer. The default behavior is to inherit
+    from `Observation`, but users can specify a different subclass, such as
+    `FixedCovarianceObservation`, to precompute the covariance matrix inverse
+    in cases where the covariance is fixed.
 
-    Also included in `ReactionObservation` are the precomputed workspaces
-    for the differential cross section calculations, which are set up
-    using `jitr.xs.elastic.DifferentialWorkspace`. This is done do that,
-    for any physical model, the compute time to get a log likelihood for a
-    given set of model parameters is minimized.
+    It is designed to handle elastic differential cross section
+    measurements, specifically absolute differential cross sections,
+    Rutherford normalized differential cross sections, and analyzing
+    powers (Ay).
+
+    Internally, this involves initializing a
+    `jitr.xs.elastic.DifferentialWorkspace` which precomputes
+    things like boundary conditions to speed up computation of
+    observables for a given set of interaction parameter.
     """
+
+    def __new__(cls, ObservationClass: Type[Observation]):
+        if not issubclass(ObservationClass, Observation):
+            raise ValueError("ObservationClass must be a subclass of Observation")
+
+        # Create an instance of the chosen ObservationClass
+        instance = super().__new__(ObservationClass)
+        return instance
 
     def __init__(
         self,
-        measurements: list[Distribution],
-        reactions: list[jitr.reactions.Reaction],
+        measurement: Distribution,
+        reaction: jitr.reactions.Reaction,
         quantity: str,
-        y_sys_err_normalization: float = 0,
-        y_sys_err_offset: np.ndarray = 0,
         lmax: int = DEFAULT_LMAX,
-        angles_vis: np.ndarray = np.linspace(0, np.pi, 100),
+        angles_vis: np.ndarray = np.linspace(0.01, np.pi, 100),
+        error_kwargs: dict = None,
+        ObservationClass: Type[Observation] = Observation,
     ):
         """
-        Initialize a ReactionObservation.
+        Initialize a ReactionObservation instance.
 
         Parameters:
         ----------
@@ -52,88 +62,97 @@ class ElasticDifferentialXSObservation(Observation):
         quantity: str
             The type of quantity to be calculated (e.g., "dXS/dA",
             "dXS/dRuth", "Ay").
-        y_sys_err_normalization : float
-            Systematic error normalization for the y values, default is 0.
-        y_sys_err_offset : float, optional
-            Global systematic error offset for the y values, default is 0
         lmax: int
             Maximum angular momentum, defaults to 20.
         angles_vis: np.ndarray
             Array of angles in degrees for visualization.
+        error_kwargs: dict
+            Additional keyword arguments for error handling.
+        ObservationClass: Type[Observation]
+            The base class Type that this instance will inherit from;
+            must be a subclass of `Observation`. Defaults to the base
+            class `Observation`, but the user can supply any other subclass.
+            For example, if one wants the covariance to be precomputed one
+            can supply `FixedCovarianceObservation` instead here.
         """
-        self.measurements = measurements
-        size = sum(len(m.x) for m in measurements)
-        self.n_measurements = len(measurements)
-        self.reactions = reactions
+        self.reaction = reaction
         self.quantity = quantity
         self.lmax = lmax
+
         self.angles_vis = angles_vis
         angles_rad_vis = angles_vis * np.pi / 180
-
         check_angle_grid(angles_rad_vis, "angles_rad_vis")
 
-        if len(reactions) != self.n_measurements:
-            raise ValueError("Number of reactions must match number of measurements.")
-
-        measurement_quantity = measurements[0].quantity
-        if any(m.quantity != measurement_quantity for m in measurements):
-            raise ValueError(
-                "All measurements must have the same quantity, "
-                f"but got {[m.quantity for m in measurements]}"
-            )
-
-        self.visualization_workspaces = []
-        self.constraint_workspaces = []
-        x = []
-        y = []
-        y_stat_err = []
-        meas_err_normalization = []
-        meas_err_offset = []
-        for rxn, m in zip(self.reactions, self.measurements):
-            angles_rad_constraint = m.x * np.pi / 180
-            check_angle_grid(
-                angles_rad_constraint, f"x values for subentry: {m.subentry}"
-            )
-            constraint_ws, vis_ws, kinematics = set_up_solver(
-                reaction=rxn,
-                Elab=m.Einc,
-                angle_rad_constraint=angles_rad_constraint,
-                angle_rad_vis=angles_rad_vis,
-                lmax=self.lmax,
-            )
-            self.constraint_workspaces.append(constraint_ws)
-            self.visualization_workspaces.append(vis_ws)
-
-            # convert measurement to correct quantity and normalize to `b/sr`
-            if self.quantity == "dXS/dRuth" and m.quantity == "dXS/dA":
-                if m.y_units == "b/sr":
-                    norm = self.constraint_workspaces[-1].rutherford / 1000
-                else:
-                    raise ValueError(
-                        f"Measurement units mismatch: {m.y_units} != b/sr for subentry {m.subentry}"
-                    )
-            elif self.quantity == "dXS/dA" and m.quantity == "dXS/dRuth":
-                norm = 1000.0 / self.constraint_workspaces[-1].rutherford
-            else:
-                norm = 1.0
-                if self.quantity != m.quantity:
-                    raise ValueError(
-                        f"Quantity mismatch: {self.quantity} != {m.quantity}"
-                    )
-
-            x.append(angles_rad_constraint)
-            y.append(m.y / norm)
-            y_stat_err.append(m.y_stat_err / norm)
-            meas_err_offset.append(m.y_sys_err_offset / norm)
-            #  fractional error in normalization not normalized
-            meas_err_normalization.append(m.y_sys_err_normalization)
-
-        super().__init__(
-            x=np.concatenate(x),
-            y=np.concatenate(y),
-            y_stat_err=np.concatenate(y_stat_err),
-            y_sys_err_offset=y_sys_err_offset,
+        angles_rad_constraint = measurement.x * np.pi / 180
+        check_angle_grid(
+            angles_rad_constraint,
+            f"x values for subentry: {measurement.subentry}",
         )
+
+        # set up workspaces to precompute things for the solver
+        # for quick evaluation of observables
+        constraint_ws, vis_ws, kinematics = set_up_solver(
+            reaction=self.reaction,
+            Elab=measurement.Einc,
+            angle_rad_constraint=angles_rad_constraint,
+            angle_rad_vis=angles_rad_vis,
+            lmax=self.lmax,
+        )
+        self.constraint_workspace = constraint_ws
+        self.visualization_workspace = vis_ws
+
+        # convert measurement to correct quantity and normalize to `b/sr`
+        if self.quantity == "dXS/dRuth" and measurement.quantity == "dXS/dA":
+            if measurement.y_units != "b/Sr":
+                raise ValueError(
+                    f"In {measurement.subentry}: expected y_units to be 'b/Sr', "
+                    f"got {measurement.y_units}"
+                )
+            # convert diff xs in b/sr to dimensionless Rutherford
+            ruth_bsr = self.constraint_workspace.rutherford / 1000
+            norm = ruth_bsr
+        elif self.quantity == "dXS/dA" and measurement.quantity == "dXS/dRuth":
+            # convert dimensionless Rutherford to diff xs in mb/sr
+            norm = 1 / self.constraint_workspace.rutherford
+        elif self.quantity == "dXS/dA" and measurement.quantity == "dXS/dA":
+            if measurement.y_units != "b/Sr":
+                raise ValueError(
+                    f"In {measurement.subentry}: expected y_units to be 'b/Sr', "
+                    f"got {measurement.y_units}"
+                )
+
+            # convert into b/sr to mb/sr
+            norm = 1.0e-3
+        elif self.quantity == "dXS/dRuth" and measurement.quantity == "dXS/dRuth":
+            if measurement.y_units == "no-dim":
+                raise ValueError(
+                    f"In {measurement.subentry}: expected y_units to be 'b/Sr', "
+                    f"got {measurement.y_units}"
+                )
+            norm = 1.0
+        elif self.quantity == "Ay" and measurement.quantity == "Ay":
+            if measurement.y_units == "no-dim":
+                raise ValueError(
+                    f"In {measurement.subentry}: expected y_units to be 'no-dim', "
+                    f"got {measurement.y_units}"
+                )
+            norm = 1.0
+        else:
+            norm = 1.0
+            if self.quantity != measurement.quantity:
+                raise ValueError(
+                    f"Quantity mismatch: {self.quantity} != {measurement.quantity}"
+                )
+
+        # initialize the observation instance
+        args, kwargs = set_up_observation(
+            ObservationClass,
+            measurement=measurement,
+            normalization=norm,
+            x=angles_rad_constraint,
+            **error_kwargs if error_kwargs is not None else {},
+        )
+        ObservationClass.__init__(self, *args, **kwargs)
 
 
 def set_up_solver(
@@ -190,6 +209,108 @@ def set_up_solver(
     )
 
     return constraint_ws, visualization_ws, kinematics
+
+
+def set_up_observation(
+    ObservationClass: Type[Observation],
+    measurement: Distribution,
+    normalization: np.ndarray,
+    x=None,
+    include_sys_norm_err=True,
+    include_sys_offset_err=True,
+    include_statistical_err=True,
+):
+    r"""
+    Set up an `Observation` from a `Distribution`.
+
+    This function converts a `Distribution` into an `Observation` object,
+    normalizing the y-values and handling systematic and statistical errors.
+
+    Parameters
+    ----------
+    ObservationClass : Type[Observation]
+        The class type of the `Observation` to be created. It must be a
+        subclass of `Observation`, such as `FixedCovarianceObservation`.
+    measurement : Distribution
+        The measurement data containing x, y, and associated errors.
+    normalization : np.ndarray
+        Normalization factor which the y-values and all dimensionfull
+        errors (e.g. all others than normalization errors) will be divided by.
+    include_sys_norm_err : bool, optional
+        Whether to include systematic normalization errors, by default True.
+    include_sys_offset_err : bool, optional
+        Whether to include systematic offset errors, by default True.
+    include_statistical_err : bool, optional
+        Whether to include statistical errors, by default True.
+    x : np.ndarray, optional
+        Custom x-values to use instead of the measurement's x-values.
+    Returns
+    -------
+        args: tuple
+            args for the ObservationClass initializer
+        kwargs: dict
+            kwargs for the ObservationClass initializer
+    """
+
+    x = x if x is not None else measurement.x
+    y = measurement.y / normalization
+    y_stat_err = (
+        measurement.statistical_err / normalization
+        if include_statistical_err
+        else np.zeros_like(y)
+    )
+
+    y_sys_err_offset = None
+    y_sys_err_offset_mask = None
+    if include_sys_offset_err:
+        y_sys_err_offset = measurement.systematic_offset_err / normalization
+        # check if systematic errors are common to all angles
+        if not np.all(y_sys_err_offset == y_sys_err_offset[0]):
+            # TODO
+            assert False, "Systematic errors are not common to all angles"
+        else:
+            y_sys_err_offset_mask = np.ones_like(y, dtype=bool)
+
+    y_sys_err_normalization = None
+    y_sys_err_normalization_mask = None
+    if include_sys_norm_err:
+        y_sys_err_normalization = measurement.systematic_norm_err
+        # check if systematic errors are common to all angles
+        ratio = y_sys_err_normalization / y
+        if not np.all(ratio == ratio[0]):
+            # TODO
+            assert False, "Systematic errors are not common to all angles"
+        else:
+            y_sys_err_normalization_mask = np.ones_like(y, dtype=bool)
+
+    if ObservationClass is Observation:
+        # If the base class is Observation, we can directly return it
+        args = (x, y)
+        kwargs = {
+            "y_stat_err": y_stat_err,
+            "y_sys_err_offset": y_sys_err_offset,
+            "y_sys_err_offset_mask": y_sys_err_offset_mask,
+            "y_sys_err_normalization": y_sys_err_normalization,
+            "y_sys_err_normalization_mask": y_sys_err_normalization_mask,
+        }
+        return args, kwargs
+    elif ObservationClass is FixedCovarianceObservation:
+        if y_sys_err_normalization is not None or not np.allclose(
+            y_sys_err_normalization, 0.0
+        ):
+            raise ValueError(
+                "FixedCovarianceObservation does not support systematic normalization errors."
+            )
+        covariance = np.diag(y_stat_err**2)
+        if y_sys_err_offset is not None:
+            covariance += np.outer(y_sys_err_offset, y_sys_err_offset)
+        args = (x, y, covariance)
+        return args
+    else:
+        # if a new ObservationClass is written, a case for it must be added here
+        raise NotImplementedError(
+            f"ObservationClass {ObservationClass} is not implemented."
+        )
 
 
 def check_angle_grid(angles_rad: np.ndarray, name: str):
