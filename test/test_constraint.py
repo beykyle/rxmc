@@ -5,8 +5,9 @@ from rxmc import constraint
 
 class TestFixedCovConstraint(unittest.TestCase):
 
+    # TODO
     def test_diagonal_cov(self):
-        return True
+        self.assertTrue(True)
 
 
 if __name__ == "__main__":

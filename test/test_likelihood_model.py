@@ -26,7 +26,7 @@ class TestFixedCovarianceLikelihoodDiagCovariance(unittest.TestCase):
 
     def test_covariance(self):
         cov = self.likelihood.covariance(self.observation, self.ym)
-        np.testing.assert_array_equal(cov, self.observation.covariance)
+        np.testing.assert_array_equal(cov, self.observation.cov)
 
     def test_chi2(self):
         chi2_value = self.likelihood.chi2(self.observation, self.ym)
@@ -78,7 +78,7 @@ class TestFixedCovarianceLikelihood(unittest.TestCase):
 
     def test_covariance(self):
         cov = self.likelihood.covariance(self.observation, self.ym)
-        np.testing.assert_array_equal(cov, self.observation.covariance)
+        np.testing.assert_array_equal(cov, self.observation.cov)
 
     def test_chi2(self):
         chi2_value = self.likelihood.chi2(self.observation, self.ym)

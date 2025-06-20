@@ -135,7 +135,7 @@ class LikelihoodModel:
     def chi2(self, observation: Observation, ym: np.ndarray):
         """
         Calculate the generalised chi-squared statistic. This is the
-        Malahanobis distance between y and ym
+        Mahalanobis distance between y and ym
 
         Parameters
         ----------
@@ -203,12 +203,12 @@ class FixedCovarianceLikelihood(LikelihoodModel):
         np.ndarray
             Fixed covariance matrix.
         """
-        return observation.covariance
+        return observation.cov
 
     def chi2(self, observation: FixedCovarianceObservation, ym: np.ndarray):
         """
         Calculate the generalised chi-squared statistic. This is the
-        Malahanobis distance between y and ym
+        Mahalanobis distance between y and ym
 
         Parameters
         ----------
@@ -269,7 +269,7 @@ class ParametricLikelihoodModel(LikelihoodModel):
     def chi2(self, observation: Observation, ym: np.ndarray, *likelihood_params):
         """
         Calculate the generalised chi-squared statistic. This is the
-        Malahanobis distance between `Observation.y` and `ym`.
+        Mahalanobis distance between `Observation.y` and `ym`.
 
         Parameters
         ----------

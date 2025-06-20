@@ -86,7 +86,8 @@ class Observation:
                 f"it has shape {y_stat_err.shape} and y has shape {self.y.shape}"
             )
         self.statistical_covariance = np.diag(y_stat_err**2)
-        self.systematic_offset_covariance = np.zeros_like(self.statistical_covariance)
+
+        # systematic errors in normalization
         self.systematic_normalization_covariance = np.zeros_like(
             self.statistical_covariance
         )
@@ -109,14 +110,16 @@ class Observation:
                         raise ValueError(
                             "each mask in y_sys_err_normalization_mask must have the same shape as y"
                         )
-                    sys_err = sys_err * np.ones_like(y)
+                    sys_err = sys_err * mask.astype(float)
                     self.systematic_normalization_covariance += np.outer(
-                        mask.astype(float), mask.astype(float)
+                        sys_err, sys_err
                     )
             elif is_scalar_like(y_sys_err_normalization):
                 sys_err = y_sys_err_normalization * np.ones_like(y)
                 self.systematic_normalization_covariance += np.outer(sys_err, sys_err)
 
+        # systematic errors in offset
+        self.systematic_offset_covariance = np.zeros_like(self.statistical_covariance)
         if y_sys_err_offset is not None:
             if is_array_like(y_sys_err_offset):
                 if y_sys_err_offset_mask is None:
@@ -194,8 +197,8 @@ class Observation:
         return int(
             np.sum(
                 np.logical_and(
-                    self.observation.y[mask] >= ylow[mask],
-                    self.observation.y[mask] < yhigh[mask],
+                    self.y[mask] >= ylow[mask],
+                    self.y[mask] < yhigh[mask],
                 )
             )
         )
@@ -238,11 +241,10 @@ class FixedCovarianceObservation(Observation):
             The fixed covariance matrix associated with the observation.
         """
         super().__init__(x, y)
-        self.covariance = covariance
         if covariance.shape == (self.y.shape[0],):
-            self.covariance = np.diag(covariance)
+            self.cov = np.diag(covariance)
         elif covariance.shape == (self.y.shape[0], self.y.shape[0]):
-            self.covariance = covariance
+            self.cov = covariance
         else:
             raise ValueError(
                 f"Incompatible covariance matrix shape "
@@ -250,8 +252,8 @@ class FixedCovarianceObservation(Observation):
                 f"{self.y.shape[0]} data points"
             )
 
-        self.cov_inv = np.linalg.inv(self.covariance)
-        sign, self.log_det = np.linalg.slogdet(self.covariance)
+        self.cov_inv = np.linalg.inv(self.cov)
+        sign, self.log_det = np.linalg.slogdet(self.cov)
         if sign != +1:
             raise ValueError("Invalid covariance matrix! Must be positive definite.")
 
@@ -265,7 +267,7 @@ class FixedCovarianceObservation(Observation):
         y : np.ndarray
             The dependent variable data for which to compute the covariance.
         """
-        return self.covariance
+        return self.cov
 
 
 def is_array_like(obj):
