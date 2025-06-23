@@ -96,48 +96,8 @@ class ElasticDifferentialXSObservation:
         self.constraint_workspace = constraint_ws
         self.visualization_workspace = vis_ws
 
-        # convert measurement to correct quantity and normalize to `b/sr`
-        if self.quantity == "dXS/dRuth" and measurement.quantity == "dXS/dA":
-            if measurement.y_units != "b/Sr":
-                raise ValueError(
-                    f"In {measurement.subentry}: expected y_units to be 'b/Sr', "
-                    f"got {measurement.y_units}"
-                )
-            # convert diff xs in b/sr to dimensionless Rutherford
-            ruth_bsr = self.constraint_workspace.rutherford / 1000
-            norm = ruth_bsr
-        elif self.quantity == "dXS/dA" and measurement.quantity == "dXS/dRuth":
-            # convert dimensionless Rutherford to diff xs in mb/sr
-            norm = 1 / self.constraint_workspace.rutherford
-        elif self.quantity == "dXS/dA" and measurement.quantity == "dXS/dA":
-            if measurement.y_units != "b/Sr":
-                raise ValueError(
-                    f"In {measurement.subentry}: expected y_units to be 'b/Sr', "
-                    f"got {measurement.y_units}"
-                )
-
-            # convert into b/sr to mb/sr
-            norm = 1.0e-3
-        elif self.quantity == "dXS/dRuth" and measurement.quantity == "dXS/dRuth":
-            if measurement.y_units != "no-dim":
-                raise ValueError(
-                    f"In {measurement.subentry}: expected y_units to be 'no-dim', "
-                    f"got {measurement.y_units}"
-                )
-            norm = 1.0
-        elif self.quantity == "Ay" and measurement.quantity == "Ay":
-            if measurement.y_units != "no-dim":
-                raise ValueError(
-                    f"In {measurement.subentry}: expected y_units to be 'no-dim', "
-                    f"got {measurement.y_units}"
-                )
-            norm = 1.0
-        else:
-            norm = 1.0
-            if self.quantity != measurement.quantity:
-                raise ValueError(
-                    f"Quantity mismatch: {self.quantity} != {measurement.quantity}"
-                )
+        # Convert measurement to correct quantity and normalize to `b/sr`
+        norm = self.compute_normalization(measurement)
 
         # initialize the observation instance
         args, kwargs = set_up_observation(
@@ -149,12 +109,40 @@ class ElasticDifferentialXSObservation:
         )
 
         # Create an instance of the chosen ObservationClass
-        self.observation_instance = ObservationClass(*args, **kwargs)
+        self._obs = ObservationClass(*args, **kwargs)
 
-    def __getattr__(self, name):
-        # Delegate attribute access to the observation instance
-        return getattr(self.observation_instance, name)
+        self.x = self._obs.x
+        self.y = self._obs.y
+        self.n_data_pts = self._obs.n_data_pts
 
+    def covariance(self, y):
+        return self._obs.covariance(y)
+
+    def residual(self, ym):
+        return self._obs.residual(ym)
+
+    def num_pts_within_interval(self, interval):
+        return self._obs.num_pts_within_interval(interval)
+
+    def compute_normalization(self, measurement):
+        if self.quantity == "dXS/dRuth" and measurement.quantity == "dXS/dA":
+            if measurement.y_units != "b/Sr":
+                raise ValueError(f"Expected y_units to be 'b/Sr', got {measurement.y_units}")
+            return self.constraint_workspace.rutherford / 1000
+        elif self.quantity == "dXS/dA" and measurement.quantity == "dXS/dRuth":
+            return 1 / self.constraint_workspace.rutherford
+        elif self.quantity == "dXS/dA" and measurement.quantity == "dXS/dA":
+            if measurement.y_units != "b/Sr":
+                raise ValueError(f"Expected y_units to be 'b/Sr', got {measurement.y_units}")
+            return 1.0e-3
+        elif self.quantity in {"dXS/dRuth", "Ay"} and self.quantity == measurement.quantity:
+            if measurement.y_units != "no-dim":
+                raise ValueError(f"Expected y_units to be 'no-dim', got {measurement.y_units}")
+            return 1.0
+        else:
+            if self.quantity != measurement.quantity:
+                raise ValueError(f"Quantity mismatch: {self.quantity} != {measurement.quantity}")
+            return 1.0
 
 def set_up_solver(
     reaction: jitr.reactions.Reaction,
