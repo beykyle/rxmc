@@ -32,14 +32,6 @@ class ElasticDifferentialXSObservation:
     observables for a given set of interaction parameter.
     """
 
-    def __new__(cls, ObservationClass: Type[Observation]):
-        if not issubclass(ObservationClass, Observation):
-            raise ValueError("ObservationClass must be a subclass of Observation")
-
-        # Create an instance of the chosen ObservationClass
-        instance = super().__new__(ObservationClass)
-        return instance
-
     def __init__(
         self,
         measurement: Distribution,
@@ -47,8 +39,8 @@ class ElasticDifferentialXSObservation:
         quantity: str,
         lmax: int = DEFAULT_LMAX,
         angles_vis: np.ndarray = np.linspace(0.01, np.pi, 100),
-        error_kwargs: dict = None,
         ObservationClass: Type[Observation] = Observation,
+        error_kwargs: dict = None,
     ):
         """
         Initialize a ReactionObservation instance.
@@ -66,15 +58,18 @@ class ElasticDifferentialXSObservation:
             Maximum angular momentum, defaults to 20.
         angles_vis: np.ndarray
             Array of angles in degrees for visualization.
-        error_kwargs: dict
-            Additional keyword arguments for error handling.
         ObservationClass: Type[Observation]
             The base class Type that this instance will inherit from;
             must be a subclass of `Observation`. Defaults to the base
             class `Observation`, but the user can supply any other subclass.
             For example, if one wants the covariance to be precomputed one
             can supply `FixedCovarianceObservation` instead here.
+        error_kwargs: dict
+            Additional keyword arguments for error handling.
         """
+        if not issubclass(ObservationClass, Observation):
+            raise ValueError("ObservationClass must be a subclass of Observation")
+
         self.reaction = reaction
         self.quantity = quantity
         self.lmax = lmax
@@ -152,7 +147,13 @@ class ElasticDifferentialXSObservation:
             x=angles_rad_constraint,
             **error_kwargs if error_kwargs is not None else {},
         )
-        ObservationClass.__init__(self, *args, **kwargs)
+
+        # Create an instance of the chosen ObservationClass
+        self.observation_instance = ObservationClass(*args, **kwargs)
+
+    def __getattr__(self, name):
+        # Delegate attribute access to the observation instance
+        return getattr(self.observation_instance, name)
 
 
 def set_up_solver(
@@ -267,7 +268,7 @@ def set_up_observation(
         # check if systematic errors are common to all angles
         if not np.all(y_sys_err_offset == y_sys_err_offset[0]):
             # TODO
-            assert False, "Systematic errors are not common to all angles"
+            assert False, "Systematic offset errors are not common to all angles"
         else:
             y_sys_err_offset_mask = np.ones_like(y, dtype=bool)
 
@@ -279,7 +280,7 @@ def set_up_observation(
         ratio = y_sys_err_normalization / y
         if not np.all(ratio == ratio[0]):
             # TODO
-            assert False, "Systematic errors are not common to all angles"
+            assert False, "Systematic normalization errors are not common to all angles"
         else:
             y_sys_err_normalization_mask = np.ones_like(y, dtype=bool)
 
@@ -295,17 +296,15 @@ def set_up_observation(
         }
         return args, kwargs
     elif ObservationClass is FixedCovarianceObservation:
-        if y_sys_err_normalization is not None or not np.allclose(
-            y_sys_err_normalization, 0.0
-        ):
+        if include_sys_norm_err:
             raise ValueError(
                 "FixedCovarianceObservation does not support systematic normalization errors."
             )
         covariance = np.diag(y_stat_err**2)
-        if y_sys_err_offset is not None:
+        if y_sys_err_offset is not None and include_sys_offset_err:
             covariance += np.outer(y_sys_err_offset, y_sys_err_offset)
         args = (x, y, covariance)
-        return args
+        return args, {}
     else:
         # if a new ObservationClass is written, a case for it must be added here
         raise NotImplementedError(
