@@ -119,14 +119,14 @@ class ElasticDifferentialXSObservation:
             # convert into b/sr to mb/sr
             norm = 1.0e-3
         elif self.quantity == "dXS/dRuth" and measurement.quantity == "dXS/dRuth":
-            if measurement.y_units == "no-dim":
+            if measurement.y_units != "no-dim":
                 raise ValueError(
-                    f"In {measurement.subentry}: expected y_units to be 'b/Sr', "
+                    f"In {measurement.subentry}: expected y_units to be 'no-dim', "
                     f"got {measurement.y_units}"
                 )
             norm = 1.0
         elif self.quantity == "Ay" and measurement.quantity == "Ay":
-            if measurement.y_units == "no-dim":
+            if measurement.y_units != "no-dim":
                 raise ValueError(
                     f"In {measurement.subentry}: expected y_units to be 'no-dim', "
                     f"got {measurement.y_units}"
@@ -267,8 +267,16 @@ def set_up_observation(
         y_sys_err_offset = measurement.systematic_offset_err / normalization
         # check if systematic errors are common to all angles
         if not np.all(y_sys_err_offset == y_sys_err_offset[0]):
-            # TODO
-            assert False, "Systematic offset errors are not common to all angles"
+            # Get unique elements in the array
+            y_sys_err_offset, inverse_indices = np.unique(
+                y_sys_err_offset, return_inverse=True
+            )
+
+            # Generate a list of boolean masks
+            y_sys_err_offset_mask = [
+                inverse_indices == i for i in np.arange(len(unique_elements))
+            ]
+
         else:
             y_sys_err_offset_mask = np.ones_like(y, dtype=bool)
 
@@ -279,8 +287,15 @@ def set_up_observation(
         # check if systematic errors are common to all angles
         ratio = y_sys_err_normalization / y
         if not np.all(ratio == ratio[0]):
-            # TODO
-            assert False, "Systematic normalization errors are not common to all angles"
+            # Get unique elements in the array
+            y_sys_err_normalization, inverse_indices = np.unique(
+                y_sys_err_normalization, return_inverse=True
+            )
+
+            # Generate a list of boolean masks
+            y_sys_err_normalization_mask = [
+                inverse_indices == i for i in np.arange(len(unique_elements))
+            ]
         else:
             y_sys_err_normalization_mask = np.ones_like(y, dtype=bool)
 
