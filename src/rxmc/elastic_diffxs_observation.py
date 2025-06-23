@@ -127,22 +127,34 @@ class ElasticDifferentialXSObservation:
     def compute_normalization(self, measurement):
         if self.quantity == "dXS/dRuth" and measurement.quantity == "dXS/dA":
             if measurement.y_units != "b/Sr":
-                raise ValueError(f"Expected y_units to be 'b/Sr', got {measurement.y_units}")
+                raise ValueError(
+                    f"Expected y_units to be 'b/Sr', got {measurement.y_units}"
+                )
             return self.constraint_workspace.rutherford / 1000
         elif self.quantity == "dXS/dA" and measurement.quantity == "dXS/dRuth":
             return 1 / self.constraint_workspace.rutherford
         elif self.quantity == "dXS/dA" and measurement.quantity == "dXS/dA":
             if measurement.y_units != "b/Sr":
-                raise ValueError(f"Expected y_units to be 'b/Sr', got {measurement.y_units}")
+                raise ValueError(
+                    f"Expected y_units to be 'b/Sr', got {measurement.y_units}"
+                )
             return 1.0e-3
-        elif self.quantity in {"dXS/dRuth", "Ay"} and self.quantity == measurement.quantity:
+        elif (
+            self.quantity in {"dXS/dRuth", "Ay"}
+            and self.quantity == measurement.quantity
+        ):
             if measurement.y_units != "no-dim":
-                raise ValueError(f"Expected y_units to be 'no-dim', got {measurement.y_units}")
+                raise ValueError(
+                    f"Expected y_units to be 'no-dim', got {measurement.y_units}"
+                )
             return 1.0
         else:
             if self.quantity != measurement.quantity:
-                raise ValueError(f"Quantity mismatch: {self.quantity} != {measurement.quantity}")
+                raise ValueError(
+                    f"Quantity mismatch: {self.quantity} != {measurement.quantity}"
+                )
             return 1.0
+
 
 def set_up_solver(
     reaction: jitr.reactions.Reaction,

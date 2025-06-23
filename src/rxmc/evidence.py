@@ -3,7 +3,7 @@ import numpy as np
 from .constraint import Constraint
 
 
-class Corpus:
+class Evidence:
     """
     A collection of independent `Constraint`s that can be used to fit a common
     physical model.
@@ -28,7 +28,7 @@ class Corpus:
         weights_parametric: np.ndarray = None,
     ):
         """
-        Initialize the Corpus with a list of constraints and parametric constraints.
+        Initialize the Evidence with a list of constraints and parametric constraints.
         Parameters
         ----------
         constraints : list[Constraint]

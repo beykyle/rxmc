@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 
 from .param_sampling import SamplingConfig
-from .corpus import Corpus
+from .evidence import Evidence
 
 
 class Walker:
@@ -18,7 +18,7 @@ class Walker:
     def __init__(
         self,
         model_sample_conf: SamplingConfig,
-        corpus: Corpus,
+        evidence: Evidence,
         likelihood_sample_confs: list[SamplingConfig] = [],
         rng: np.random.Generator = np.random.default_rng(42),
     ):
@@ -29,12 +29,12 @@ class Walker:
         ----------
         physical_model_samplers: Sampler
             A Sampler object for physical model parameters.
-        corpus: Corpus
-            A Corpus object containing the data for which the likelihood
+        evidence: Evidence
+            A Evidence object containing the data for which the likelihood
             model is evaluated.
         likelihood_model_samplers: list[Sampler]
             A list of Sampler objects for likelihood model parameters.
-            Corresponds to the order of `corpus.parametric_constraints`.
+            Corresponds to the order of `evidence.parametric_constraints`.
         rng: np.random.Generator, optional
             A random number generator for reproducibility. Defaults to a new
             default_rng with a fixed seed.
@@ -43,29 +43,31 @@ class Walker:
         # constant attributes
         self.model_sample_conf = model_sample_conf
         self.likelihood_sample_confs = likelihood_sample_confs
-        self.corpus = corpus
+        self.evidence = evidence
         self.rng = rng
 
         self.gibbs_sampling = len(self.likelihood_sample_confs) > 0
 
-        if self.corpus.model_params != self.model_sample_conf.params:
+        if self.evidence.model_params != self.model_sample_conf.params:
             raise ValueError(
                 "Inconsistent physical model parameters between "
-                "'corpus' and 'model_sample_conf'"
+                "'evidence' and 'model_sample_conf'"
             )
 
-        if len(self.likelihood_sample_confs) != len(self.corpus.parametric_constraints):
+        if len(self.likelihood_sample_confs) != len(
+            self.evidence.parametric_constraints
+        ):
             raise ValueError(
                 "The lists 'likelihood_sample_confs' and "
-                "'corpus.parametric_constraints' must correspond!"
+                "'evidence.parametric_constraints' must correspond!"
             )
         for i, conf in enumerate(self.likelihood_sample_confs):
-            constraint = self.corpus.parametric_constraints[i]
+            constraint = self.evidence.parametric_constraints[i]
             if constraint.likelihood.params != conf.params:
                 raise ValueError(
                     "Inconsistent likelihood model parameters"
                     f"between 'likelihood_sample_confs[{i}]' and "
-                    f"'corpus.parametric_constraints[{i}]'"
+                    f"'evidence.parametric_constraints[{i}]'"
                 )
 
         # attributes that are updated during sampling
@@ -147,7 +149,7 @@ class Walker:
         accepted = []
 
         for i, lm_conf in enumerate(self.likelihood_sample_confs):
-            constraint = self.corpus.parametric_constraints[i]
+            constraint = self.evidence.parametric_constraints[i]
 
             # precompute the model prediction for just this constraint,
             # as the physical model parameters (and thus the physical
@@ -157,7 +159,7 @@ class Walker:
             # the posterior pdf of this walk only accounts for the
             # observables in the constraint containing the likelihood
             # model whose parameters we're sampling, rather than the
-            # whole corpus
+            # whole evidence
             def log_posterior_lm(x):
                 return lm_conf.prior.logpdf(x) + constraint.marginal_log_likelihood(
                     ym, x
@@ -179,7 +181,7 @@ class Walker:
         return chains, logp, accepted
 
     def log_likelihood(self, model_params, likelihood_params):
-        return self.corpus.log_likelihood(model_params, likelihood_params)
+        return self.evidence.log_likelihood(model_params, likelihood_params)
 
     def log_posterior(self, model_params, likelihood_params):
         return self.log_likelihood(model_params, likelihood_params) + self.log_prior(

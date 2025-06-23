@@ -1,6 +1,6 @@
 from . import physical_model
 from . import likelihood_model
-from . import corpus
+from . import evidence
 from . import params
 from . import param_sampling
 from . import walker
