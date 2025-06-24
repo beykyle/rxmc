@@ -21,7 +21,7 @@ class ElasticDifferentialXSModel(PhysicalModel):
 
     The model is initialized with two interactions: one for the central
     potential and one for the spin-orbit interaction. The
-    `calculate_central_and_spin_orbit_interaction` function is used to extract
+    `calculate_interaction_from_params` function is used to extract
     the parameters needed for each interaction.
     """
 
@@ -30,7 +30,7 @@ class ElasticDifferentialXSModel(PhysicalModel):
         quantity: str,
         interaction_central: Callable[[float, tuple], complex],
         interaction_spin_orbit: Callable[[float, tuple], complex],
-        calculate_central_and_spin_orbit_interaction: Callable[
+        calculate_interaction_from_params: Callable[
             [tuple, jitr.xs.elastic.DifferentialWorkspace], tuple
         ],
         model_name: str = None,
@@ -49,7 +49,7 @@ class ElasticDifferentialXSModel(PhysicalModel):
         interaction_spin_orbit : Callable
             Function that returns the spin-orbit interaction potential for a
             given energy and parameters.
-        calculate_central_and_spin_orbit_interaction : Callable
+        calculate_interaction_from_params : Callable
             Function that takes the model parameters and a workspace, and
             returns the parameters needed for the central and spin-orbit
             interactions. Should return a tuple of size two, the first element
@@ -63,8 +63,8 @@ class ElasticDifferentialXSModel(PhysicalModel):
         self.quantity = quantity
         self.interaction_central = interaction_central
         self.interaction_spin_orbit = interaction_spin_orbit
-        self.calculate_central_and_spin_orbit_interaction = (
-            calculate_central_and_spin_orbit_interaction
+        self.calculate_interaction_from_params = (
+            calculate_interaction_from_params
         )
 
         if self.quantity == "dXS/dA":
@@ -92,20 +92,17 @@ class ElasticDifferentialXSModel(PhysicalModel):
         Returns:
         -------
         np.ndarray
-            The evaluated differential data for each measurements in the
-            observation, concatenated into a single array in the same form and
-            order as `observation.y`.
+            An array, containing the evaluated differential data on the
+            angular grid corresponding to the
+            `observation.constraint_workspace`.
         """
-        ym = []
-        for ws in observation.constraint_workspaces:
-            xs = ws.xs(
-                self.interaction_central,
-                self.interaction_spin_orbit,
-                *self.calculate_central_and_spin_orbit_interaction(*params, ws),
-            )
-            ym.append(self.extractor(xs, ws))
-
-        return np.concatenate(ym, axis=0)
+        ws = observation.constraint_workspace
+        xs = ws.xs(
+            self.interaction_central,
+            self.interaction_spin_orbit,
+            *self.calculate_interaction_from_params(*params, ws),
+        )
+        return self.extractor(xs, ws)
 
     def visualizable_model_prediction(
         self,
@@ -124,21 +121,18 @@ class ElasticDifferentialXSModel(PhysicalModel):
 
         Returns:
         -------
-        list[np.ndarray]
-            A list of arrays, each containing the evaluated differential data
-            for each visualization workspace in the observation.
-            Each array corresponds to a different visualization workspace and
-            contains the same form and order as `observation.y`.
+        np.ndarray
+            An array, containing the evaluated differential data on the
+            angular grid corresponding to the
+            `observation.visualization_workspace`.
         """
-        ym = []
-        for ws in observation.visualization_workspaces:
-            xs = ws.xs(
-                self.interaction_central,
-                self.interaction_spin_orbit,
-                *self.calculate_central_and_spin_orbit_interaction(*params, ws),
-            )
-            ym.append(self.extractor(xs, ws))
-        return ym
+        ws = observation.visualization_workspace
+        xs = ws.xs(
+            self.interaction_central,
+            self.interaction_spin_orbit,
+            *self.calculate_interaction_from_params(*params, ws),
+        )
+        return self.extractor(xs, ws)
 
 
 def extract_dXS_dA(
