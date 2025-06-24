@@ -63,9 +63,7 @@ class ElasticDifferentialXSModel(PhysicalModel):
         self.quantity = quantity
         self.interaction_central = interaction_central
         self.interaction_spin_orbit = interaction_spin_orbit
-        self.calculate_interaction_from_params = (
-            calculate_interaction_from_params
-        )
+        self.calculate_interaction_from_params = calculate_interaction_from_params
 
         if self.quantity == "dXS/dA":
             self.extractor = extract_dXS_dA
