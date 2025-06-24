@@ -31,7 +31,7 @@ class ElasticDifferentialXSModel(PhysicalModel):
         interaction_central: Callable[[float, tuple], complex],
         interaction_spin_orbit: Callable[[float, tuple], complex],
         calculate_interaction_from_params: Callable[
-            [tuple, jitr.xs.elastic.DifferentialWorkspace], tuple
+            [jitr.xs.elastic.DifferentialWorkspace, tuple], tuple
         ],
         model_name: str = None,
     ):
@@ -50,7 +50,7 @@ class ElasticDifferentialXSModel(PhysicalModel):
             Function that returns the spin-orbit interaction potential for a
             given energy and parameters.
         calculate_interaction_from_params : Callable
-            Function that takes the model parameters and a workspace, and
+            Function that takes in a workspace, and the model parameters, and
             returns the parameters needed for the central and spin-orbit
             interactions. Should return a tuple of size two, the first element
             being the tuple of parameters taken in by `interaction_central` and
@@ -95,10 +95,14 @@ class ElasticDifferentialXSModel(PhysicalModel):
             `observation.constraint_workspace`.
         """
         ws = observation.constraint_workspace
+        central_params, spin_orbit_params = self.calculate_interaction_from_params(
+            ws, *params
+        )
         xs = ws.xs(
             self.interaction_central,
             self.interaction_spin_orbit,
-            *self.calculate_interaction_from_params(*params, ws),
+            args_central=central_params,
+            args_spin_orbit=spin_orbit_params,
         )
         return self.extractor(xs, ws)
 
@@ -125,10 +129,14 @@ class ElasticDifferentialXSModel(PhysicalModel):
             `observation.visualization_workspace`.
         """
         ws = observation.visualization_workspace
+        central_params, spin_orbit_params = self.calculate_interaction_from_params(
+            ws, *params
+        )
         xs = ws.xs(
             self.interaction_central,
             self.interaction_spin_orbit,
-            *self.calculate_interaction_from_params(*params, ws),
+            args_central=central_params,
+            args_spin_orbit=spin_orbit_params,
         )
         return self.extractor(xs, ws)
 
