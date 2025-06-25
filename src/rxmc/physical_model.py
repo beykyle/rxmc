@@ -45,6 +45,7 @@ class Polynomial(PhysicalModel):
         params = []
         for i in range(order + 1):
             params.append(Parameter(f"f{i}", latex_name=f"a_{i}", dtype=float))
+        self.order = order
         super().__init__(params)
 
     def evaluate(self, observation: Observation, *params) -> np.ndarray:
@@ -72,7 +73,7 @@ class Polynomial(PhysicalModel):
         # Create an exponent matrix for the x values
         # alternatively, one could implement a derived class of
         # Observation that precomputes the Vander matrix
-        x_powers = np.vander(self.observation.x, self.order + 1, increasing=True)
+        x_powers = np.vander(observation.x, self.order + 1, increasing=True)
 
         # Compute the dot product to get the result
         y = np.dot(x_powers, np.asarray(params))
