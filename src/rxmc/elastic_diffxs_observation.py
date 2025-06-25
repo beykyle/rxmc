@@ -69,7 +69,6 @@ class ElasticDifferentialXSObservation:
         """
         if not issubclass(ObservationClass, Observation):
             raise ValueError("ObservationClass must be a subclass of Observation")
-        self.measurement = measurement
         self.reaction = reaction
         self.quantity = quantity
         self.lmax = lmax
