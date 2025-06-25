@@ -24,6 +24,17 @@ class Parameter:
         self.bounds = bounds
         self.latex_name = latex_name if latex_name else name
 
+    def __eq__(self, other):
+        if not isinstance(other, Parameter):
+            return False
+        return (
+            self.name == other.name
+            and self.dtype == other.dtype
+            and self.unit == other.unit
+            and self.latex_name == other.latex_name
+            and self.bounds == other.bounds
+        )
+
 
 def dump_sample_to_json(fpath: Path, sample: OrderedDict):
     with open(fpath, "w") as file:

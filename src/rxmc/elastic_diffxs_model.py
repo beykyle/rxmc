@@ -33,6 +33,7 @@ class ElasticDifferentialXSModel(PhysicalModel):
         calculate_interaction_from_params: Callable[
             [jitr.xs.elastic.DifferentialWorkspace, tuple], tuple
         ],
+        params: list = [],
         model_name: str = None,
     ):
         """
@@ -56,6 +57,9 @@ class ElasticDifferentialXSModel(PhysicalModel):
             being the tuple of parameters taken in by `interaction_central` and
             the second element being the tuple of parameters taken in by
             `interaction_spin_orbit`.
+        params: list[Parameter] = []
+            A list of Parameter objects that define the model's parameters.
+            Each Parameter should have a name and a dtype.
         model_name : str, optional
             Name of the model, used for identification purposes.
             Defaults to None.
@@ -71,6 +75,8 @@ class ElasticDifferentialXSModel(PhysicalModel):
             self.extractor = extract_dXS_dRuth
         elif self.quantity == "Ay":
             self.extractor = extract_Ay
+
+        super().__init__(params)
 
     def evaluate(
         self,

@@ -12,6 +12,14 @@ class PhysicalModel:
     """
 
     def __init__(self, params: list[Parameter]):
+        """
+        Initialize the PhysicalModel with a list of parameters.
+        Parameters:
+        ----------
+        params: list[Parameter]
+            A list of Parameter objects that define the model's parameters.
+            Each Parameter should have a name and a dtype.
+        """
         self.params = params
         self.n_params = len(self.params)
 
