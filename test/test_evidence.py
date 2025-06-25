@@ -81,9 +81,8 @@ class TestEvidence(unittest.TestCase):
         chi2 = np.sum((delta / y_stat_err) ** 2)
         N = self.observations[0].n_data_pts
         log_det = np.log(np.linalg.det(self.observations[0].statistical_covariance))
-        logl_single_constraint =  -0.5 * (N * np.log(2 * np.pi) + log_det + chi2)
+        logl_single_constraint = -0.5 * (N * np.log(2 * np.pi) + log_det + chi2)
         self.expected_loglikelihood = 4 * logl_single_constraint
-
 
     def test_serial_execution(self):
         log_likelihood = self.evidence.log_likelihood(model_params=self.model_params)
