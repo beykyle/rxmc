@@ -13,8 +13,10 @@ class Constraint:
     observation given the model predictions.
 
     This class is meant to be a box that takes in model params and spits out
-    the log likelihood or other staistics
-
+    the log likelihood or other statistics. In this way, the observations
+    it contains, along with the likelihood model for comparing those
+    observations to the predictions of the physical model, act as constraints
+    to the parameters of the physical model.
     """
 
     def __init__(
@@ -176,7 +178,8 @@ class Constraint:
     ):
         """
         Calculate the empirical coverage of the model predictions within the
-        specified intervals for each observation.
+        specified intervals for each observation, as a fraction of the total
+        number of data points.
 
         Parameters:
         ----------

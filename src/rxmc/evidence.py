@@ -16,8 +16,8 @@ from .constraint import Constraint
 
 class Evidence:
     """
-    A collection of independent `Constraint`s that can be used to fit a common
-    physical model.
+    A collection of independent `Constraint`s that can be used together to
+    constrain a common physical model.
 
     Each `Constraint` represents a set of `Observation`s and a `LikelihoodModel`.
     Each `Constraint` must share the same `PhysicalModel` parameters, but may
@@ -40,6 +40,7 @@ class Evidence:
     ):
         """
         Initialize the Evidence with a list of constraints and parametric constraints.
+
         Parameters
         ----------
         constraints : list[Constraint]
@@ -152,6 +153,26 @@ class Evidence:
         self.weights_parametric = weights_parametric
 
     def single_log_likelihood(self, c, w, model_params, lp=None):
+        r"""
+        Calculate the log likelihood for a single constraint.
+        Parameters
+        ----------
+        c : Constraint
+            The constraint for which to compute the log likelihood.
+        w : float
+            The weight for the constraint, which scales its contribution to
+            the log likelihood.
+        model_params : tuple
+            The parameters of the physical model.
+        lp : list[tuple], optional
+            Parameters for the likelihood model, if applicable. Defaults
+            to None.
+        Returns
+        -------
+        float
+            The log likelihood for the constraint, weighted by `w`.
+        """
+
         if lp is not None:
             return c.log_likelihood(model_params, lp) * w
         return c.log_likelihood(model_params) * w
@@ -170,7 +191,8 @@ class Evidence:
         likelihood_params : list[tuple], optional
             Parameters for the likelihood model.
         executor : Pool or ipp.Client, optional
-            An executor for managing parallelism. Defaults to None for serial execution.
+            An executor for managing parallelism. Defaults to None for
+            serial execution.
 
         Returns
         -------
@@ -197,7 +219,8 @@ class Evidence:
             # Using multiprocessing.Pool for parallel execution
             tasks = [
                 (c, w, model_params) for w, c in zip(self.weights, self.constraints)
-            ] + [
+            ]
+            tasks += [
                 (c, w, model_params, lp)
                 for w, c, lp in zip(
                     self.weights_parametric,
