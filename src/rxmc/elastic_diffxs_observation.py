@@ -38,7 +38,7 @@ class ElasticDifferentialXSObservation:
         reaction: jitr.reactions.Reaction,
         quantity: str,
         lmax: int = DEFAULT_LMAX,
-        angles_vis: np.ndarray = np.linspace(0.01, np.pi, 100),
+        angles_vis: np.ndarray = np.linspace(0.01, 180, 100),
         ObservationClass: Type[Observation] = Observation,
         error_kwargs: dict = None,
     ):
