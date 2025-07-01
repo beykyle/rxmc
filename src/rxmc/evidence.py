@@ -1,14 +1,3 @@
-from multiprocessing.pool import Pool
-
-try:
-    import ipyparallel as ipp
-
-    ipparallel_available = True
-    ipyparallel_client_type = ipp.Client
-except ImportError:
-    ipparallel_available = False
-    ipyparallel_client_type = None
-
 import numpy as np
 
 from .constraint import Constraint
@@ -152,37 +141,9 @@ class Evidence:
                 )
         self.weights_parametric = weights_parametric
 
-    def single_log_likelihood(self, c, w, model_params, lp=None):
-        r"""
-        Calculate the log likelihood for a single constraint.
-        Parameters
-        ----------
-        c : Constraint
-            The constraint for which to compute the log likelihood.
-        w : float
-            The weight for the constraint, which scales its contribution to
-            the log likelihood.
-        model_params : tuple
-            The parameters of the physical model.
-        lp : list[tuple], optional
-            Parameters for the likelihood model, if applicable. Defaults
-            to None.
-        Returns
-        -------
-        float
-            The log likelihood for the constraint, weighted by `w`.
+    def log_likelihood(self, model_params, likelihood_params: list[tuple] = []):
         """
-
-        if lp is not None:
-            return c.log_likelihood(model_params, lp) * w
-        return c.log_likelihood(model_params) * w
-
-    def log_likelihood(
-        self, model_params, likelihood_params: list[tuple] = [], executor=None
-    ):
-        """
-        Calculate the log likelihood using an optional executor for parallelism
-        over the constraints and parametric constraints.
+        Calculate the log likelihood
 
         Parameters
         ----------
@@ -190,10 +151,6 @@ class Evidence:
             The parameters of the physical model.
         likelihood_params : list[tuple], optional
             Parameters for the likelihood model.
-        executor : Pool or ipp.Client, optional
-            An executor for managing parallelism. Defaults to None for
-            serial execution.
-
         Returns
         -------
         float
@@ -201,79 +158,17 @@ class Evidence:
         """
         assert len(likelihood_params) == len(self.parametric_constraints)
 
-        if executor is None:
-            # Serial computation if no executor is provided
-            ll = sum(
-                self.single_log_likelihood(c, w, model_params)
-                for w, c in zip(self.weights, self.constraints)
+        # Serial computation if no executor is provided
+        ll = sum(
+            c.log_likelihood(model_params) * w
+            for w, c in zip(self.weights, self.constraints)
+        )
+        ll += sum(
+            c.log_likelihood(model_params, lp) * w
+            for w, c, lp in zip(
+                self.weights_parametric,
+                self.parametric_constraints,
+                likelihood_params,
             )
-            ll += sum(
-                self.single_log_likelihood(c, w, model_params, lp)
-                for w, c, lp in zip(
-                    self.weights_parametric,
-                    self.parametric_constraints,
-                    likelihood_params,
-                )
-            )
-        elif isinstance(executor, Pool):
-            # Using multiprocessing.Pool for parallel execution
-            tasks = [
-                (c, w, model_params) for w, c in zip(self.weights, self.constraints)
-            ]
-            tasks += [
-                (c, w, model_params, lp)
-                for w, c, lp in zip(
-                    self.weights_parametric,
-                    self.parametric_constraints,
-                    likelihood_params,
-                )
-            ]
-
-            ll = sum(executor.starmap(self.single_log_likelihood, tasks))
-
-        elif is_ipyparallel_client(executor):
-            # Assuming executor is an ipyparallel.Client instance
-            dview = executor[:]
-            futures = dview.map_async(
-                self.single_log_likelihood,
-                *zip(
-                    *[
-                        (c, w, model_params)
-                        for w, c in zip(self.weights, self.constraints)
-                    ]
-                    + [
-                        (c, w, model_params, lp)
-                        for w, c, lp in zip(
-                            self.weights_parametric,
-                            self.parametric_constraints,
-                            likelihood_params,
-                        )
-                    ]
-                ),
-            )
-            ll = sum(futures.get())
-        else:
-            raise ValueError(
-                "executor must be None, a multiprocessing.Pool, or an ipyparallel.Client"
-            )
-
+        )
         return ll
-
-
-def is_ipyparallel_client(executor):
-    """
-    Check if the given executor is an ipyparallel.Client instance.
-
-    Parameters
-    ----------
-    executor : object
-        The executor to check.
-
-    Returns
-    -------
-    bool
-        True if the executor is an ipyparallel.Client instance, False otherwise.
-    """
-    if ipyparallel_client_type is not None:
-        return isinstance(executor, ipyparallel_client_type)
-    return False
