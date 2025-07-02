@@ -42,7 +42,7 @@ class SamplingConfig:
         self.params = params
         self.starting_location = starting_location
         self.proposal = proposal
-        self.proposal.update_rng(rng)
+        self.proposal.rng = rng
         self.prior = prior
         self.sampling_algorithm = sampling_algorithm
 

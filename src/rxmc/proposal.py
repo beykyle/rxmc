@@ -5,9 +5,6 @@ class ProposalDistribution:
     def __init__(self, rng):
         self.rng = rng
 
-    def update_rng(self, rng):
-        self.rng = rng
-
     def __call__(self, x):
         raise NotImplementedError("This method should be overridden by subclasses")
 
