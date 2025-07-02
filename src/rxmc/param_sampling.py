@@ -48,7 +48,7 @@ class SamplingConfig:
         self.prior = prior
         self.sampling_algorithm = sampling_algorithm
 
-        self.sync_rng(self.rng)
+        self.sync_rng(rng)
 
         _validate_object(
             prior,
