@@ -15,4 +15,6 @@ class NormalProposalDistribution(ProposalDistribution):
         super().__init__(rng)
 
     def __call__(self, x):
-        return stats.multivariate_normal.rvs(mean=x, cov=self.cov, random_state=self.rng)
+        return stats.multivariate_normal.rvs(
+            mean=x, cov=self.cov, random_state=self.rng
+        )

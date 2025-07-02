@@ -28,6 +28,9 @@ class SamplingConfig:
     sampling_algorithm: callable, optional
         A callable sampling algorithm to be used for sampling.
         Defaults to `mcmc.metropolis_hastings`.
+    rng: np.random.Generator, optional
+        A numpy random number generator instance for reproducibility.
+        Defaults to `np.random.default_rng()`.
     """
 
     def __init__(
@@ -42,9 +45,10 @@ class SamplingConfig:
         self.params = params
         self.starting_location = starting_location
         self.proposal = proposal
-        self.proposal.rng = rng
         self.prior = prior
         self.sampling_algorithm = sampling_algorithm
+
+        self.sync_rng(self.rng)
 
         _validate_object(
             prior,
@@ -52,11 +56,30 @@ class SamplingConfig:
             required_methods=["logpdf"],
         )
 
+        _validate_object(
+            proposal,
+            "rng",
+        )
+
         if not callable(self.proposal):
             raise ValueError(
                 "The proposal must be a callable object that takes in a "
                 "parameter vector and returns a proposed parameter vector."
             )
+
+    def sync_rng(self, rng: np.random.Generator):
+        """
+        Synchronize the random number generator used for sampling.
+
+        Parameters:
+        ----------
+        rng: np.random.Generator
+            A numpy random number generator instance.
+        """
+        if not isinstance(rng, np.random.Generator):
+            raise ValueError("The rng must be an instance of np.random.Generator.")
+        self.rng = rng
+        self.proposal.rng = rng
 
     def update_proposal(self, proposal: callable):
         """
