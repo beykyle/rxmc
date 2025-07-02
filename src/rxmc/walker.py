@@ -46,6 +46,11 @@ class Walker:
         self.evidence = evidence
         self.rng = rng
 
+        # sync rngs for all samplers
+        self.model_sample_conf.sync_rng(self.rng)
+        for conf in self.likelihood_sample_confs:
+            conf.sync_rng(self.rng)
+
         self.gibbs_sampling = len(self.likelihood_sample_confs) > 0
 
         if self.evidence.model_params != self.model_sample_conf.params:
