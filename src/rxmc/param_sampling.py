@@ -1,5 +1,6 @@
 import numpy as np
 
+from . import proposal
 from . import params
 from . import mcmc
 
@@ -9,8 +10,7 @@ class SamplingConfig:
     Configuration for parameter sampling in a Bayesian inference context.
     This class encapsulates the parameters, starting location, proposal function,
     and prior distribution used for sampling.
-    It validates the provided prior and proposal function to ensure they meet
-    the required interface.
+
     Parameters
     ----------
     params: list[params.Parameter]
@@ -18,9 +18,9 @@ class SamplingConfig:
     starting_location: np.ndarray
         A numpy array representing the initial location in parameter space
         from which sampling will begin.
-    proposal: callable
-        A callable function that takes a parameter vector and returns
-        a proposed parameter vector for sampling.
+    proposal: proposal.ProposalDistribution
+        An instance of a ProposalDistribution that defines how to propose
+        new parameter values based on the current state.
     prior: object
         An object representing the prior distribution over the parameters.
         It must implement a 'logpdf' method, which takes in a parameter
@@ -34,13 +34,15 @@ class SamplingConfig:
         self,
         params: list[params.Parameter],
         starting_location: np.ndarray,
-        proposal: callable,
+        proposal: proposal.ProposalDistribution,
         prior,
         sampling_algorithm: callable = mcmc.metropolis_hastings,
+        rng: np.random.Generator = np.random.default_rng(),
     ):
         self.params = params
         self.starting_location = starting_location
         self.proposal = proposal
+        self.proposal.update_rng(rng)
         self.prior = prior
         self.sampling_algorithm = sampling_algorithm
 
