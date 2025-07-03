@@ -1,9 +1,7 @@
-from pathlib import Path
-
 import numpy as np
 
-from .param_sampling import SamplingConfig
 from .evidence import Evidence
+from .param_sampling import SamplingConfig
 
 
 class Walker:
@@ -222,7 +220,6 @@ class Walker:
         burnin: int = 0,
         batch_size: int = None,
         verbose: bool = True,
-        output: Path = None,
     ):
         """
         Runs the MCMC chain with the specified parameters. Updates
@@ -240,10 +237,6 @@ class Walker:
                 Number of extra burn-in steps to do before active steps
             verbose : bool
                 Flag to print extra logging information.
-            output : Path, optional
-                Output directory for saving chain batches.
-
-
         """
         if batch_size is not None:
             rem_burn = burnin % batch_size
@@ -288,7 +281,7 @@ class Walker:
 
             if verbose:
                 print(
-                    f"Burn-in batch {i+1}/{len(burn_batches)}"
+                    f"Burn-in batch {i + 1}/{len(burn_batches)}"
                     f" completed, {steps_in_batch} steps."
                 )
 
@@ -326,15 +319,15 @@ class Walker:
 
             if verbose:
                 msg = (
-                    f"Batch: {i+1}/{len(batches)} completed, "
+                    f"Batch: {i + 1}/{len(batches)} completed, "
                     f"{steps_in_batch} steps. "
                     f"\n  Model parameter acceptance fraction: "
-                    f"{accepted_in_batch/steps_in_batch:.3f}"
+                    f"{accepted_in_batch / steps_in_batch:.3f}"
                 )
                 if self.gibbs_sampling:
                     msg += (
                         f"\n  Likelihood parameter acceptance fractions: "
-                        f"{[a/steps_in_batch for a in accepted_in_batch_lm]}"
+                        f"{[a / steps_in_batch for a in accepted_in_batch_lm]}"
                     )
                 print(msg)
 
