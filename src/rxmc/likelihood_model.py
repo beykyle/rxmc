@@ -622,8 +622,7 @@ def uncorrelated_model_covariance(fractional_uncorrelated_error: float, ym: np.n
         \[
             \Sigma_{ij}^{uncorrelated} = \gamma^2 y_m(x_i, \alpha)^2 \delta_{ij}
         \]
-    where $\gamma$ is the fractional uncorrelated error
-    (`self.fractional_uncorrelated_error`).
+    where $\gamma$ is the fractional uncorrelated error.
 
     This is commonly used as a model-error term or unquantified uncertainty
     term. E.g. if one expects the model to be correct to 1% in any given data
@@ -644,5 +643,4 @@ def uncorrelated_model_covariance(fractional_uncorrelated_error: float, ym: np.n
     np.ndarray
         Uncorrelated model error covariance matrix.
     """
-    gamma = fractional_uncorrelated_error
-    return gamma**2 * np.diag(ym**2)
+    return fractional_uncorrelated_error**2 * np.diag(ym**2)
