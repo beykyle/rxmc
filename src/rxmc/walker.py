@@ -42,12 +42,9 @@ class Walker:
         self.model_sample_conf = model_sample_conf
         self.likelihood_sample_confs = likelihood_sample_confs
         self.evidence = evidence
-        self.rng = rng
 
         # sync rngs for all samplers
-        self.model_sample_conf.sync_rng(self.rng)
-        for conf in self.likelihood_sample_confs:
-            conf.sync_rng(self.rng)
+        self.update_rng(rng)
 
         self.gibbs_sampling = len(self.likelihood_sample_confs) > 0
 
@@ -89,6 +86,20 @@ class Walker:
         ]
         self.log_posterior_record = []
         self.log_posterior_record_lm = [[] for _ in self.likelihood_sample_confs]
+
+    def update_rng(self, rng: np.random.Generator):
+        """
+        Update the random number generator used for sampling.
+
+        Parameters:
+        ----------
+        rng: np.random.Generator
+            A numpy random number generator instance.
+        """
+        self.rng = rng
+        self.model_sample_conf.sync_rng(rng)
+        for conf in self.likelihood_sample_confs:
+            conf.sync_rng(rng)
 
     def run_model_batch(self, n_steps, x0, likelihood_params=[]):
         """
