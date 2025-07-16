@@ -42,6 +42,7 @@ class Walker:
         self.model_sample_conf = model_sample_conf
         self.likelihood_sample_confs = likelihood_sample_confs
         self.evidence = evidence
+        self.rng = rng
 
         self.gibbs_sampling = len(self.likelihood_sample_confs) > 0
 
