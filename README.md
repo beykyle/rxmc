@@ -75,9 +75,7 @@ python -m unittest discover ./test
 
 Check out the demos: 
 - [`examples/linear_calibration_demo.ipynb`](https://github.com/beykyle/rxmc/blob/main/examples/linear_calibration_demo.ipynb) for an illustrative example of fitting a line to data with various likelihood models.
-- [`examples/parallel_calibration_demo.ipynb`](https://github.com/beykyle/rxmc/blob/main/examples/parallel_calibration_demo.ipynb) for ways to run multiple chains in parallel, using `mpi4py` and `ipyparallel`, or using the provided `mcmc`
 - [`systematic_err_demo.ipynb`](https://github.com/beykyle/rxmc/blob/main/examples/systematic_err_demo.ipynb) for a demonstration of the likelihood models built into `rxmc`, and how to use them for situations involving systematic errors and multiple independent experimental constraints
-- [`fitting_an_optical_potential.ipynb`](https://github.com/beykyle/rxmc/blob/main/examples/fitting_an_optical_potential.ipynb) for a demonstration of fitting an optical potential to multiple experimental data sets parsed from Exfor.
 
 Other examples demonstrating actual reaction model fitting coming soon.
 
