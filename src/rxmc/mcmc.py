@@ -1,25 +1,49 @@
+from typing import Callable, Tuple
+
 import numpy as np
+
+# signature for the sampling algorithm
+# for type hints
+SamplingAlgorithm = Callable[
+    [
+        np.ndarray,  # x0
+        int,  # n_steps
+        Callable[[np.ndarray], float],  # log_posterior
+        Callable[[np.ndarray, np.random.Generator], np.ndarray],
+        # proposal distribution
+        np.random.Generator,  # rng
+    ],
+    # Return type:
+    # chain: np.ndarray,
+    # logp_chain: np.ndarray,
+    # accepted: int
+    Tuple[np.ndarray, np.ndarray, int],
+]
 
 
 def metropolis_hastings(
-    x0,
-    n_steps,
-    log_posterior,
-    propose,
-    rng=None,
+    x0: np.ndarray,
+    n_steps: int,
+    log_posterior: Callable[[np.ndarray], float],
+    propose: Callable[[np.ndarray, np.random.Generator], np.ndarray],
+    rng: np.random.Generator = None,
 ):
     """
     Performs Metropolis-Hastings MCMC sampling.
 
     Parameters:
-        x0 (numpy.ndarray): Initial parameter values for the chain.
-        n_steps (int): Number of steps/samples to generate.
-        log_posterior (callable): Function to calculate the log posterior
-            of a sample.
-        propose (callable): Proposal function for generating new samples.
-        rng (numpy.random.Generator, optional): Random number generator,
-            default is initialized with a seed of 42.
-
+        x0 : np.ndarray
+            Initial parameter values for the chain.
+        n_steps : int
+            Number of steps/samples to generate.
+        log_posterior : Callable[[np.ndarray], float]
+            Function to compute the log posterior probability of
+            the parameters.
+        propose : Callable[[np.ndarray, np.random.Generator], np.ndarray]
+            Function to propose new parameter values.
+        rng : np.random.Generator, optional
+            Random number generator for reproducibility. Defaults to None,
+            which uses the default RNG with seed 42.
     Returns:
         tuple:
             - numpy.ndarray: The chain of samples generated.
@@ -35,7 +59,7 @@ def metropolis_hastings(
     accepted = 0
     x = x0
     for i in range(n_steps):
-        x_new = propose(x)
+        x_new = propose(x, rng)
         logp_new = log_posterior(x_new)
         # use sum log exp trick
         # https://gregorygundersen.com/blog/2020/02/09/log-sum-exp/

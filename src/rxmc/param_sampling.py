@@ -11,26 +11,6 @@ class SamplingConfig:
     This class encapsulates the parameters, starting location, proposal function,
     and prior distribution used for sampling.
 
-    Parameters
-    ----------
-    params: list[params.Parameter]
-        A list of Parameter objects representing the parameters to be sampled.
-    starting_location: np.ndarray
-        A numpy array representing the initial location in parameter space
-        from which sampling will begin.
-    proposal: proposal.ProposalDistribution
-        An instance of a ProposalDistribution that defines how to propose
-        new parameter values based on the current state.
-    prior: object
-        An object representing the prior distribution over the parameters.
-        It must implement a 'logpdf' method, which takes in a parameter
-        vector and returns the log pdf of the prior.
-    sampling_algorithm: callable, optional
-        A callable sampling algorithm to be used for sampling.
-        Defaults to `mcmc.metropolis_hastings`.
-    rng: np.random.Generator, optional
-        A numpy random number generator instance for reproducibility.
-        Defaults to `np.random.default_rng()`.
     """
 
     def __init__(
@@ -39,16 +19,35 @@ class SamplingConfig:
         starting_location: np.ndarray,
         proposal: proposal.ProposalDistribution,
         prior,
-        sampling_algorithm: callable = mcmc.metropolis_hastings,
-        rng: np.random.Generator = np.random.default_rng(),
+        sampling_algorithm: mcmc.SamplingAlgorithm = mcmc.metropolis_hastings,
     ):
+        """
+        Initializes the SamplingConfig with the provided parameters.
+        Parameters:
+        ----------
+        params: list[params.Parameter]
+            A list of Parameter objects defining the parameters to be sampled.
+        starting_location: np.ndarray
+            The initial parameter vector from which to start the sampling.
+        proposal: proposal.ProposalDistribution
+            A callable that defines the proposal distribution for sampling.
+        prior: object
+            An object representing the prior distribution, which must have a
+            method `logpdf` for calculating the log probability density function.
+        sampling_algorithm: mcmc.SamplingAlgorithm, optional
+            The sampling algorithm to use for generating samples. Defaults to
+            `mcmc.metropolis_hastings`.
+        Raises:
+        -------
+        ValueError: If the proposal is not callable or if the prior does not
+            have the required methods.
+        """
+
         self.params = params
         self.starting_location = starting_location
         self.proposal = proposal
         self.prior = prior
         self.sampling_algorithm = sampling_algorithm
-
-        self.sync_rng(rng)
 
         _validate_object(
             prior,
@@ -56,30 +55,11 @@ class SamplingConfig:
             required_methods=["logpdf"],
         )
 
-        _validate_object(
-            proposal,
-            "rng",
-        )
-
         if not callable(self.proposal):
             raise ValueError(
                 "The proposal must be a callable object that takes in a "
-                "parameter vector and returns a proposed parameter vector."
+                "parameter vector and an rng returns a proposed parameter vector."
             )
-
-    def sync_rng(self, rng: np.random.Generator):
-        """
-        Synchronize the random number generator used for sampling.
-
-        Parameters:
-        ----------
-        rng: np.random.Generator
-            A numpy random number generator instance.
-        """
-        if not isinstance(rng, np.random.Generator):
-            raise ValueError("The rng must be an instance of np.random.Generator.")
-        self.rng = rng
-        self.proposal.rng = rng
 
     def update_proposal(self, proposal: callable):
         """
