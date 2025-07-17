@@ -262,7 +262,8 @@ def set_up_observation(
     if include_sys_offset_err:
         y_sys_err_offset = measurement.systematic_offset_err / normalization
         # check if systematic errors are common to all angles
-        if not np.all(y_sys_err_offset == y_sys_err_offset[0]):
+
+        if np.isscalar(y_sys_err_offset) or not np.all(y_sys_err_offset == y_sys_err_offset[0]):
             # Get unique elements in the array
             y_sys_err_offset, inverse_indices = np.unique(
                 y_sys_err_offset, return_inverse=True
