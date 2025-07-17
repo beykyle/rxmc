@@ -262,9 +262,9 @@ def set_up_observation(
     if include_sys_offset_err:
         y_sys_err_offset = measurement.systematic_offset_err / normalization
         # check if systematic errors are common to all angles
-        if not np.all(y_sys_err_offset == y_sys_err_offset[0]):
-            # Get unique elements in the array
-            y_sys_err_offset, inverse_indices = np.unique(
+        if not np.isscalar(y_sys_err_offset) or not np.all(y_sys_err_offset == y_sys_err_offset[0]):
+        # Get unique elements in the array
+            unique_elements, inverse_indices = np.unique(
                 y_sys_err_offset, return_inverse=True
             )
 
@@ -272,9 +272,11 @@ def set_up_observation(
             y_sys_err_offset_mask = [
                 inverse_indices == i for i in np.arange(len(unique_elements))
             ]
+            y_sys_err_offset = unique_elements
 
         else:
-            y_sys_err_offset_mask = np.ones_like(y, dtype=bool)
+            y_sys_err_offset = y_sys_err_offset if np.isscalar(y_sys_err_offset) else y_sys_err_offset[0]
+            y_sys_err_offset_mask = None
 
     y_sys_err_normalization = None
     y_sys_err_normalization_mask = None
@@ -282,9 +284,9 @@ def set_up_observation(
         y_sys_err_normalization = measurement.systematic_norm_err
         # check if systematic errors are common to all angles
         ratio = y_sys_err_normalization / y
-        if not np.all(ratio == ratio[0]):
+        if not np.isscalar(ratio) or np.all(ratio == ratio[0]):
             # Get unique elements in the array
-            y_sys_err_normalization, inverse_indices = np.unique(
+            unique_elements, inverse_indices = np.unique(
                 y_sys_err_normalization, return_inverse=True
             )
 
@@ -292,8 +294,10 @@ def set_up_observation(
             y_sys_err_normalization_mask = [
                 inverse_indices == i for i in np.arange(len(unique_elements))
             ]
+            y_sys_err_normalization = unique_elements
         else:
-            y_sys_err_normalization_mask = np.ones_like(y, dtype=bool)
+            y_sys_err_normalization_mask = None
+            y_sys_err_normalization = ratio if np.isscalar(ratio) else ratio[0]
 
     if ObservationClass is Observation:
         # If the base class is Observation, we can directly return it
