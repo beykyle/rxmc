@@ -283,8 +283,8 @@ def set_up_observation(
     if include_sys_norm_err:
         y_sys_err_normalization = measurement.systematic_norm_err
         # check if systematic errors are common to all angles
-        ratio = y_sys_err_normalization / y
-        if not np.isscalar(ratio) or np.all(ratio == ratio[0]):
+        ratio = y_sys_err_normalization
+        if not np.isscalar(ratio) or np.allclose(ratio, ratio[0]):
             # Get unique elements in the array
             unique_elements, inverse_indices = np.unique(
                 y_sys_err_normalization, return_inverse=True
