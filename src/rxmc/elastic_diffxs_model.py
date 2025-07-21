@@ -64,6 +64,8 @@ class ElasticDifferentialXSModel(PhysicalModel):
             Name of the model, used for identification purposes.
             Defaults to None.
         """
+        self.model_name = model_name or "ElasticDifferentialXSModel"
+
         self.quantity = quantity
         self.interaction_central = interaction_central
         self.interaction_spin_orbit = interaction_spin_orbit
