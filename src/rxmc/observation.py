@@ -158,7 +158,7 @@ class Observation:
         return (
             self.statistical_covariance
             + self.systematic_offset_covariance
-            + self.systematic_normalization_covariance * np.outer(y, y)
+            + self.systematic_normalization_covariance**2 * np.outer(y, y)
         )
 
     def residual(self, ym: np.ndarray):

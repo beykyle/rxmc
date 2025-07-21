@@ -1,9 +1,10 @@
 # rxmc
-Bayesian calibration of reaction models with Markov-Chain Monte Carlo, with flexible and composable models for the likelihood and corpus of evidence.
+Bayesian calibration of reaction models with Markov-Chain Monte Carlo, with flexible and composable models for the likelihood and body of evidence.
 - curate the corpus of experimental constraints (e.g. using [`exfor_tools`](https://github.com/beykyle/exfor_tools))
 - efficiently calculate your model's corresponding predictions for these observables using [`jitR`](https://github.com/beykyle/jitr)
 - choose from a variety of likelihood models, or extend the basic [`LikelihoodModel`](https://github.com/beykyle/rxmc/blob/main/src/rxmc/likelihood_model.py) class to implement your own.
-- package the constraints, physical model (and solver), and likelihood model together in a `rxmc.corpus.Corpus` object which provides the likelihood of a given model parameter, for use in Bayesian calibration (see `rxmc.mcmc`).
+- package the constraints, physical model (and solver), and likelihood model together in a `rxmc.evidence.Evidence` object which provides the likelihood of a given model parameter, for use in Bayesian calibration 
+- run Bayesian calibration using an `rxmc.Walker`
 
 An example of this code in use is in the development of the [East Lansing Model](https://github.com/beykyle/elm)
 
@@ -76,6 +77,7 @@ python -m unittest discover ./test
 Check out the demos: 
 - [`examples/linear_calibration_demo.ipynb`](https://github.com/beykyle/rxmc/blob/main/examples/linear_calibration_demo.ipynb) for an illustrative example of fitting a line to data with various likelihood models.
 - [`systematic_err_demo.ipynb`](https://github.com/beykyle/rxmc/blob/main/examples/systematic_err_demo.ipynb) for a demonstration of the likelihood models built into `rxmc`, and how to use them for situations involving systematic errors and multiple independent experimental constraints
+- [`fitting_an_optical_potential.ipynb`](https://github.com/beykyle/rxmc/blob/main/examples/fitting_an_optical_potential.ipynb) for a demonstration of how to fit a local optical potential to experimental data using `rxmc` and `jitR`. 
 
 Other examples demonstrating actual reaction model fitting coming soon.
 
