@@ -72,6 +72,7 @@ class ElasticDifferentialXSObservation:
         self.reaction = reaction
         self.quantity = quantity
         self.lmax = lmax
+        self.subentry = measurement.subentry
 
         self.angles_vis = angles_vis
         angles_rad_vis = angles_vis * np.pi / 180
@@ -270,7 +271,7 @@ def set_up_observation(
             or np.allclose(y_sys_err_offset, y_sys_err_offset[0])
         ):
             raise ValueError(
-                f"Error while parsing measurement from subenetry {measurement.subentry}:\n"
+                f"Error while parsing measurement from subentry {measurement.subentry}:\n"
                 "Systematic offset errors must be scalar or constant."
             )
         else:
@@ -289,7 +290,7 @@ def set_up_observation(
         ratio = y_sys_err_normalization
         if not (np.isscalar(ratio) or np.allclose(ratio, ratio[0])):
             raise ValueError(
-                f"Error while parsing measurement from subenetry {measurement.subentry}:\n"
+                f"Error while parsing measurement from subentry {measurement.subentry}:\n"
                 "Systematic normalization errors must be scalar or constant."
             )
         else:
