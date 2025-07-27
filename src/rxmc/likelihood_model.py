@@ -169,7 +169,11 @@ class LikelihoodModel:
         float
         """
         cov = self.covariance(observation, ym)
-        mahalanobis, log_det = mahalanobis_distance_cholesky(observation.y, ym, cov)
+        #mahalanobis, log_det = mahalanobis_distance_cholesky(observation.y, ym, cov)
+        log_det = np.linalg.slogdet(cov)[1]
+        cov_inv = np.linalg.inv(cov)
+        residual = observation.residual(ym)
+        mahalanobis = residual.T @ cov_inv @ residual
         return log_likelihood(mahalanobis, log_det, observation.n_data_pts)
 
 
