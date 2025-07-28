@@ -54,8 +54,7 @@ class Evidence:
             If the number of data points is less than the number of parameters,
             indicating an under-constrained model.
         ValueError
-            If the weights do not match the number of constraints or do not sum to
-            the number of constraints.
+            If the weights do not match the number of constraints
         ValueError
             If the constraints and parametric_constraints do not share the same
             physical model parameters, or if there are mismatches in the likelihood
@@ -119,9 +118,6 @@ class Evidence:
             raise ValueError(
                 "weights must be a 1D array with the same shape as constraints"
             )
-        else:
-            if not np.isclose(np.sum(weights), len(self.constraints)):
-                raise ValueError("weights must sum to number of constraints")
         self.weights = weights
 
         if weights_parametric is None:
@@ -132,13 +128,6 @@ class Evidence:
             raise ValueError(
                 "weights_parametric must be a 1D array with the same shape as parametric_constraints"
             )
-        else:
-            if not np.isclose(
-                np.sum(weights_parametric), len(self.parametric_constraints)
-            ):
-                raise ValueError(
-                    "weights_parametric must sum to number of parametric constraints"
-                )
         self.weights_parametric = weights_parametric
 
     def log_likelihood(self, model_params, likelihood_params: list[tuple] = []):
