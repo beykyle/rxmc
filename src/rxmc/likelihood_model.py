@@ -50,7 +50,7 @@ class LikelihoodModel:
     points in the observation in the covariance matrix directly.
     """
 
-    def __init__(self, fractional_uncorrelated_error: float = 0.0):
+    def __init__(self, fractional_uncorrelated_error: float = 0.0, divide_by_N: bool = False, covariance_scale: float = 1.0):
         """
         Initializes the LikelihoodModel, optionally with a fractional
         uncorrelated error.
@@ -66,6 +66,8 @@ class LikelihoodModel:
         self.fractional_uncorrelated_error = fractional_uncorrelated_error
         self.params = None
         self.n_params = 0
+        self.divide_by_N = divide_by_N
+        self.covariance_scale = covariance_scale
 
     def covariance(self, observation: Observation, ym: np.ndarray):
         """
@@ -111,7 +113,10 @@ class LikelihoodModel:
             self.fractional_uncorrelated_error,
             ym,
         )
-        return sigma + sigma_model
+        k = self.covariance_scale
+        if self.divide_by_N:
+            k /= observation.n_data_pts
+        return k * (sigma + sigma_model)
 
     def residual(self, observation: Observation, ym: np.ndarray):
         """
@@ -169,11 +174,7 @@ class LikelihoodModel:
         float
         """
         cov = self.covariance(observation, ym)
-        #mahalanobis, log_det = mahalanobis_distance_cholesky(observation.y, ym, cov)
-        log_det = np.linalg.slogdet(cov)[1]
-        cov_inv = np.linalg.inv(cov)
-        residual = observation.residual(ym)
-        mahalanobis = residual.T @ cov_inv @ residual
+        mahalanobis, log_det = mahalanobis_distance_cholesky(observation.y, ym, cov)
         return log_likelihood(mahalanobis, log_det, observation.n_data_pts)
 
 
@@ -265,8 +266,8 @@ class ParametricLikelihoodModel(LikelihoodModel):
     along with the parameters of a `PhysicalModel`.
     """
 
-    def __init__(self, likelihood_params: list[Parameter]):
-        super().__init__()
+    def __init__(self, likelihood_params: list[Parameter], divide_by_N: bool = False, covariance_scale: float = 1.0):
+        super().__init__(divide_by_N=divide_by_N, covariance_scale=covariance_scale)
         self.params = likelihood_params
         self.n_params = len(likelihood_params)
 
@@ -355,7 +356,7 @@ class UnknownNoiseErrorModel(ParametricLikelihoodModel):
     \]
     """
 
-    def __init__(self, fractional_uncorrelated_error: float = 0):
+    def __init__(self, fractional_uncorrelated_error: float = 0, divide_by_N: bool = False, covariance_scale: float = 1.0):
         """
         Initializes the UnknownNoiseErrorModel, optionally with
         a fractional uncorrelated error.
@@ -371,7 +372,7 @@ class UnknownNoiseErrorModel(ParametricLikelihoodModel):
         likelihood_params = [
             Parameter("noise", float, latex_name=r"\epsilon"),
         ]
-        super().__init__(likelihood_params)
+        super().__init__(likelihood_params, divide_by_N=divide_by_N, covariance_scale=covariance_scale)
 
     def covariance(self, observation: Observation, ym: np.ndarray, noise: float):
         """
@@ -434,14 +435,14 @@ class UnknownNoiseFractionErrorModel(ParametricLikelihoodModel):
 
     """
 
-    def __init__(self, fractional_uncorrelated_error: float = 0):
+    def __init__(self, fractional_uncorrelated_error: float = 0, divide_by_N: bool = False, covariance_scale: float = 1.0):
         self.fractional_uncorrelated_error = fractional_uncorrelated_error
         likelihood_params = [
             Parameter(
                 "noise_fraction", float, latex_name=r"\epsilon", unit="dimensionless"
             ),
         ]
-        super().__init__(likelihood_params)
+        super().__init__(likelihood_params, divide_by_N=divide_by_N, covariance_scale=covariance_scale)
 
     def covariance(
         self, observation: Observation, ym: np.ndarray, noise_fraction: float
@@ -497,7 +498,7 @@ class UnknownNormalizationErrorModel(ParametricLikelihoodModel):
     of the normalization of the observation is a parameter, $\eta$.
     """
 
-    def __init__(self, fractional_uncorrelated_error: float = 0):
+    def __init__(self, fractional_uncorrelated_error: float = 0, divide_by_N: bool = False, covariance_scale: float = 1.0):
         self.fractional_uncorrelated_error = fractional_uncorrelated_error
         likelihood_params = [
             Parameter(
@@ -507,7 +508,7 @@ class UnknownNormalizationErrorModel(ParametricLikelihoodModel):
                 unit="dimensionless",
             ),
         ]
-        super().__init__(likelihood_params)
+        super().__init__(likelihood_params, divide_by_N=divide_by_N, covariance_scale=covariance_scale)
 
     def covariance(
         self, observation: Observation, ym: np.ndarray, y_sys_err_normalization: float
