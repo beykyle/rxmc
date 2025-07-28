@@ -7,6 +7,7 @@ from rxmc.likelihood_model import (
     UnknownNoiseErrorModel,
     UnknownNoiseFractionErrorModel,
     UnknownNormalizationErrorModel,
+    mahalanobis_distance_cholesky,
 )
 
 
@@ -269,6 +270,60 @@ class TestUnknownNormalization(unittest.TestCase):
             self.observation, self.ym, self.normalization_err
         )
         self.assertAlmostEqual(log_likelihood_value, self.expected_log_likelihood)
+
+
+class TestMahalanobisDistanceCholesky(unittest.TestCase):
+    def test_mahalanobis_distance(self):
+        # Test case: Simple 2D example
+        y = np.array([2.0, 3.0])
+        ym = np.array([0.0, 0.0])
+        cov = np.array([[1.0, 0.5], [0.5, 1.0]])
+
+        residual = y - ym
+
+        expected_mahalanobis_distance = residual.T @ np.linalg.inv(cov) @ residual
+        expected_log_det = np.log(0.75)
+
+        mahalanobis, log_det = mahalanobis_distance_cholesky(y, ym, cov)
+
+        self.assertAlmostEqual(mahalanobis, expected_mahalanobis_distance, places=5)
+        self.assertAlmostEqual(log_det, expected_log_det, places=5)
+
+    def test_mahalanobis_distance_0(self):
+        # Test case: Simple 2D example
+        y = np.array([2.0, 3.0])
+        ym = y
+        cov = np.array([[1.0, 0.5], [0.5, 1.0]])
+
+        residual = y - ym
+
+        expected_mahalanobis_distance = 0
+        expected_log_det = np.log(0.75)
+
+        mahalanobis, log_det = mahalanobis_distance_cholesky(y, ym, cov)
+
+        self.assertAlmostEqual(mahalanobis, expected_mahalanobis_distance, places=5)
+        self.assertAlmostEqual(log_det, expected_log_det, places=5)
+
+
+    def test_mahalanobis_distance_near_singular(self):
+        # Test case: Simple 2D example
+        y = np.array([1, 2, 3])
+        ym = np.array([1.1, 1.9, 3.1])
+
+        # Ill-conditioned covariance matrix
+        cov = np.array([[1.0, 0.999, 0.999],
+                        [0.999, 1.0, 0.999],
+                        [0.999, 0.999, 1.0]])
+        residual = y - ym
+
+        expected_mahalanobis_distance = residual.T @ np.linalg.inv(cov) @ residual
+        expected_log_det = np.log(np.linalg.det(cov))
+        mahalanobis, log_det = mahalanobis_distance_cholesky(y, ym, cov)
+
+        self.assertAlmostEqual(mahalanobis, expected_mahalanobis_distance, places=5)
+        self.assertAlmostEqual(log_det, expected_log_det, places=5)
+
 
 
 if __name__ == "__main__":

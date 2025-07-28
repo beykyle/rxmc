@@ -63,7 +63,7 @@ class TestEvidence(unittest.TestCase):
 
     def test_serial_execution(self):
         log_likelihood = self.evidence.log_likelihood(model_params=self.model_params)
-        self.assertEqual(log_likelihood, self.expected_loglikelihood)
+        self.assertAlmostEqual(log_likelihood, self.expected_loglikelihood)
 
 
 if __name__ == "__main__":
