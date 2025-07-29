@@ -701,6 +701,98 @@ class UnknownModelError(ParametricLikelihoodModel):
         return k * (sigma + sigma_model)
 
 
+class CorrelatedDiscrepancyModel(ParametricLikelihoodModel):
+    """
+    A `ParametricLikelihoodModel` in which the systematic uncertainty
+    of the observation is a structured discrepancy, which is a function
+    of the model prediction, $y_m(x_i, \alpha)$, and the parameters
+    of the model, $\eta$ and $\ell$, such that
+    \[
+        \Sigma_{ij}^{sys} = K_{ij} + \omega
+    \]
+    where $K_{ij}$ is the Radial Basis Function (RBF) kernel
+    """
+
+    def __init__(self, divide_by_N=False, covariance_scale=1.0):
+        likelihood_params = [
+            Parameter("discrepancy_amplitude", float, latex_name=r"\eta"),
+            Parameter("discrepancy_lengthscale", float, latex_name=r"\ell"),
+            Parameter("model_error_fraction", float, latex_name=r"\gamma"),
+        ]
+        super().__init__(
+            likelihood_params,
+            divide_by_N=divide_by_N,
+            covariance_scale=covariance_scale,
+        )
+
+    def covariance(
+        self,
+        observation: Observation,
+        ym: np.ndarray,
+        eta,
+        lengthscale,
+        model_error_fraction,
+    ):
+        """
+        Returns the covariance matrix for the observation, which includes
+        a structured discrepancy term based on the RBF kernel.
+        Parameters
+        ----------
+        observation : Observation
+            The observation object containing the observed data.
+        ym : np.ndarray
+            Model prediction for the observation.
+        eta : float
+            Amplitude of the kernel.
+        lengthscale : float
+            Length scale of the kernel.
+        model_error_fraction : float
+            Fractional uncorrelated error in the model prediction.
+        Returns
+        -------
+        np.ndarray
+            Covariance matrix of the observation.
+        """
+
+        sigma_stat = observation.statistical_covariance
+        sigma_sys = (
+            observation.systematic_offset_covariance
+            + observation.systematic_normalization_covariance * np.outer(ym, ym)
+        )
+        sigma_model = uncorrelated_model_covariance(model_error_fraction, ym)
+
+        # Structured discrepancy term
+        K = rbf_kernel(observation.x, eta, lengthscale)
+
+        cov = sigma_stat + sigma_sys + sigma_model + K
+        k = self.covariance_scale
+        if self.divide_by_N:
+            k /= observation.n_data_pts
+        return k * cov
+
+
+def rbf_kernel(x: np.ndarray, eta: float, length_scale: float) -> np.ndarray:
+    """
+    Radial Basis Function (RBF) kernel, also known as Gaussian kernel.
+    Computes the covariance matrix for a given set of points.
+    Parameters
+    ----------
+    x : np.ndarray
+        Input data points, shape (n_samples, n_features).
+    eta : float
+        Amplitude of the kernel.
+    length_scale : float
+        Length scale of the kernel.
+    Returns
+    -------
+    np.ndarray
+        Covariance matrix computed using the RBF kernel.
+    """
+    x = np.atleast_2d(x).T
+    sqdist = np.sum((x - x.T) ** 2, axis=0)
+    return eta**2 * np.exp(-0.5 * sqdist / length_scale**2)
+
+
 def mahalanobis_distance_sqr_cholesky(y, ym, cov):
     """
     Calculate the square of the Mahalanobis distance between
