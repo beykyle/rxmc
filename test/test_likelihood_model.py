@@ -1,14 +1,17 @@
 import unittest
+
 import numpy as np
-from rxmc.observation import Observation, FixedCovarianceObservation
 from rxmc.likelihood_model import (
-    LikelihoodModel,
     FixedCovarianceLikelihood,
+    LikelihoodModel,
+    UnknownModelError,
     UnknownNoiseErrorModel,
     UnknownNoiseFractionErrorModel,
     UnknownNormalizationErrorModel,
+    CorrelatedDiscrepancyModel,
     mahalanobis_distance_sqr_cholesky,
 )
+from rxmc.observation import FixedCovarianceObservation, Observation
 
 
 class TestFixedCovarianceLikelihoodDiagCovariance(unittest.TestCase):
@@ -295,8 +298,6 @@ class TestMahalanobisDistanceCholesky(unittest.TestCase):
         ym = y
         cov = np.array([[1.0, 0.5], [0.5, 1.0]])
 
-        residual = y - ym
-
         expected_mahalanobis_distance_sqr = 0
         expected_log_det = np.log(0.75)
 
@@ -320,6 +321,150 @@ class TestMahalanobisDistanceCholesky(unittest.TestCase):
 
         self.assertAlmostEqual(mahalanobis, expected_mahalanobis_distance_sqr, places=5)
         self.assertAlmostEqual(log_det, expected_log_det, places=5)
+
+
+class TestUnknownModelError(unittest.TestCase):
+    def setUp(self):
+        # Setup Observation instance with mock data
+        self.observation = Observation(
+            x=np.array([0.0, 1.0, 2.0]),
+            y=np.array([10.0, 15.0, 20.0]),
+            y_stat_err=np.array([0.1, 0.1, 0.1]),
+            y_sys_err_normalization=0.04,
+            y_sys_err_offset=0.2,
+        )
+
+        # Model prediction deviations from observations
+        self.ym = self.observation.y + np.array([1.0, -1.0, 0.0])
+        self.delta = self.observation.y - self.ym
+
+        # Initialize KnownModelError class
+        self.likelihood = UnknownModelError()
+
+        # Free parameter: fractional uncorrelated error
+        self.fractional_uncorrelated_err = 0.312
+
+        # Expected covariance calculations
+        self.expected_covariance = (
+            self.observation.statistical_covariance
+            + self.observation.systematic_offset_covariance
+            + self.observation.systematic_normalization_covariance
+            * np.outer(self.ym, self.ym)
+            + self.fractional_uncorrelated_err**2 * np.diag(self.ym**2)
+        )
+
+        # Expected chi-squared value
+        self.expected_chi2 = (
+            self.delta.T @ np.linalg.inv(self.expected_covariance) @ self.delta
+        )
+
+        # Expected log-likelihood value
+        self.expected_log_likelihood = -0.5 * (
+            self.expected_chi2
+            + np.log(np.linalg.det(self.expected_covariance))
+            + 3 * np.log(2 * np.pi)
+        )
+
+    def test_covariance(self):
+        cov = self.likelihood.covariance(
+            self.observation, self.ym, self.fractional_uncorrelated_err
+        )
+        self.assertEqual(cov.shape, (3, 3))
+        np.testing.assert_array_almost_equal(cov, self.expected_covariance)
+
+    def test_chi2(self):
+        chi2_value = self.likelihood.chi2(
+            self.observation, self.ym, self.fractional_uncorrelated_err
+        )
+        self.assertAlmostEqual(chi2_value, self.expected_chi2)
+
+    def test_log_likelihood(self):
+        log_likelihood_value = self.likelihood.log_likelihood(
+            self.observation, self.ym, self.fractional_uncorrelated_err
+        )
+        self.assertAlmostEqual(log_likelihood_value, self.expected_log_likelihood)
+
+
+class TestCorrelatedDiscrepancyModel(unittest.TestCase):
+    def setUp(self):
+        # Mock observation data
+        self.observation = Observation(
+            x=np.array([0.0, 1.0, 2.0]),
+            y=np.array([10.0, 15.0, 20.0]),
+            y_stat_err=np.array([0.1, 0.1, 0.1]),
+            y_sys_err_normalization=0.04,
+            y_sys_err_offset=0.2,
+        )
+        self.ym = self.observation.y + np.array([1.0, -1.0, 0.0])
+        self.delta = self.observation.y - self.ym
+
+        # Instantiate the CorrelatedDiscrepancyModel
+        self.likelihood = CorrelatedDiscrepancyModel()
+
+        # Parameters for the correlated discrepancy
+        self.discrepancy_amplitude = 0.5
+        self.discrepancy_lengthscale = 0.2
+        self.model_error_fraction = 0.01
+
+        # Expected covariance computation with RBF kernel inclusion
+        self.expected_covariance = (
+            self.observation.statistical_covariance
+            + self.observation.systematic_offset_covariance
+            + self.observation.systematic_normalization_covariance
+            * np.outer(self.ym, self.ym)
+            + self.model_error_fraction**2 * np.diag(self.ym**2)
+            + self._expected_rbf_kernel(
+                self.observation.x,
+                self.discrepancy_amplitude,
+                self.discrepancy_lengthscale,
+            )
+        )
+
+        self.expected_chi2 = (
+            self.delta.T @ np.linalg.inv(self.expected_covariance) @ self.delta
+        )
+        self.expected_log_likelihood = -0.5 * (
+            self.expected_chi2
+            + np.log(np.linalg.det(self.expected_covariance))
+            + 3 * np.log(2 * np.pi)
+        )
+
+    def _expected_rbf_kernel(self, x, eta, lengthscale):
+        # Calculate the expected RBF kernel separately
+        x = np.atleast_2d(x).T
+        sqdist = np.sum((x - x.T) ** 2, axis=0)
+        return eta**2 * np.exp(-0.5 * sqdist / lengthscale**2)
+
+    def test_covariance(self):
+        cov = self.likelihood.covariance(
+            self.observation,
+            self.ym,
+            self.discrepancy_amplitude,
+            self.discrepancy_lengthscale,
+            self.model_error_fraction,
+        )
+        self.assertEqual(cov.shape, (3, 3))
+        np.testing.assert_array_almost_equal(cov, self.expected_covariance)
+
+    def test_chi2(self):
+        chi2_value = self.likelihood.chi2(
+            self.observation,
+            self.ym,
+            self.discrepancy_amplitude,
+            self.discrepancy_lengthscale,
+            self.model_error_fraction,
+        )
+        self.assertAlmostEqual(chi2_value, self.expected_chi2)
+
+    def test_log_likelihood(self):
+        log_likelihood_value = self.likelihood.log_likelihood(
+            self.observation,
+            self.ym,
+            self.discrepancy_amplitude,
+            self.discrepancy_lengthscale,
+            self.model_error_fraction,
+        )
+        self.assertAlmostEqual(log_likelihood_value, self.expected_log_likelihood)
 
 
 if __name__ == "__main__":
