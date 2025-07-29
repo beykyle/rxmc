@@ -7,7 +7,7 @@ from rxmc.likelihood_model import (
     UnknownNoiseErrorModel,
     UnknownNoiseFractionErrorModel,
     UnknownNormalizationErrorModel,
-    mahalanobis_distance_cholesky,
+    mahalanobis_distance_sqr_cholesky,
 )
 
 
@@ -273,7 +273,7 @@ class TestUnknownNormalization(unittest.TestCase):
 
 
 class TestMahalanobisDistanceCholesky(unittest.TestCase):
-    def test_mahalanobis_distance(self):
+    def test_mahalanobis_distance_sqr(self):
         # Test case: Simple 2D example
         y = np.array([2.0, 3.0])
         ym = np.array([0.0, 0.0])
@@ -281,15 +281,15 @@ class TestMahalanobisDistanceCholesky(unittest.TestCase):
 
         residual = y - ym
 
-        expected_mahalanobis_distance = residual.T @ np.linalg.inv(cov) @ residual
+        expected_mahalanobis_distance_sqr = residual.T @ np.linalg.inv(cov) @ residual
         expected_log_det = np.log(0.75)
 
-        mahalanobis, log_det = mahalanobis_distance_cholesky(y, ym, cov)
+        mahalanobis, log_det = mahalanobis_distance_sqr_cholesky(y, ym, cov)
 
-        self.assertAlmostEqual(mahalanobis, expected_mahalanobis_distance, places=5)
+        self.assertAlmostEqual(mahalanobis, expected_mahalanobis_distance_sqr, places=5)
         self.assertAlmostEqual(log_det, expected_log_det, places=5)
 
-    def test_mahalanobis_distance_0(self):
+    def test_mahalanobis_distance_sqr_0(self):
         # Test case: Simple 2D example
         y = np.array([2.0, 3.0])
         ym = y
@@ -297,33 +297,29 @@ class TestMahalanobisDistanceCholesky(unittest.TestCase):
 
         residual = y - ym
 
-        expected_mahalanobis_distance = 0
+        expected_mahalanobis_distance_sqr = 0
         expected_log_det = np.log(0.75)
 
-        mahalanobis, log_det = mahalanobis_distance_cholesky(y, ym, cov)
+        mahalanobis, log_det = mahalanobis_distance_sqr_cholesky(y, ym, cov)
 
-        self.assertAlmostEqual(mahalanobis, expected_mahalanobis_distance, places=5)
+        self.assertAlmostEqual(mahalanobis, expected_mahalanobis_distance_sqr, places=5)
         self.assertAlmostEqual(log_det, expected_log_det, places=5)
 
-
-    def test_mahalanobis_distance_near_singular(self):
+    def test_mahalanobis_distance_sqr_near_singular(self):
         # Test case: Simple 2D example
         y = np.array([1, 2, 3])
         ym = np.array([1.1, 1.9, 3.1])
 
         # Ill-conditioned covariance matrix
-        cov = np.array([[1.0, 0.999, 0.999],
-                        [0.999, 1.0, 0.999],
-                        [0.999, 0.999, 1.0]])
+        cov = np.array([[1.0, 0.999, 0.999], [0.999, 1.0, 0.999], [0.999, 0.999, 1.0]])
         residual = y - ym
 
-        expected_mahalanobis_distance = residual.T @ np.linalg.inv(cov) @ residual
+        expected_mahalanobis_distance_sqr = residual.T @ np.linalg.inv(cov) @ residual
         expected_log_det = np.log(np.linalg.det(cov))
-        mahalanobis, log_det = mahalanobis_distance_cholesky(y, ym, cov)
+        mahalanobis, log_det = mahalanobis_distance_sqr_cholesky(y, ym, cov)
 
-        self.assertAlmostEqual(mahalanobis, expected_mahalanobis_distance, places=5)
+        self.assertAlmostEqual(mahalanobis, expected_mahalanobis_distance_sqr, places=5)
         self.assertAlmostEqual(log_det, expected_log_det, places=5)
-
 
 
 if __name__ == "__main__":

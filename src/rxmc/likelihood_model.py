@@ -150,7 +150,7 @@ class LikelihoodModel:
     def chi2(self, observation: Observation, ym: np.ndarray):
         """
         Calculate the generalised chi-squared statistic. This is the
-        Mahalanobis distance between y and ym
+        square of the Mahalanobis distance between y and ym
 
         Parameters
         ----------
@@ -165,8 +165,8 @@ class LikelihoodModel:
             Chi-squared statistic.
         """
         cov = self.covariance(observation, ym)
-        mahalanobis, _ = mahalanobis_distance_cholesky(observation.y, ym, cov)
-        return mahalanobis
+        mahalanobis_sqr, _ = mahalanobis_distance_sqr_cholesky(observation.y, ym, cov)
+        return mahalanobis_sqr
 
     def log_likelihood(self, observation: Observation, ym: np.ndarray):
         """
@@ -184,8 +184,10 @@ class LikelihoodModel:
         float
         """
         cov = self.covariance(observation, ym)
-        mahalanobis, log_det = mahalanobis_distance_cholesky(observation.y, ym, cov)
-        return log_likelihood(mahalanobis, log_det, observation.n_data_pts)
+        mahalanobis_sqr, log_det = mahalanobis_distance_sqr_cholesky(
+            observation.y, ym, cov
+        )
+        return log_likelihood(mahalanobis_sqr, log_det, observation.n_data_pts)
 
 
 class FixedCovarianceLikelihood(LikelihoodModel):
@@ -262,8 +264,10 @@ class FixedCovarianceLikelihood(LikelihoodModel):
         """
         # we overload this method to use precomputed inverse
         # covariance matrix
-        mahalanobis = self.chi2(observation, ym)
-        return log_likelihood(mahalanobis, observation.log_det, observation.n_data_pts)
+        mahalanobis_sqr = self.chi2(observation, ym)
+        return log_likelihood(
+            mahalanobis_sqr, observation.log_det, observation.n_data_pts
+        )
 
 
 class ParametricLikelihoodModel(LikelihoodModel):
@@ -307,8 +311,8 @@ class ParametricLikelihoodModel(LikelihoodModel):
         """
         assert len(likelihood_params) == self.n_params
         cov = self.covariance(observation, ym, *likelihood_params)
-        mahalanobis, _ = mahalanobis_distance_cholesky(observation.y, ym, cov)
-        return mahalanobis
+        mahalanobis_sqr, _ = mahalanobis_distance_sqr_cholesky(observation.y, ym, cov)
+        return mahalanobis_sqr
 
     def log_likelihood(
         self, observation: Observation, ym: np.ndarray, *likelihood_params
@@ -331,8 +335,10 @@ class ParametricLikelihoodModel(LikelihoodModel):
         """
         assert len(likelihood_params) == self.n_params
         cov = self.covariance(observation, ym, *likelihood_params)
-        mahalanobis, log_det = mahalanobis_distance_cholesky(observation.y, ym, cov)
-        return log_likelihood(mahalanobis, log_det, observation.n_data_pts)
+        mahalanobis_sqr, log_det = mahalanobis_distance_sqr_cholesky(
+            observation.y, ym, cov
+        )
+        return log_likelihood(mahalanobis_sqr, log_det, observation.n_data_pts)
 
     def covariance(self, observation: Observation, ym: np.ndarray, *likelihood_params):
         """
@@ -595,7 +601,7 @@ class UnknownNormalizationErrorModel(ParametricLikelihoodModel):
         """
         sigma_sys = (
             observation.systematic_offset_covariance
-            + y_sys_err_normalization** 2 * np.outer(ym, ym)
+            + y_sys_err_normalization**2 * np.outer(ym, ym)
         )
         sigma_model = uncorrelated_model_covariance(
             self.fractional_uncorrelated_error,
@@ -605,10 +611,10 @@ class UnknownNormalizationErrorModel(ParametricLikelihoodModel):
         return sigma_sys + sigma_stat + sigma_model
 
 
-def mahalanobis_distance_cholesky(y, ym, cov):
+def mahalanobis_distance_sqr_cholesky(y, ym, cov):
     """
-    Calculate the Mahalanobis distance between y and ym, and the
-    log determinant of the covariance matrix.
+    Calculate the square of the Mahalanobis distance between
+    y and ym, and the log determinant of the covariance matrix.
 
     Parameters:
     y (array-like): The observation vector.
@@ -620,25 +626,25 @@ def mahalanobis_distance_cholesky(y, ym, cov):
     """
     L = sc.linalg.cholesky(cov, lower=True)
     z = sc.linalg.solve_triangular(L, y - ym, lower=True)
-    mahalanobis = np.dot(z, z)
+    mahalanobis_sqr = np.dot(z, z)
     log_det = 2 * np.sum(np.log(np.diag(L)))
 
-    return mahalanobis, log_det
+    return mahalanobis_sqr, log_det
 
 
-def log_likelihood(mahalanobis: float, log_det: float, n: int):
+def log_likelihood(mahalanobis_sqr: float, log_det: float, n: int):
     """
     Calculate the log likelihood of a multivariate normal distribution.
 
     Parameters:
-    mahalanobis (float): The Mahalanobis distance.
+    mahalanobis_sqr (float): The Mahalanobis distance.
     log_det (float): The log determinant of the covariance matrix.
     n (int): The dimension of the data.
 
     Returns:
     float: The log likelihood value.
     """
-    return -0.5 * (mahalanobis + log_det + n * np.log(2 * np.pi))
+    return -0.5 * (mahalanobis_sqr + log_det + n * np.log(2 * np.pi))
 
 
 def statistical_covariance(y_stat_err: np.ndarray):
