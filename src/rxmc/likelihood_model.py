@@ -4,6 +4,9 @@ import scipy as sc
 from .observation import FixedCovarianceObservation, Observation
 from .params import Parameter
 
+# TODO change all parametric likelihood models to use log space
+# for the unknown errors since they are positive
+
 
 class LikelihoodModel:
     """

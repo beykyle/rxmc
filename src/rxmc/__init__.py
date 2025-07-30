@@ -4,7 +4,8 @@ from . import evidence
 from . import params
 from . import param_sampling
 from . import walker
-from . import mcmc
+from . import metropolis_hastings
+from . import adaptive_metropolis
 from . import observation
 from . import constraint
 

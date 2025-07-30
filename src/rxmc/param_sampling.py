@@ -1,53 +1,48 @@
+from typing import Callable
+
 import numpy as np
 
 from . import proposal
 from . import params
-from . import mcmc
+from .metropolis_hastings import metropolis_hastings
+from .adaptive_metropolis import adaptive_metropolis
 
 
 class SamplingConfig:
-    """
-    Configuration for parameter sampling in a Bayesian inference context.
-    This class encapsulates the parameters, starting location, proposal function,
-    and prior distribution used for sampling.
-
-    """
+    """Base class for sampling configurations"""
 
     def __init__(
         self,
         params: list[params.Parameter],
-        starting_location: np.ndarray,
-        proposal: proposal.ProposalDistribution,
         prior,
-        sampling_algorithm: mcmc.SamplingAlgorithm = mcmc.metropolis_hastings,
+        starting_location: np.ndarray,
+        sampling_algorithm,
+        args: tuple = None,
+        kwargs: dict = None,
     ):
         """
         Initializes the SamplingConfig with the provided parameters.
         Parameters:
         ----------
         params: list[params.Parameter]
-            A list of Parameter objects defining the parameters to be sampled.
-        starting_location: np.ndarray
-            The initial parameter vector from which to start the sampling.
-        proposal: proposal.ProposalDistribution
-            A callable that defines the proposal distribution for sampling.
+            List of parameters to sample.
         prior: object
-            An object representing the prior distribution, which must have a
-            method `logpdf` for calculating the log probability density function.
-        sampling_algorithm: mcmc.SamplingAlgorithm, optional
-            The sampling algorithm to use for generating samples. Defaults to
-            `mcmc.metropolis_hastings`.
-        Raises:
-        -------
-        ValueError: If the proposal is not callable or if the prior does not
-            have the required methods.
+            Prior distribution object that has a method `logpdf`.
+        starting_location: np.ndarray
+            Initial parameter values for the chain.
+        sampling_algorithm: Callable
+            Function that implements the sampling algorithm.
+        args: list
+            Additional positional arguments to pass to the sampling algorithm.
+        kwargs: dict
+            Additional keyword arguments to pass to the sampling algorithm.
         """
-
         self.params = params
         self.starting_location = starting_location
-        self.proposal = proposal
         self.prior = prior
         self.sampling_algorithm = sampling_algorithm
+        self.args = args if args is not None else ()
+        self.kwargs = kwargs if kwargs is not None else {}
 
         _validate_object(
             prior,
@@ -55,28 +50,107 @@ class SamplingConfig:
             required_methods=["logpdf"],
         )
 
-        if not callable(self.proposal):
+    def sample(
+        self,
+        n_steps: int,
+        rng: np.random.Generator,
+        log_posterior: Callable[[np.ndarray], float],
+    ):
+        """
+        Samples from the posterior distribution using the specified sampling algorithm.
+        This is the interface used by `Walker` to sample from the posterior distribution.
+
+        Parameters:
+        ----------
+        n_steps: int
+            Number of steps to sample.
+        rng: np.random.Generator
+            Random number generator for reproducibility.
+        log_posterior: Callable[[np.ndarray], float]
+            Function that computes the log posterior probability of a parameter vector.
+
+        """
+        return self.sampling_algorithm(
+            self.starting_location,
+            n_steps,
+            log_posterior,
+            rng,
+            *self.args,
+            **self.kwargs,
+        )
+
+
+class MetropolisHastingsSampler(SamplingConfig):
+    """
+    Metropolis-Hastings sampler for MCMC.
+    """
+
+    def __init__(
+        self,
+        params: list[params.Parameter],
+        prior,
+        starting_location: np.ndarray,
+        proposal: proposal.ProposalDistribution,
+    ):
+        """
+        Initializes the Metropolis-Hastings sampler with the provided parameters.
+
+        Parameters:
+        ----------
+        proposal: proposal.ProposalDistribution
+            Proposal distribution object that has a method `__call__` which
+            takes in a parameter vector and an rng, returning a proposed
+            parameter vector.
+        """
+
+        self.proposal = proposal
+        super().__init__(
+            params,
+            prior,
+            starting_location,
+            metropolis_hastings,
+            args=[self.proposal],
+            kwargs={},
+        )
+
+        if not callable(proposal):
             raise ValueError(
                 "The proposal must be a callable object that takes in a "
                 "parameter vector and an rng returns a proposed parameter vector."
             )
 
-    def update_proposal(self, proposal: callable):
+
+class AdaptiveMetropolisSampler(SamplingConfig):
+    """
+    Adaptive Metropolis sampler for MCMC.
+    """
+
+    def __init__(
+        self,
+        params: list[params.Parameter],
+        prior,
+        starting_location: np.ndarray,
+        adapt_start: int = 100,
+        epsilon: float = 1e-6,
+    ):
         """
-        Update the proposal function used for sampling.
+        Initializes the Adaptive Metropolis sampler with the provided parameters.
 
         Parameters:
         ----------
-        proposal: callable
-            A new proposal function that takes a parameter vector and returns
-            a proposed parameter vector.
+        adapt_start: int
+            Step at which adaptation begins.
+        epsilon: float
+            Small term to regularize the covariance matrix.
         """
-        if not callable(proposal):
-            raise ValueError(
-                "The proposal must be a callable object that takes in a "
-                "parameter vector and returns a proposed parameter vector."
-            )
-        self.proposal = proposal
+        super().__init__(
+            params,
+            prior,
+            starting_location,
+            adaptive_metropolis,
+            args=[adapt_start, epsilon],
+            kwargs={},
+        )
 
 
 def _validate_object(obj, name: str, required_attributes=[], required_methods=[]):
