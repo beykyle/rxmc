@@ -112,6 +112,7 @@ class Walker:
         """
         batch_chain, logp, accepted = self.model_sample_conf.sample(
             n_steps,
+            x0,
             self.rng,
             lambda x: self.log_posterior(x, likelihood_params),
         )
@@ -161,10 +162,13 @@ class Walker:
                     ym, x
                 )
 
+            # get starting location for this likelihood model
+            x0 = starting_locations[i]
+
             # run a chain over the parameter space of just this
             # likelihood model
             batch_chain, batch_logp, accepted_in_batch = lm_conf.sample(
-                n_steps, self.rng, log_posterior_lm
+                n_steps, x0, self.rng, log_posterior_lm
             )
             chains.append(batch_chain)
             logp.append(batch_logp)

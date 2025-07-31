@@ -53,6 +53,7 @@ class SamplingConfig:
     def sample(
         self,
         n_steps: int,
+        starting_location: np.ndarray,
         rng: np.random.Generator,
         log_posterior: Callable[[np.ndarray], float],
     ):
@@ -71,7 +72,7 @@ class SamplingConfig:
 
         """
         return self.sampling_algorithm(
-            self.starting_location,
+            starting_location,
             n_steps,
             log_posterior,
             rng,
