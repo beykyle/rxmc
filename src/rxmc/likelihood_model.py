@@ -4,6 +4,9 @@ import scipy as sc
 from .observation import FixedCovarianceObservation, Observation
 from .params import Parameter
 
+# TODO change all parametric likelihood models to use log space
+# for the unknown errors since they are positive
+
 
 class LikelihoodModel:
     """
@@ -18,7 +21,7 @@ class LikelihoodModel:
         \]
     where $sigma^2_{i}^{stat}$ is the statistical variance of the i-th
     observation, (`observation.statistical_covariance`) and $\gamma$ is the
-    fractional uncorrelated error (`self.fractional_uncorrelated_error`).
+    fractional uncorrelated error (`self.frac_err`).
 
     Here, $Sigma_{ij}^{sys}$ is the systematic covariance matrix:
         \[
@@ -36,7 +39,7 @@ class LikelihoodModel:
     the use of the covariance matrix to fit correlated data'
 
     Note that if there is no systematic uncertainty encoded in the `observation`
-    and `self.fractional_uncorrelated_error` takes the default value of 0, the
+    and `self.frac_err` takes the default value of 0, the
     covariance matrix becomes diaginal, and the `chi2` function reduces to the
     simple and familiar $\chi^2$ form.
 
@@ -52,7 +55,7 @@ class LikelihoodModel:
 
     def __init__(
         self,
-        fractional_uncorrelated_error: float = 0.0,
+        frac_err: float = 0.0,
         divide_by_N: bool = False,
         covariance_scale: float = 1.0,
     ):
@@ -62,7 +65,7 @@ class LikelihoodModel:
 
         Parameters
         ----------
-        fractional_uncorrelated_error : float
+        frac_err : float
             Fractional uncorrelated error in the model prediction. For example,
             if one expects the model to be correct to 1% in any given data point,
             then this should be set to 0.01. This is sometimes used to represent
@@ -73,7 +76,7 @@ class LikelihoodModel:
         scale : float = 1.0
             Arbitrary fixed scale constant for covariance matrix
         """
-        self.fractional_uncorrelated_error = fractional_uncorrelated_error
+        self.frac_err = frac_err
         self.params = None
         self.n_params = 0
         self.divide_by_N = divide_by_N
@@ -92,7 +95,7 @@ class LikelihoodModel:
             \]
         where $sigma^2_{i}^{stat}$ is the statistical variance of the i-th
         observation, (`observation.statistical_covariance`) and $\gamma$ is the
-        fractional uncorrelated error (`self.fractional_uncorrelated_error`).
+        fractional uncorrelated error (`self.frac_err`).
 
         Here, $Sigma_{ij}^{sys}$ is the systematic covariance matrix:
             \[
@@ -120,13 +123,13 @@ class LikelihoodModel:
         """
         sigma = observation.covariance(ym)
         sigma_model = uncorrelated_model_covariance(
-            self.fractional_uncorrelated_error,
+            self.frac_err,
             ym,
         )
-        k = self.covariance_scale
-        if self.divide_by_N:
-            k /= observation.n_data_pts
-        return k * (sigma + sigma_model)
+        cov = sigma + sigma_model
+        return scale_covariance(
+            cov, observation, self.covariance_scale, self.divide_by_N
+        )
 
     def residual(self, observation: Observation, ym: np.ndarray):
         """
@@ -283,10 +286,15 @@ class ParametricLikelihoodModel(LikelihoodModel):
     def __init__(
         self,
         likelihood_params: list[Parameter],
+        frac_err: float = 0.0,
         divide_by_N: bool = False,
         covariance_scale: float = 1.0,
     ):
-        super().__init__(divide_by_N=divide_by_N, covariance_scale=covariance_scale)
+        super().__init__(
+            frac_err=frac_err,
+            divide_by_N=divide_by_N,
+            covariance_scale=covariance_scale,
+        )
         self.params = likelihood_params
         self.n_params = len(likelihood_params)
 
@@ -370,16 +378,19 @@ class UnknownNoiseErrorModel(ParametricLikelihoodModel):
     A ParametricLikelihoodModel in which each data point in the observation
     has the same, unknown, statistical error, which is a parameter, $epsilon$.
 
-    This implies the statistical contribution to the covariance takes the form:
+    No matter the Observation, the statistical contribution to the covariance
+    thus always takes the form:
 
     \[
         \Sigma_{ij}^{stat} = \epsilon^2 \delta_{ij}
     \]
+
+    where $\epsilon$ is the statistical `noise` parameter.
     """
 
     def __init__(
         self,
-        fractional_uncorrelated_error: float = 0,
+        frac_err: float = 0,
         divide_by_N: bool = False,
         covariance_scale: float = 1.0,
     ):
@@ -389,22 +400,22 @@ class UnknownNoiseErrorModel(ParametricLikelihoodModel):
 
         Parameters
         ----------
-        fractional_uncorrelated_error : float, optional
+        frac_err : float, optional
             Fractional uncorrelated error in the model prediction. For example,
             if one expects the model to be correct to 1% in any given data
             point, then this should be set to 0.01. Default is 0.0
         """
-        self.fractional_uncorrelated_error = fractional_uncorrelated_error
         likelihood_params = [
-            Parameter("noise", float, latex_name=r"\epsilon"),
+            Parameter("log noise", float, latex_name=r"\log{\epsilon}"),
         ]
         super().__init__(
             likelihood_params,
+            frac_err=frac_err,
             divide_by_N=divide_by_N,
             covariance_scale=covariance_scale,
         )
 
-    def covariance(self, observation: Observation, ym: np.ndarray, noise: float):
+    def covariance(self, observation: Observation, ym: np.ndarray, log_epsilon: float):
         """
         Returns the following covariance matrix:
             \[
@@ -420,9 +431,8 @@ class UnknownNoiseErrorModel(ParametricLikelihoodModel):
             \sigma^2_{i}^{stat} = \epsilon^2 \delta_{ij}
         \]
 
-        (note this class ignores `observation.statistical_covariance`, substituting it with
-        the variable `noise`) and $\gamma$ is the fractional uncorrelated
-        error (`self.fractional_uncorrelated_error`).
+        (note this class ignores `observation.statistical_covariance`,
+        replacing it with $\epsilon$).
 
         Parameters
         ----------
@@ -430,8 +440,8 @@ class UnknownNoiseErrorModel(ParametricLikelihoodModel):
             The observation object containing the observed data.
         ym : np.ndarray
             Model prediction for the observation.
-        noise : float
-            Statistical noise
+        log_epsilon : float
+            natural log of the statistical noise, $\epsilon$
 
         Returns
         -------
@@ -443,14 +453,14 @@ class UnknownNoiseErrorModel(ParametricLikelihoodModel):
             + observation.systematic_normalization_covariance * np.outer(ym, ym)
         )
         sigma_model = uncorrelated_model_covariance(
-            self.fractional_uncorrelated_error,
+            self.frac_err,
             ym,
         )
-        sigma_stat = statistical_covariance(np.ones_like(ym) * noise)
-        k = self.covariance_scale
-        if self.divide_by_N:
-            k /= observation.n_data_pts
-        return k * (sigma_sys + sigma_model + sigma_stat)
+        sigma_stat = statistical_covariance(np.ones_like(ym) * np.exp(log_epsilon))
+        cov = sigma_sys + sigma_model + sigma_stat
+        return scale_covariance(
+            cov, observation, self.covariance_scale, self.divide_by_N
+        )
 
 
 class UnknownNoiseFractionErrorModel(ParametricLikelihoodModel):
@@ -470,25 +480,26 @@ class UnknownNoiseFractionErrorModel(ParametricLikelihoodModel):
 
     def __init__(
         self,
-        fractional_uncorrelated_error: float = 0,
+        frac_err: float = 0,
         divide_by_N: bool = False,
         covariance_scale: float = 1.0,
     ):
-        self.fractional_uncorrelated_error = fractional_uncorrelated_error
         likelihood_params = [
             Parameter(
-                "noise_fraction", float, latex_name=r"\epsilon", unit="dimensionless"
+                "log noise fraction",
+                float,
+                latex_name=r"\log{\epsilon}",
+                unit="dimensionless",
             ),
         ]
         super().__init__(
             likelihood_params,
+            frac_err=frac_err,
             divide_by_N=divide_by_N,
             covariance_scale=covariance_scale,
         )
 
-    def covariance(
-        self, observation: Observation, ym: np.ndarray, noise_fraction: float
-    ):
+    def covariance(self, observation: Observation, ym: np.ndarray, log_epsilon: float):
         """
         Returns the following covariance matrix:
             \[
@@ -506,7 +517,7 @@ class UnknownNoiseFractionErrorModel(ParametricLikelihoodModel):
 
         (note this class ignores `observation.statistical_covariance`, substituting it with
         the variable `noise_fraction` multiplied by `ym`) and $\gamma$ is the
-        fractional uncorrelated error (`self.fractional_uncorrelated_error`).
+        fractional uncorrelated error (`self.frac_err`).
 
         Parameters
         ----------
@@ -514,8 +525,8 @@ class UnknownNoiseFractionErrorModel(ParametricLikelihoodModel):
             The observation object containing the observed data.
         ym : np.ndarray
             Model prediction for the observation.
-        noise_fraction : float
-            Statistical noise as a fraction of `observation.y`
+        log_epsilon : float
+            natural log of statistical noise as a fraction of `observation.y`
 
         Returns
         -------
@@ -527,46 +538,54 @@ class UnknownNoiseFractionErrorModel(ParametricLikelihoodModel):
             + observation.systematic_normalization_covariance * np.outer(ym, ym)
         )
         sigma_model = uncorrelated_model_covariance(
-            self.fractional_uncorrelated_error,
+            self.frac_err,
             ym,
         )
-        sigma_stat = statistical_covariance(ym * noise_fraction)
-        k = self.covariance_scale
-        if self.divide_by_N:
-            k /= observation.n_data_pts
-        return k * (sigma_sys + sigma_model + sigma_stat)
+        sigma_stat = statistical_covariance(ym * np.exp(log_epsilon))
+        cov = sigma_sys + sigma_model + sigma_stat
+        return scale_covariance(
+            cov, observation, self.covariance_scale, self.divide_by_N
+        )
 
 
 class UnknownNormalizationErrorModel(ParametricLikelihoodModel):
     """
     A ParametricLikelihoodModel in which the systematic uncertainty
     of the normalization of the observation is a parameter, $\eta$.
+
+    This implies the systematic normalization contribution to the
+    covariance takes the form:
+
+        \[
+            \Sigma_{ij}^{sys norm} = \eta**2 y_m(x_i, \alpha) y_m(x_j, \alpha)
+        \]
+
+    where $\eta$ is a free parameter.
     """
 
     def __init__(
         self,
-        fractional_uncorrelated_error: float = 0,
+        frac_err: float = 0,
         divide_by_N: bool = False,
         covariance_scale: float = 1.0,
     ):
-        self.fractional_uncorrelated_error = fractional_uncorrelated_error
+        self.frac_err = frac_err
         likelihood_params = [
             Parameter(
-                "y_sys_err_normalization",
+                "log normalization error",
                 float,
-                latex_name=r"\eta",
+                latex_name=r"\log{\eta}",
                 unit="dimensionless",
             ),
         ]
         super().__init__(
             likelihood_params,
+            frac_err=frac_err,
             divide_by_N=divide_by_N,
             covariance_scale=covariance_scale,
         )
 
-    def covariance(
-        self, observation: Observation, ym: np.ndarray, y_sys_err_normalization: float
-    ):
+    def covariance(self, observation: Observation, ym: np.ndarray, log_eta: float):
         """
         Returns the following covariance matrix:
             \[
@@ -576,7 +595,7 @@ class UnknownNormalizationErrorModel(ParametricLikelihoodModel):
             \]
         where $sigma^2_{i}^{stat}$ is the statistical variance of the i-th
         observation, (`observation.statistical_covariance`) and $\gamma$ is the
-        fractional uncorrelated error (`self.fractional_uncorrelated_error`).
+        fractional uncorrelated error (`self.frac_err`).
 
         Here, $Sigma_{ij}^{sys}$ is the systematic covariance matrix:
             \[
@@ -597,40 +616,42 @@ class UnknownNormalizationErrorModel(ParametricLikelihoodModel):
             The observation object containing the observed data.
         ym : np.ndarray
             Model prediction for the observation.
-        y_sys_err_normalization: float
-            Uncertainty in the overall normalization of the observation.
+        log_eta: float
+            natual log of the uncertainty in the overall normalization
+            of the observation.
 
         Returns
         -------
         np.ndarray
             Covariance matrix of the observation.
         """
-        sigma_sys = (
-            observation.systematic_offset_covariance
-            + y_sys_err_normalization**2 * np.outer(ym, ym)
-        )
+        sigma_sys = observation.systematic_offset_covariance + np.exp(
+            log_eta
+        ) ** 2 * np.outer(ym, ym)
         sigma_model = uncorrelated_model_covariance(
-            self.fractional_uncorrelated_error,
+            self.frac_err,
             ym,
         )
         sigma_stat = observation.statistical_covariance
-        k = self.covariance_scale
-        if self.divide_by_N:
-            k /= observation.n_data_pts
-        return k * (sigma_sys + sigma_model + sigma_stat)
+        cov = sigma_sys + sigma_model + sigma_stat
+        return scale_covariance(
+            cov, observation, self.covariance_scale, self.divide_by_N
+        )
 
 
 class UnknownModelError(ParametricLikelihoodModel):
     """
-    A `ParametricLikelihoodModel` in which the `fractional_uncorrelated_error`
-    is a free parameter $\gamma$, such that
+    A `ParametricLikelihoodModel` in which the `frac_err`
+    is a free parameter $\gamma$, such that the covariance due to the
+    uncorrelated model error takes the form:
 
     \[
-        \Sigma_{ij}^{stat} = \sigma^2_{i}^{stat} \delta_{ij}
-                           + \gamma^2 y(x_i)^2 \delta_{ij}
+        \Sigma_{ij}^{uncorrelated} = \gamma^2 y_m(x_i, \alpha)^2 \delta_{ij}
     \]
 
+    where $\gamma$ is a free parameter.
 
+    This is commonly used as a model-error term or unquantified uncertainty.
     """
 
     def __init__(
@@ -640,7 +661,7 @@ class UnknownModelError(ParametricLikelihoodModel):
     ):
         likelihood_params = [
             Parameter(
-                "fractional_uncorrelated_err",
+                "frac_err",
                 float,
                 latex_name=r"\gamma",
                 unit="dimensionless",
@@ -648,6 +669,7 @@ class UnknownModelError(ParametricLikelihoodModel):
         ]
         super().__init__(
             likelihood_params,
+            frac_err=0.0,  # this model does not use frac_err
             divide_by_N=divide_by_N,
             covariance_scale=covariance_scale,
         )
@@ -656,7 +678,7 @@ class UnknownModelError(ParametricLikelihoodModel):
         self,
         observation: Observation,
         ym: np.ndarray,
-        fractional_uncorrelated_err: float,
+        frac_err: float,
     ):
         """
         Default covariance model. Derived classes of `LikelihoodModel` will
@@ -669,7 +691,7 @@ class UnknownModelError(ParametricLikelihoodModel):
                             + \gamma^2 y_m^2(x_i, \alpha)
             \]
         where $sigma^2_{i}^{stat}$ is $\gamma$ is the fractional uncorrelated error
-        (`fractional_uncorrelated_error`), treated here as a free parameter, and
+        (`frac_err`), treated here as a free parameter, and
         all other definitions are the same as `LikelihoodModel.covariance`
 
 
@@ -679,7 +701,7 @@ class UnknownModelError(ParametricLikelihoodModel):
             Model prediction for the observation.
         observation : Observation
             The observation object containing the observed data.
-        fractional_uncorrelated_err: float
+        frac_err: float
             The fraction of the model prediction at point x_i that
             is treated as the standard deviation of the model prediction
             at that point, such that the model prediction is independent
@@ -692,13 +714,13 @@ class UnknownModelError(ParametricLikelihoodModel):
         """
         sigma = observation.covariance(ym)
         sigma_model = uncorrelated_model_covariance(
-            fractional_uncorrelated_err,
+            frac_err,
             ym,
         )
-        k = self.covariance_scale
-        if self.divide_by_N:
-            k /= observation.n_data_pts
-        return k * (sigma + sigma_model)
+        cov = sigma + sigma_model
+        return scale_covariance(
+            cov, observation, self.covariance_scale, self.divide_by_N
+        )
 
 
 class CorrelatedDiscrepancyModel(ParametricLikelihoodModel):
@@ -765,10 +787,9 @@ class CorrelatedDiscrepancyModel(ParametricLikelihoodModel):
         K = rbf_kernel(observation.x, eta, lengthscale)
 
         cov = sigma_stat + sigma_sys + sigma_model + K
-        k = self.covariance_scale
-        if self.divide_by_N:
-            k /= observation.n_data_pts
-        return k * cov
+        return scale_covariance(
+            cov, observation, self.covariance_scale, self.divide_by_N
+        )
 
 
 def rbf_kernel(x: np.ndarray, eta: float, length_scale: float) -> np.ndarray:
@@ -791,6 +812,14 @@ def rbf_kernel(x: np.ndarray, eta: float, length_scale: float) -> np.ndarray:
     x = np.atleast_2d(x).T
     sqdist = np.sum((x - x.T) ** 2, axis=0)
     return eta**2 * np.exp(-0.5 * sqdist / length_scale**2)
+
+
+def scale_covariance(
+    cov: np.ndarray, observation: Observation, scale: float, divide_by_N: bool
+) -> np.ndarray:
+    if divide_by_N:
+        scale /= observation.n_data_pts
+    return scale * cov
 
 
 def mahalanobis_distance_sqr_cholesky(y, ym, cov):
@@ -851,7 +880,7 @@ def statistical_covariance(y_stat_err: np.ndarray):
     return np.diag(y_stat_err**2)
 
 
-def uncorrelated_model_covariance(fractional_uncorrelated_error: float, ym: np.ndarray):
+def uncorrelated_model_covariance(frac_err: float, ym: np.ndarray):
     """
     Returns the uncorrelated model covariance matrix:
         \[
@@ -868,7 +897,7 @@ def uncorrelated_model_covariance(fractional_uncorrelated_error: float, ym: np.n
 
     Parameters
     ----------
-    fractional_uncorrelated_error : float
+    frac_err : float
         Fractional uncorrelated error in the model prediction.
     ym : np.ndarray
         Model prediction for the observation.
@@ -878,4 +907,4 @@ def uncorrelated_model_covariance(fractional_uncorrelated_error: float, ym: np.n
     np.ndarray
         Uncorrelated model error covariance matrix.
     """
-    return fractional_uncorrelated_error**2 * np.diag(ym**2)
+    return frac_err**2 * np.diag(ym**2)

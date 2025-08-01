@@ -110,12 +110,11 @@ class Walker:
         accepted: float
             The acceptance rate of the model sampling algorithm.
         """
-        batch_chain, logp, accepted = self.model_sample_conf.sampling_algorithm(
-            x0=x0,
-            n_steps=n_steps,
-            log_posterior=lambda x: self.log_posterior(x, likelihood_params),
-            propose=self.model_sample_conf.proposal,
-            rng=self.rng,
+        batch_chain, logp, accepted = self.model_sample_conf.sample(
+            n_steps,
+            x0,
+            self.rng,
+            lambda x: self.log_posterior(x, likelihood_params),
         )
         return batch_chain, logp, accepted
 
@@ -163,14 +162,13 @@ class Walker:
                     ym, x
                 )
 
+            # get starting location for this likelihood model
+            x0 = starting_locations[i]
+
             # run a chain over the parameter space of just this
             # likelihood model
-            batch_chain, batch_logp, accepted_in_batch = lm_conf.sampling_algorithm(
-                x0=starting_locations[i],
-                n_steps=n_steps,
-                log_posterior=log_posterior_lm,
-                propose=lm_conf.proposal,
-                rng=self.rng,
+            batch_chain, batch_logp, accepted_in_batch = lm_conf.sample(
+                n_steps, x0, self.rng, log_posterior_lm
             )
             chains.append(batch_chain)
             logp.append(batch_logp)

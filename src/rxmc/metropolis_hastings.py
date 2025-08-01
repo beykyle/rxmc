@@ -2,32 +2,14 @@ from typing import Callable, Tuple
 
 import numpy as np
 
-# signature for the sampling algorithm
-# for type hints
-SamplingAlgorithm = Callable[
-    [
-        np.ndarray,  # x0
-        int,  # n_steps
-        Callable[[np.ndarray], float],  # log_posterior
-        Callable[[np.ndarray, np.random.Generator], np.ndarray],
-        # proposal distribution
-        np.random.Generator,  # rng
-    ],
-    # Return type:
-    # chain: np.ndarray,
-    # logp_chain: np.ndarray,
-    # accepted: int
-    Tuple[np.ndarray, np.ndarray, int],
-]
-
 
 def metropolis_hastings(
     x0: np.ndarray,
     n_steps: int,
     log_posterior: Callable[[np.ndarray], float],
+    rng: np.random.Generator,
     propose: Callable[[np.ndarray, np.random.Generator], np.ndarray],
-    rng: np.random.Generator = None,
-):
+) -> Tuple[np.ndarray, np.ndarray, int]:
     """
     Performs Metropolis-Hastings MCMC sampling.
 
@@ -39,11 +21,10 @@ def metropolis_hastings(
         log_posterior : Callable[[np.ndarray], float]
             Function to compute the log posterior probability of
             the parameters.
+        rng : np.random.Generator
+            Random number generator for reproducibility.
         propose : Callable[[np.ndarray, np.random.Generator], np.ndarray]
             Function to propose new parameter values.
-        rng : np.random.Generator, optional
-            Random number generator for reproducibility. Defaults to None,
-            which uses the default RNG with seed 42.
     Returns:
         tuple:
             - numpy.ndarray: The chain of samples generated.
@@ -51,8 +32,6 @@ def metropolis_hastings(
             - int: The number of accepted proposals.
 
     """
-    if rng is None:
-        rng = np.random.default_rng(42)
     chain = np.zeros((n_steps, x0.size))
     logp_chain = np.zeros((n_steps,))
     logp = log_posterior(x0)
