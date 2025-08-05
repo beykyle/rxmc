@@ -4,9 +4,6 @@ import scipy as sc
 from .observation import FixedCovarianceObservation, Observation
 from .params import Parameter
 
-# TODO change all parametric likelihood models to use log space
-# for the unknown errors since they are positive
-
 
 class LikelihoodModel:
     """
@@ -790,6 +787,128 @@ class CorrelatedDiscrepancyModel(ParametricLikelihoodModel):
         return scale_covariance(
             cov, observation, self.covariance_scale, self.divide_by_N
         )
+
+
+class UnknownNormalizationModel(ParametricLikelihoodModel):
+    """
+    A `ParametricLikelihoodModel` in which the normalization of the model is
+    a free parameter, $N$. In this case, the covariance does not include
+    systematic errors due to the normalization, as the model predictions
+    are explicitly re-normalized by the parameter $N$.
+    """
+
+    def __init__(self, divide_by_N=False, covariance_scale=1.0):
+        likelihood_params = [
+            Parameter(
+                "normalization",
+                float,
+                latex_name=r"N",
+                unit="dimensionless",
+            ),
+        ]
+        super().__init__(
+            likelihood_params,
+            divide_by_N=divide_by_N,
+            covariance_scale=covariance_scale,
+        )
+
+    def covariance(self, observation: Observation, ym: np.ndarray):
+        """
+        Returns the covariance matrix for the observation, which discludes
+        off-diagonal systematic errors due to the normalization, as the
+        model predictions are explicitly re-normalized.
+
+        Parameters
+        ----------
+        observation : Observation
+            The observation object containing the observed data.
+        ym : np.ndarray
+            Model prediction for the observation, which is expected to be
+            normalized by `N`.
+        """
+        sigma_sys = observation.systematic_offset_covariance
+        sigma_model = uncorrelated_model_covariance(
+            self.frac_err,
+            ym,
+        )
+        sigma_stat = observation.statistical_covariance
+        cov = sigma_sys + sigma_model + sigma_stat
+        return scale_covariance(
+            cov, observation, self.covariance_scale, self.divide_by_N
+        )
+
+
+    def residual(self, observation: Observation, ym: np.ndarray, normalization: float):
+        """
+        Returns the residual between the model prediction ym and
+        observation.y scaled by the normalization parameter.
+
+        Parameters:
+        ----------
+        observation : Observation
+            The observation object containing the observed data.
+        ym : np.ndarray
+            Model prediction for the observation.
+        normalization : float
+            Normalization parameter to scale the model prediction.
+
+        Returns
+        -------
+        np.ndarray
+            Residual vector scaled by the normalization.
+        """
+        return observation.residual(ym / normalization)
+
+    def log_likelihood(self, observation: Observation, ym: np.ndarray, normalization: float):
+        """
+        Returns the log likelihood that ym reproduces y, given the covariance
+        and normalization parameter.
+
+        Parameters
+        ----------
+        ym : np.ndarray
+            Model prediction for the observation.
+        observation : Observation
+            The observation object containing the observed data.
+        normalization : float
+            Normalization parameter to scale the model prediction.
+
+        Returns
+        -------
+            float
+        """
+        cov = self.covariance(observation, ym / normalization)
+        mahalanobis_sqr, log_det = mahalanobis_distance_sqr_cholesky(
+            observation.y, ym / normalization, cov
+        )
+        return log_likelihood(mahalanobis_sqr, log_det, observation.n_data_pts)
+
+    def chi2(
+        self, observation: Observation, ym: np.ndarray, normalization: float
+    ):
+        """
+        Calculate the generalised chi-squared statistic. This is the
+        Mahalanobis distance between y and ym scaled by the normalization.
+
+        Parameters
+        ----------
+        observation : Observation
+            The observation object containing the observed data.
+        ym : np.ndarray
+            Model prediction for the observation.
+        normalization : float
+            Normalization parameter to scale the model prediction.
+
+        Returns
+        -------
+        float
+            Chi-squared statistic.
+        """
+        cov = self.covariance(observation, ym / normalization)
+        mahalanobis_sqr, _ = mahalanobis_distance_sqr_cholesky(
+            observation.y, ym / normalization, cov
+        )
+        return mahalanobis_sqr
 
 
 def rbf_kernel(x: np.ndarray, eta: float, length_scale: float) -> np.ndarray:
