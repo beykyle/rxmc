@@ -837,7 +837,6 @@ class UnknownNormalizationModel(ParametricLikelihoodModel):
             cov, observation, self.covariance_scale, self.divide_by_N
         )
 
-
     def residual(self, observation: Observation, ym: np.ndarray, normalization: float):
         """
         Returns the residual between the model prediction ym and
@@ -859,7 +858,9 @@ class UnknownNormalizationModel(ParametricLikelihoodModel):
         """
         return observation.residual(ym / normalization)
 
-    def log_likelihood(self, observation: Observation, ym: np.ndarray, normalization: float):
+    def log_likelihood(
+        self, observation: Observation, ym: np.ndarray, normalization: float
+    ):
         """
         Returns the log likelihood that ym reproduces y, given the covariance
         and normalization parameter.
@@ -883,9 +884,7 @@ class UnknownNormalizationModel(ParametricLikelihoodModel):
         )
         return log_likelihood(mahalanobis_sqr, log_det, observation.n_data_pts)
 
-    def chi2(
-        self, observation: Observation, ym: np.ndarray, normalization: float
-    ):
+    def chi2(self, observation: Observation, ym: np.ndarray, normalization: float):
         """
         Calculate the generalised chi-squared statistic. This is the
         Mahalanobis distance between y and ym scaled by the normalization.
@@ -984,6 +983,7 @@ class StudentTLikelihoodModel(LikelihoodModel):
             - 0.5 * log_det
             - (self.nu + n) / 2 * np.log(1 + mahalanobis_sqr / self.nu)
         )
+
 
 def scale_covariance(
     cov: np.ndarray, observation: Observation, scale: float, divide_by_N: bool
