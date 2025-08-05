@@ -131,8 +131,9 @@ class AdaptiveMetropolisSampler(SamplingConfig):
         params: list[params.Parameter],
         prior,
         starting_location: np.ndarray,
-        adapt_start: int = 100,
-        epsilon: float = 1e-6,
+        adapt_start: int = 1000,
+        window_size: int = 1000,
+        epsilon_fraction: float = 1e-4,
     ):
         """
         Initializes the Adaptive Metropolis sampler with the provided parameters.
@@ -149,7 +150,7 @@ class AdaptiveMetropolisSampler(SamplingConfig):
             prior,
             starting_location,
             adaptive_metropolis,
-            args=[adapt_start, epsilon],
+            args=[adapt_start, window_size, epsilon_fraction],
             kwargs={},
         )
 
