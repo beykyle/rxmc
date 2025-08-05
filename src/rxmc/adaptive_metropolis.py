@@ -1,5 +1,4 @@
 from typing import Callable, Tuple
-
 import numpy as np
 
 
@@ -25,13 +24,13 @@ def adaptive_metropolis(
         rng : np.random.Generator
             Random number generator for reproducibility.
         adapt_start : int
-            step at which adaptation begins.
+            Step at which adaptation begins.
         epsilon : float
-            small term to regularize the covariance matrix.
+            Small term to regularize the covariance matrix.
 
     Returns:
         Tuple of:
-            - chain: np.ndarray of samples
+            - chain: np.ndarray of samples with shape (n_steps, dim)
             - logp_chain: np.ndarray of log posterior values
             - accepted: int (number of accepted proposals)
     """
@@ -42,29 +41,33 @@ def adaptive_metropolis(
 
     x = x0.copy()
     logp = log_posterior(x)
-    cov = np.eye(dim)
     scale = 2.38**2 / dim
-    history = [x.copy()]
+
+    # Use a numpy array for history to avoid appending to a list
+    history = np.zeros((n_steps, dim))
+    history[0] = x.copy()
 
     for i in range(n_steps):
+        if i > 0:
+            history[i] = x.copy()
+
         if i < adapt_start:
             proposal_cov = np.eye(dim)
         else:
-            history_array = np.array(history)
-            cov = np.cov(history_array.T) + epsilon * np.eye(dim)
+            cov = np.cov(history[:i].T) + epsilon * np.eye(dim)
             proposal_cov = scale * cov
 
         # Propose new point
         x_new = rng.multivariate_normal(x, proposal_cov)
         logp_new = log_posterior(x_new)
-        log_ratio = min(0.0, logp_new - logp)
-        xi = np.log(rng.random())
-        if xi < log_ratio:
+
+        # Acceptance probability
+        log_ratio = min(0, logp_new - logp)
+        if np.log(rng.random()) < log_ratio:
             x = x_new
             logp = logp_new
             accepted += 1
 
-        history.append(x.copy())
         chain[i, :] = x
         logp_chain[i] = logp
 
