@@ -133,7 +133,7 @@ class ElasticDifferentialXSObservation:
                 )
             return self.constraint_workspace.rutherford / 1000
         elif self.quantity == "dXS/dA" and measurement.quantity == "dXS/dRuth":
-            return 1 / self.constraint_workspace.rutherford
+            return 1000 / self.constraint_workspace.rutherford
         elif self.quantity == "dXS/dA" and measurement.quantity == "dXS/dA":
             if measurement.y_units != "b/Sr":
                 raise ValueError(
