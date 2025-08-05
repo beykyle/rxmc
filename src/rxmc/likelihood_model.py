@@ -814,6 +814,58 @@ def rbf_kernel(x: np.ndarray, eta: float, length_scale: float) -> np.ndarray:
     return eta**2 * np.exp(-0.5 * sqdist / length_scale**2)
 
 
+class StudentTLikelihoodModel(LikelihoodModel):
+    """
+    A `LikelihoodModel` that uses a Student's t-distribution for the likelihood.
+    This is useful when the data has heavy tails or outliers, as it is more robust
+    to deviations from normality compared to the Gaussian likelihood.
+    """
+
+    def __init__(self, nu: float = 1.0, frac_err: float = 0.0):
+        """
+        Initializes the StudentTLikelihoodModel with a specified degrees of freedom.
+
+        Parameters
+        ----------
+        nu : float
+            Degrees of freedom for the Student's t-distribution.
+        frac_err : float
+            Fractional uncorrelated error in the model prediction.
+        """
+        super().__init__(frac_err=frac_err)
+        self.nu = nu
+
+    def log_likelihood(self, observation: Observation, ym: np.ndarray):
+        """
+        Calculate the log likelihood using the Student's t-distribution.
+
+        Parameters
+        ----------
+        observation : Observation
+            The observation object containing the observed data.
+        ym : np.ndarray
+            Model prediction for the observation.
+
+        Returns
+        -------
+        float
+            Log likelihood value.
+        """
+        cov = self.covariance(observation, ym)
+        mahalanobis_sqr, log_det = mahalanobis_distance_sqr_cholesky(
+            observation.y, ym, cov
+        )
+
+        # Log likelihood for Student's t-distribution
+        n = observation.n_data_pts
+        return (
+            sc.special.gammaln((n + self.nu) / 2)
+            - sc.special.gammaln(self.nu / 2)
+            - 0.5 * n * np.log(np.pi * self.nu)
+            - 0.5 * log_det
+            - (self.nu + n) / 2 * np.log(1 + mahalanobis_sqr / self.nu)
+        )
+
 def scale_covariance(
     cov: np.ndarray, observation: Observation, scale: float, divide_by_N: bool
 ) -> np.ndarray:
