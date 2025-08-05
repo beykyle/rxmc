@@ -1,5 +1,5 @@
-from typing import Callable, Tuple
 import numpy as np
+from typing import Callable, Tuple
 
 
 def adaptive_metropolis(
@@ -7,33 +7,30 @@ def adaptive_metropolis(
     n_steps: int,
     log_posterior: Callable[[np.ndarray], float],
     rng: np.random.Generator,
-    adapt_start: int = 100,
-    epsilon: float = 1e-6,
+    adapt_start: int = 1000,
+    window_size: int = 1000,
+    epsilon_fraction: float = 1e-4,
 ) -> Tuple[np.ndarray, np.ndarray, int]:
     """
-    Adaptive Metropolis-Hastings MCMC.
-
-    Parameters:
+    Adaptive Metropolis algorithm with a sliding window covariance adaptation.
+        Parameters:
+        ---------
         x0 : np.ndarray
-            Initial parameter values for the chain.
+            Initial point in the parameter space.
         n_steps : int
-            Number of steps/samples to generate.
+            Number of MCMC steps to perform.
         log_posterior : Callable[[np.ndarray], float]
-            Function to compute the log posterior probability of
-            the parameters.
+            Function to compute the log posterior probability.
         rng : np.random.Generator
             Random number generator for reproducibility.
         adapt_start : int
-            Step at which adaptation begins.
-        epsilon : float
-            Small term to regularize the covariance matrix.
-
-    Returns:
-        Tuple of:
-            - chain: np.ndarray of samples with shape (n_steps, dim)
-            - logp_chain: np.ndarray of log posterior values
-            - accepted: int (number of accepted proposals)
+            Step at which adaptation starts.
+        window_size : int
+            Size of the sliding window for covariance estimation.
+        epsilon_fraction : float
+            Fraction of the mean diagonal element to add to the covariance matrix for stability.
     """
+
     dim = x0.size
     chain = np.zeros((n_steps, dim))
     logp_chain = np.zeros(n_steps)
@@ -43,18 +40,17 @@ def adaptive_metropolis(
     logp = log_posterior(x)
     scale = 2.38**2 / dim
 
-    # Use a numpy array for history to avoid appending to a list
-    history = np.zeros((n_steps, dim))
-    history[0] = x.copy()
-
     for i in range(n_steps):
-        if i > 0:
-            history[i] = x.copy()
-
         if i < adapt_start:
             proposal_cov = np.eye(dim)
         else:
-            cov = np.cov(history[:i].T) + epsilon * np.eye(dim)
+            # Determine the index range for the sliding window
+            start_idx = max(0, i - window_size)
+            history_subset = chain[start_idx:i, ...]
+
+            # Use the window of samples to compute the covariance
+            cov = np.cov(history_subset.T)
+            cov += epsilon_fraction * np.eye(dim) * np.mean(np.diag(cov))
             proposal_cov = scale * cov
 
         # Propose new point
