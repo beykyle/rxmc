@@ -10,6 +10,7 @@ def adaptive_metropolis(
     adapt_start: int = 1000,
     window_size: int = 1000,
     epsilon_fraction: float = 1e-4,
+    previous_chain: np.ndarray = None,
 ) -> Tuple[np.ndarray, np.ndarray, int]:
     """
     Adaptive Metropolis algorithm with a sliding window covariance adaptation.
@@ -32,7 +33,12 @@ def adaptive_metropolis(
     """
 
     dim = x0.size
-    chain = np.zeros((n_steps, dim))
+    if previous_chain is not None:
+        start = previous_chain.shape[0]
+        chain = np.hstack( (previous_chain, np.zeros((n_steps, dim)) ) )
+    else:
+        start = 0
+        chain = np.zeros((n_steps, dim))
     logp_chain = np.zeros(n_steps)
     accepted = 0
 
@@ -40,7 +46,7 @@ def adaptive_metropolis(
     logp = log_posterior(x)
     scale = 2.38**2 / dim
 
-    for i in range(n_steps):
+    for i in range(start, n_steps):
         if i < adapt_start:
             proposal_cov = np.eye(dim)
         else:
@@ -49,8 +55,8 @@ def adaptive_metropolis(
             history_subset = chain[start_idx:i, ...]
 
             # Use the window of samples to compute the covariance
-            cov = np.cov(history_subset.T)
-            cov += epsilon_fraction * np.eye(dim) * np.mean(np.diag(cov))
+            cov = np.atleast_2d(np.cov(history_subset.T))
+            cov += epsilon_fraction * np.eye(dim) * np.mean(history_subset, axis=0)
             proposal_cov = scale * cov
 
         # Propose new point
