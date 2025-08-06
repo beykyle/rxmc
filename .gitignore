@@ -3,6 +3,7 @@ src/rxmc/__version__.py
 
 # pickle files
 *.pkl
+*.pkl.xz
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

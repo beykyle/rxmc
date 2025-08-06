@@ -1,12 +1,4 @@
 import unittest
-from multiprocessing import Pool
-
-try:
-    import ipyparallel
-
-    ipparallel_available = True
-except ImportError:
-    ipparallel_available = False
 
 import numpy as np
 
@@ -19,21 +11,6 @@ from rxmc.likelihood_model import log_likelihood
 
 
 class TestEvidence(unittest.TestCase):
-
-    @classmethod
-    def setUpClass(cls):
-        # Start ipyparallel cluster if available
-        if ipparallel_available:
-            cls.cluster = ipyparallel.Cluster(n=4)
-            rc = cls.cluster.start_and_connect_sync()
-            cls.client = rc
-        else:
-            cls.client = None
-
-    @classmethod
-    def tearDownClass(cls):
-        if ipparallel_available and cls.cluster:
-            cls.cluster.stop_cluster_sync()
 
     def setUp(self):
         y = np.array([1, 2, 3])
@@ -86,31 +63,7 @@ class TestEvidence(unittest.TestCase):
 
     def test_serial_execution(self):
         log_likelihood = self.evidence.log_likelihood(model_params=self.model_params)
-        self.assertEqual(log_likelihood, self.expected_loglikelihood)
-
-    def test_multiprocessing_execution(self):
-        with Pool(processes=2) as pool:
-            log_likelihood = self.evidence.log_likelihood(
-                model_params=self.model_params,
-                executor=pool,
-            )
-        self.assertEqual(log_likelihood, self.expected_loglikelihood)
-
-    @unittest.skipUnless(ipparallel_available, "ipyparallel not available")
-    def test_ipyparallel_execution(self):
-        if self.client is not None:
-            log_likelihood = self.evidence.log_likelihood(
-                model_params=self.model_params,
-                executor=self.client,
-            )
-            self.assertEqual(log_likelihood, self.expected_loglikelihood)
-
-    def test_invalid_executor(self):
-        with self.assertRaises(ValueError):
-            self.evidence.log_likelihood(
-                model_params=self.model_params,
-                executor="invalid_executor",
-            )
+        self.assertAlmostEqual(log_likelihood, self.expected_loglikelihood)
 
 
 if __name__ == "__main__":

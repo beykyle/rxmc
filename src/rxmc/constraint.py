@@ -1,8 +1,8 @@
 import numpy as np
 
-from .physical_model import PhysicalModel
 from .likelihood_model import LikelihoodModel
 from .observation import Observation
+from .physical_model import PhysicalModel
 
 
 class Constraint:
