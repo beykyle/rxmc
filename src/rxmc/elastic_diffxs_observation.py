@@ -72,6 +72,7 @@ class ElasticDifferentialXSObservation:
         self.reaction = reaction
         self.quantity = quantity
         self.lmax = lmax
+        self.subentry = measurement.subentry
 
         self.angles_vis = angles_vis
         angles_rad_vis = angles_vis * np.pi / 180
@@ -99,7 +100,7 @@ class ElasticDifferentialXSObservation:
         norm = self.compute_normalization(measurement)
 
         # initialize the observation instance
-        args, kwargs = set_up_observation(
+        args, kwargs, y_stat_err = set_up_observation(
             ObservationClass,
             measurement=measurement,
             normalization=norm,
@@ -112,6 +113,7 @@ class ElasticDifferentialXSObservation:
 
         self.x = self._obs.x
         self.y = self._obs.y
+        self.y_stat_err = y_stat_err
         self.n_data_pts = self._obs.n_data_pts
 
     def covariance(self, y):
@@ -131,7 +133,7 @@ class ElasticDifferentialXSObservation:
                 )
             return self.constraint_workspace.rutherford / 1000
         elif self.quantity == "dXS/dA" and measurement.quantity == "dXS/dRuth":
-            return 1 / self.constraint_workspace.rutherford
+            return 1000 / self.constraint_workspace.rutherford
         elif self.quantity == "dXS/dA" and measurement.quantity == "dXS/dA":
             if measurement.y_units != "b/Sr":
                 raise ValueError(
@@ -247,6 +249,8 @@ def set_up_observation(
             args for the ObservationClass initializer
         kwargs: dict
             kwargs for the ObservationClass initializer
+        y_stat_err: np.ndarray
+            Statistical errors normalized by the normalization factor.
     """
 
     x = x if x is not None else measurement.x
@@ -262,38 +266,36 @@ def set_up_observation(
     if include_sys_offset_err:
         y_sys_err_offset = measurement.systematic_offset_err / normalization
         # check if systematic errors are common to all angles
-        if not np.all(y_sys_err_offset == y_sys_err_offset[0]):
-            # Get unique elements in the array
-            y_sys_err_offset, inverse_indices = np.unique(
-                y_sys_err_offset, return_inverse=True
+        if not (
+            np.isscalar(y_sys_err_offset)
+            or np.allclose(y_sys_err_offset, y_sys_err_offset[0])
+        ):
+            raise ValueError(
+                f"Error while parsing measurement from subentry {measurement.subentry}:\n"
+                "Systematic offset errors must be scalar or constant."
             )
-
-            # Generate a list of boolean masks
-            y_sys_err_offset_mask = [
-                inverse_indices == i for i in np.arange(len(unique_elements))
-            ]
-
         else:
-            y_sys_err_offset_mask = np.ones_like(y, dtype=bool)
+            y_sys_err_offset = (
+                y_sys_err_offset
+                if np.isscalar(y_sys_err_offset)
+                else y_sys_err_offset[0]
+            )
+            y_sys_err_offset_mask = None
 
     y_sys_err_normalization = None
     y_sys_err_normalization_mask = None
     if include_sys_norm_err:
         y_sys_err_normalization = measurement.systematic_norm_err
         # check if systematic errors are common to all angles
-        ratio = y_sys_err_normalization / y
-        if not np.all(ratio == ratio[0]):
-            # Get unique elements in the array
-            y_sys_err_normalization, inverse_indices = np.unique(
-                y_sys_err_normalization, return_inverse=True
+        ratio = y_sys_err_normalization
+        if not (np.isscalar(ratio) or np.allclose(ratio, ratio[0])):
+            raise ValueError(
+                f"Error while parsing measurement from subentry {measurement.subentry}:\n"
+                "Systematic normalization errors must be scalar or constant."
             )
-
-            # Generate a list of boolean masks
-            y_sys_err_normalization_mask = [
-                inverse_indices == i for i in np.arange(len(unique_elements))
-            ]
         else:
-            y_sys_err_normalization_mask = np.ones_like(y, dtype=bool)
+            y_sys_err_normalization_mask = None
+            y_sys_err_normalization = ratio if np.isscalar(ratio) else ratio[0]
 
     if ObservationClass is Observation:
         # If the base class is Observation, we can directly return it
@@ -305,7 +307,7 @@ def set_up_observation(
             "y_sys_err_normalization": y_sys_err_normalization,
             "y_sys_err_normalization_mask": y_sys_err_normalization_mask,
         }
-        return args, kwargs
+        return args, kwargs, y_stat_err
     elif ObservationClass is FixedCovarianceObservation:
         if include_sys_norm_err:
             raise ValueError(
@@ -315,7 +317,7 @@ def set_up_observation(
         if y_sys_err_offset is not None and include_sys_offset_err:
             covariance += np.outer(y_sys_err_offset, y_sys_err_offset)
         args = (x, y, covariance)
-        return args, {}
+        return args, {}, y_stat_err
     else:
         # if a new ObservationClass is written, a case for it must be added here
         raise NotImplementedError(
