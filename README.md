@@ -3,8 +3,8 @@ Bayesian calibration of reaction models with Markov-Chain Monte Carlo, with flex
 - curate the corpus of experimental constraints (e.g. using [`exfor_tools`](https://github.com/beykyle/exfor_tools))
 - efficiently calculate your model's corresponding predictions for these observables using [`jitR`](https://github.com/beykyle/jitr)
 - choose from a variety of likelihood models, or extend the basic [`LikelihoodModel`](https://github.com/beykyle/rxmc/blob/main/src/rxmc/likelihood_model.py) class to implement your own.
-- package the constraints, physical model (and solver), and likelihood model together in a `rxmc.evidence.Evidence` object which provides the likelihood of a given model parameter, for use in Bayesian calibration 
-- run Bayesian calibration using an `rxmc.Walker`
+- package the constraints, physical model (and solver), and likelihood model together in a [`Evidence`](https://github.com/beykyle/rxmc/blob/main/src/rxmc/evidence.py) object which provides the likelihood of a given model parameter, for use in Bayesian calibration 
+- run Bayesian calibration using a [`Walker`](https://github.com/beykyle/rxmc/blob/main/src/rxmc/walker.py)
 
 An example of this code in use is in the development of the [East Lansing Model](https://github.com/beykyle/elm)
 
