@@ -1,31 +1,31 @@
 import numpy as np
 
 from .evidence import Evidence
-from .param_sampling import SamplingConfig
+from .param_sampling import Sampler
 
 
 class Walker:
     """
     A class that encapsulates the sampling configuration for a Bayesian
     inference problem, including the physical model and likelihood model
-    configurations. It manages the sampling process for both the physical model
-    and the likelihood model parameters, alternating between each model in
-    a Gibbs sampling framework.
+    configurations. It manages the sampling process for both the physical
+    model and the likelihood model parameters, alternating between each
+    model in a Gibbs sampling framework.
     """
 
     def __init__(
         self,
-        model_sample_conf: SamplingConfig,
+        model_sampler: Sampler,
         evidence: Evidence,
-        likelihood_sample_confs: list[SamplingConfig] = [],
+        likelihood_samplers: list[Sampler] = [],
         rng: np.random.Generator = np.random.default_rng(42),
     ):
         """
-        Initialize the SamplingConfig with a list of samplers.
+        Initialize the Sampler with a list of samplers.
 
         Parameters:
         ----------
-        physical_model_samplers: Sampler
+        model_sampler: Sampler
             A Sampler object for physical model parameters.
         evidence: Evidence
             A Evidence object containing the data for which the likelihood
@@ -39,53 +39,34 @@ class Walker:
         """
 
         # constant attributes
-        self.model_sample_conf = model_sample_conf
-        self.likelihood_sample_confs = likelihood_sample_confs
+        self.model_sampler = model_sampler
+        self.likelihood_samplers = likelihood_samplers
         self.evidence = evidence
         self.rng = rng
 
-        self.gibbs_sampling = len(self.likelihood_sample_confs) > 0
+        self.gibbs_sampling = len(self.likelihood_samplers) > 0
 
-        if self.evidence.model_params != self.model_sample_conf.params:
+        if self.evidence.model_params != self.model_sampler.params:
             raise ValueError(
                 "Inconsistent physical model parameters between "
-                "'evidence' and 'model_sample_conf'"
+                "'evidence' and 'model_sampler'"
             )
 
-        if len(self.likelihood_sample_confs) != len(
-            self.evidence.parametric_constraints
-        ):
+        if len(self.likelihood_samplers) != len(self.evidence.parametric_constraints):
             raise ValueError(
-                "The lists 'likelihood_sample_confs' and "
+                "The lists 'likelihood_samplers' and "
                 "'evidence.parametric_constraints' must correspond!"
             )
-        for i, conf in enumerate(self.likelihood_sample_confs):
+        for i, conf in enumerate(self.likelihood_samplers):
             constraint = self.evidence.parametric_constraints[i]
             if constraint.likelihood.params != conf.params:
                 raise ValueError(
                     "Inconsistent likelihood model parameters"
-                    f"between 'likelihood_sample_confs[{i}]' and "
+                    f"between 'likelihood_samplers[{i}]' and "
                     f"'evidence.parametric_constraints[{i}]'"
                 )
 
-        # attributes that are updated during sampling
-        # each time `self.walk` is called these records will be updated
-        self.model_chain = np.empty((0, len(self.model_sample_conf.params)))
-        self.likelihood_chain = [
-            np.empty((0, len(sampler.params)))
-            for sampler in self.likelihood_sample_confs
-        ]
-        self.current_model_params = np.atleast_1d(
-            self.model_sample_conf.starting_location
-        )
-        self.current_likelihood_params = [
-            np.atleast_1d(conf.starting_location)
-            for conf in self.likelihood_sample_confs
-        ]
-        self.log_posterior_record = []
-        self.log_posterior_record_lm = [[] for _ in self.likelihood_sample_confs]
-
-    def run_model_batch(self, n_steps, x0, likelihood_params=[]):
+    def run_model_batch(self, n_steps, x0, likelihood_params=[], burn=False):
         """
         Walks the model parameter space for fixed values of the
         `likelihood_params`
@@ -99,7 +80,11 @@ class Walker:
         likelihood_params: list[tuple]
             A list of fixed values of the parameters for each of the
             parametric likelihood models, corresponding to the order
-            of `self.likelihood_sample_confs`
+            of `self.likelihood_samplers`
+        burn: bool
+            If True, the batch is considered a burn-in batch and
+            the acceptance rate, log probabilities, and parameter
+            chain will not be recorded.
 
         Returns:
         -------
@@ -110,15 +95,17 @@ class Walker:
         accepted: float
             The acceptance rate of the model sampling algorithm.
         """
-        batch_chain, logp, accepted = self.model_sample_conf.sample(
+        self.model_sampler.sample(
             n_steps,
             x0,
             self.rng,
             lambda x: self.log_posterior(x, likelihood_params),
+            burn=burn,
         )
-        return batch_chain, logp, accepted
 
-    def run_likelihood_batches(self, n_steps, starting_locations, model_params):
+    def run_likelihood_batches(
+        self, n_steps, starting_locations, model_params, burn=False
+    ):
         """
         Walks each of the likelihood parameter spacers one by one, for a
         fixed value of `model_params`
@@ -131,6 +118,10 @@ class Walker:
             A list of starting locations for each likelihood model.
         model_params: tuple
             A fixed value of the parameters for the physical model
+        burn: bool
+            If True, the batch is considered a burn-in batch and
+            the acceptance rate, log probabilities, and parameter
+            chain will not be recorded.
 
         Returns:
         -------
@@ -141,11 +132,7 @@ class Walker:
         accepted : list[float]
             A list of acceptance rates for each likelihood model.
         """
-        chains = []
-        logp = []
-        accepted = []
-
-        for i, lm_conf in enumerate(self.likelihood_sample_confs):
+        for i, sampler in enumerate(self.likelihood_samplers):
             constraint = self.evidence.parametric_constraints[i]
 
             # precompute the model prediction for just this constraint,
@@ -158,23 +145,16 @@ class Walker:
             # model whose parameters we're sampling, rather than the
             # whole evidence
             def log_posterior_lm(x):
-                return lm_conf.prior.logpdf(x) + constraint.marginal_log_likelihood(
+                return sampler.prior.logpdf(x) + constraint.marginal_log_likelihood(
                     ym, x
                 )
 
-            # get starting location for this likelihood model
+            # get the starting location for this likelihood model
             x0 = starting_locations[i]
 
             # run a chain over the parameter space of just this
             # likelihood model
-            batch_chain, batch_logp, accepted_in_batch = lm_conf.sample(
-                n_steps, x0, self.rng, log_posterior_lm
-            )
-            chains.append(batch_chain)
-            logp.append(batch_logp)
-            accepted.append(accepted_in_batch)
-
-        return chains, logp, accepted
+            sampler.sample(n_steps, x0, self.rng, log_posterior_lm, burn=burn)
 
     def log_likelihood(self, model_params, likelihood_params):
         return self.evidence.log_likelihood(model_params, likelihood_params)
@@ -202,9 +182,9 @@ class Walker:
         float
             The log-prior probability.
         """
-        return self.model_sample_conf.prior.logpdf(model_params) + sum(
+        return self.model_sampler.prior.logpdf(model_params) + sum(
             lm.prior.logpdf(likelihood_params[i])
-            for i, lm in enumerate(self.likelihood_sample_confs)
+            for i, lm in enumerate(self.likelihood_samplers)
         )
 
     def walk(
@@ -215,10 +195,10 @@ class Walker:
         verbose: bool = True,
     ):
         """
-        Runs the MCMC chain with the specified parameters. Updates
-        the values of `self.current_likelihood_params`, `self.current_model_params`,
-        `self.model_chain`, `self.likelihood_chain`, `self.log_posterior_record`, and
-        `self.log_posterior_record_lm`.
+        Runs the MCMC chain with the specified parameters.
+        Updates the internal state of the `model_sampler` and
+        `likelihood_samplers` with records of the walk and relevant
+        statistics.
 
         Parameters:
         -----------
@@ -246,31 +226,24 @@ class Walker:
         if burnin == 0:
             burn_batches = []
 
-        pm_chain = []
-        pm_logp = []
-        lm_chains = [[] for _ in self.likelihood_sample_confs]
-        lm_logp = [[] for _ in self.likelihood_sample_confs]
-
         # burn in
         for i, steps_in_batch in enumerate(burn_batches):
             # Gibb's sample physical model parameters
-            batch_chain, _, _ = self.run_model_batch(
+            self.run_model_batch(
                 steps_in_batch,
-                self.current_model_params,
-                self.current_likelihood_params,
+                self.model_sampler.state,
+                [sampler.state for sampler in self.likelihood_samplers],
+                burn=True,
             )
-
-            self.current_model_params = batch_chain[-1]
 
             if self.gibbs_sampling:
                 # Gibb's sample likelihood model parameters
-                batch_chains, _, _ = self.run_likelihood_batches(
+                self.run_likelihood_batches(
                     steps_in_batch,
-                    self.current_likelihood_params,
-                    self.current_model_params,
+                    [sampler.state for sampler in self.likelihood_samplers],
+                    self.model_sampler.state,
+                    burn=True,
                 )
-
-                self.current_likelihood_params = [c[-1] for c in batch_chains]
 
             if verbose:
                 print(
@@ -279,75 +252,33 @@ class Walker:
                 )
 
         # do real walk
-        accepted = 0
-        accepted_lm = [0] * len(self.likelihood_sample_confs)
         for i, steps_in_batch in enumerate(batches):
-            # Gibb's sample physical model parameters
-            batch_chain, batch_logp, accepted_in_batch = self.run_model_batch(
-                steps_in_batch,
-                self.current_model_params,
-                self.current_likelihood_params,
-            )
 
-            self.current_model_params = batch_chain[-1]
-            accepted += accepted_in_batch
-            pm_chain.append(batch_chain)
-            pm_logp.append(batch_logp)
+            # Gibb's sample physical model parameters
+            self.run_model_batch(
+                steps_in_batch,
+                self.model_sampler.state,
+                [sampler.state for sampler in self.likelihood_samplers],
+            )
 
             if self.gibbs_sampling:
                 # Gibb's sample likelihood model parameters
-                batch_chains, batch_logps, accepted_in_batch_lm = (
-                    self.run_likelihood_batches(
-                        steps_in_batch,
-                        self.current_likelihood_params,
-                        self.current_model_params,
-                    )
+                self.run_likelihood_batches(
+                    steps_in_batch,
+                    [sampler.state for sampler in self.likelihood_samplers],
+                    self.model_sampler.state,
                 )
-
-                self.current_likelihood_params = [c[-1] for c in batch_chains]
-                for j in range(len(self.likelihood_sample_confs)):
-                    accepted_lm[j] += accepted_in_batch_lm[j]
-                    lm_chains[j].append(batch_chains[j])
-                    lm_logp[j].append(batch_logps[j])
 
             if verbose:
                 msg = (
                     f"Batch: {i + 1}/{len(batches)} completed, "
                     f"{steps_in_batch} steps. "
                     f"\n  Model parameter acceptance fraction: "
-                    f"{accepted_in_batch / steps_in_batch:.3f}"
+                    f"{self.model_sampler.most_recent_batch_acceptance_fraction():.3f}"
                 )
                 if self.gibbs_sampling:
                     msg += (
                         f"\n  Likelihood parameter acceptance fractions: "
-                        f"{[a / steps_in_batch for a in accepted_in_batch_lm]}"
+                        f"{[sampler.most_recent_batch_acceptance_fraction() for sampler in self.likelihood_samplers]}"
                     )
                 print(msg)
-
-            # concatenate chains from each batch
-            pm_chain = [np.concatenate(pm_chain, axis=0)]
-            lm_chains = [[np.concatenate(c)] for c in lm_chains]
-            pm_logp = [np.concatenate(pm_logp, axis=0)]
-            lm_logp = [[np.concatenate(c)] for c in lm_logp]
-
-        # concatenate full chains to the record
-        self.model_chain = np.concatenate([self.model_chain] + pm_chain, axis=0)
-        self.likelihood_chain = [
-            np.concatenate([old_chain] + new_chain, axis=0)
-            for old_chain, new_chain in zip(self.likelihood_chain, lm_chains)
-        ]
-        self.log_posterior_record = np.concatenate(
-            [self.log_posterior_record] + pm_logp, axis=0
-        )
-        self.log_posterior_record_lm = [
-            np.concatenate([old_logp] + new_logp, axis=0)
-            for old_logp, new_logp in zip(self.log_posterior_record_lm, lm_logp)
-        ]
-
-        final_acceptance_frac = accepted / n_steps
-        final_acceptance_frac_lm = [a / n_steps for a in accepted_lm]
-
-        if self.gibbs_sampling:
-            return final_acceptance_frac, final_acceptance_frac_lm
-        else:
-            return final_acceptance_frac

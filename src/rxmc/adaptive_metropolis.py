@@ -9,7 +9,7 @@ def adaptive_metropolis(
     rng: np.random.Generator,
     adapt_start: int = 1000,
     window_size: int = 1000,
-    epsilon_fraction: float = 1e-4,
+    epsilon_fraction: float = 1e-6,
     previous_chain: np.ndarray = None,
 ) -> Tuple[np.ndarray, np.ndarray, int]:
     """
@@ -30,15 +30,19 @@ def adaptive_metropolis(
             Size of the sliding window for covariance estimation.
         epsilon_fraction : float
             Fraction of the mean diagonal element to add to the covariance matrix for stability.
+        previous_chain : np.ndarray, optional
+            Previous chain to continue from, if any. Defaults to None. If provided, the new
+            chain will be appended to it, and adapt_start will be ignored.
     """
 
     dim = x0.size
-    if previous_chain is not None:
+    if previous_chain is not None and previous_chain.shape[0] > 0:
         start = previous_chain.shape[0]
-        chain = np.hstack( (previous_chain, np.zeros((n_steps, dim)) ) )
+        chain = np.concatenate((previous_chain, np.zeros((n_steps, dim))), axis=0)
     else:
         start = 0
         chain = np.zeros((n_steps, dim))
+
     logp_chain = np.zeros(n_steps)
     accepted = 0
 
@@ -46,9 +50,9 @@ def adaptive_metropolis(
     logp = log_posterior(x)
     scale = 2.38**2 / dim
 
-    for i in range(start, n_steps):
+    for i in range(start, start + n_steps):
         if i < adapt_start:
-            proposal_cov = np.eye(dim)
+            proposal_cov = np.diag((x0 * 0.01) ** 2)
         else:
             # Determine the index range for the sliding window
             start_idx = max(0, i - window_size)
@@ -56,7 +60,9 @@ def adaptive_metropolis(
 
             # Use the window of samples to compute the covariance
             cov = np.atleast_2d(np.cov(history_subset.T))
-            cov += epsilon_fraction * np.eye(dim) * np.mean(history_subset, axis=0)
+            cov += epsilon_fraction * (
+                np.eye(dim) @ np.mean(history_subset, axis=0) ** 2
+            )
             proposal_cov = scale * cov
 
         # Propose new point
@@ -71,6 +77,6 @@ def adaptive_metropolis(
             accepted += 1
 
         chain[i, :] = x
-        logp_chain[i] = logp
+        logp_chain[i - start] = logp
 
-    return chain, logp_chain, accepted
+    return chain[start:, ...], logp_chain, accepted

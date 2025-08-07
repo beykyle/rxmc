@@ -4,8 +4,8 @@ from scipy import stats
 
 class ProposalDistribution:
     """
-    Base class for proposal distributions used in Markov Chain Monte Carlo (MCMC) sampling.
-    This class defines the interface for proposal distributions, which generate new samples
+    Base class for proposal distributions used in the `MetropolisHastingsSampler`. This
+    class defines the interface for proposal distributions, which generate new samples
     based on the current sample in the Markov chain.
     """
 
@@ -28,7 +28,6 @@ class NormalProposalDistribution(ProposalDistribution):
     """
     Proposal distribution that generates new samples from a multivariate normal distribution
     centered at the current sample with a specified covariance matrix.
-    This is commonly used in MCMC methods like Metropolis-Hastings.
     """
 
     def __init__(self, cov):
@@ -46,7 +45,7 @@ class NormalProposalDistribution(ProposalDistribution):
 class HalfNormalProposalDistribution(ProposalDistribution):
     """
     Proposal distribution that generates new samples from a half-normal distribution.
-    This is commonly used in MCMC methods to ensure that the proposed samples are non-negative.
+    This is commonly used to ensure that the proposed samples are non-negative.
     """
 
     def __init__(self, scale):

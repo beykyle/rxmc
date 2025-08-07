@@ -52,4 +52,4 @@ def metropolis_hastings(
         chain[i, ...] = x
         logp_chain[i] = logp
 
-    return np.array(chain), np.array(logp_chain), accepted
+    return chain, logp_chain, accepted
