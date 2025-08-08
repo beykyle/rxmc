@@ -397,12 +397,11 @@ class TestCorrelatedDiscrepancyModel(unittest.TestCase):
         self.delta = self.observation.y - self.ym
 
         # Instantiate the CorrelatedDiscrepancyModel
-        self.likelihood = CorrelatedDiscrepancyModel()
+        self.likelihood = CorrelatedDiscrepancyModel(frac_err=0.1)
 
         # Parameters for the correlated discrepancy
         self.discrepancy_amplitude = 0.5
         self.discrepancy_lengthscale = 0.2
-        self.model_error_fraction = 0.01
 
         # Expected covariance computation with RBF kernel inclusion
         self.expected_covariance = (
@@ -410,7 +409,7 @@ class TestCorrelatedDiscrepancyModel(unittest.TestCase):
             + self.observation.systematic_offset_covariance
             + self.observation.systematic_normalization_covariance
             * np.outer(self.ym, self.ym)
-            + self.model_error_fraction**2 * np.diag(self.ym**2)
+            + self.likelihood.frac_err**2 * np.diag(self.ym**2)
             + self._expected_rbf_kernel(
                 self.observation.x,
                 self.discrepancy_amplitude,
@@ -439,7 +438,6 @@ class TestCorrelatedDiscrepancyModel(unittest.TestCase):
             self.ym,
             self.discrepancy_amplitude,
             self.discrepancy_lengthscale,
-            self.model_error_fraction,
         )
         self.assertEqual(cov.shape, (3, 3))
         np.testing.assert_array_almost_equal(cov, self.expected_covariance)
@@ -450,7 +448,6 @@ class TestCorrelatedDiscrepancyModel(unittest.TestCase):
             self.ym,
             self.discrepancy_amplitude,
             self.discrepancy_lengthscale,
-            self.model_error_fraction,
         )
         self.assertAlmostEqual(chi2_value, self.expected_chi2)
 
@@ -460,7 +457,6 @@ class TestCorrelatedDiscrepancyModel(unittest.TestCase):
             self.ym,
             self.discrepancy_amplitude,
             self.discrepancy_lengthscale,
-            self.model_error_fraction,
         )
         self.assertAlmostEqual(log_likelihood_value, self.expected_log_likelihood)
 
