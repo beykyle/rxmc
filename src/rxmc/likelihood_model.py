@@ -270,6 +270,44 @@ class FixedCovarianceLikelihood(LikelihoodModel):
         )
 
 
+class Chi2LikelihoodModel(LikelihoodModel):
+    r"""
+    A `LikelihoodModel` that returns the negative half of the chi-squared
+    statistic, ignoring the log determinant term. This is useful for
+    doing chi2 minimization without computing the full log likelihood.
+    """
+
+    def __init__(
+        self,
+        frac_err: float = 0.0,
+        divide_by_N: bool = False,
+        covariance_scale: float = 1.0,
+    ):
+        super().__init__(
+            frac_err=frac_err,
+            divide_by_N=divide_by_N,
+            covariance_scale=covariance_scale,
+        )
+
+    def log_likelihood(self, observation: Observation, ym: np.ndarray):
+        r"""
+        Returns -1/2 Chi2  only, ignoring the log determinant term.
+
+        Parameters
+        ----------
+        ym : np.ndarray
+            Model prediction for the observation.
+        observation : Observation
+            The observation object containing the observed data.
+
+        Returns
+        -------
+        float
+        """
+        chi2 = self.chi2(observation, ym)
+        return -0.5 * chi2
+
+
 class ParametricLikelihoodModel(LikelihoodModel):
     r"""
     A class to represent a likelihood model for comparing an `Observation`
