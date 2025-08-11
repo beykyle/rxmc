@@ -273,8 +273,9 @@ class FixedCovarianceLikelihood(LikelihoodModel):
 class Chi2LikelihoodModel(LikelihoodModel):
     r"""
     A `LikelihoodModel` that returns the negative half of the chi-squared
-    statistic, ignoring the log determinant term. This is useful for
-    doing chi2 minimization without computing the full log likelihood.
+    statistic for the log likelihood, ignoring the log determinant term.
+    This is useful for doing chi2 minimization without computing the full
+    log likelihood.
     """
 
     def __init__(
@@ -670,9 +671,10 @@ class UnknownNormalizationModel(ParametricLikelihoodModel):
         float
             Chi-squared statistic.
         """
+        yexp = observation.y / N
         cov = self.covariance(observation, ym, N)
         mahalanobis_sqr, _ = mahalanobis_distance_sqr_cholesky(
-            observation.y / N, ym, cov
+            yexp, ym, cov
         )
         return mahalanobis_sqr
 
@@ -692,9 +694,10 @@ class UnknownNormalizationModel(ParametricLikelihoodModel):
         -------
         float
         """
+        yexp = observation.y / N
         cov = self.covariance(observation, ym, N)
         mahalanobis_sqr, log_det = mahalanobis_distance_sqr_cholesky(
-            observation.y / N, ym, cov
+            yexp, ym, cov
         )
         return log_likelihood(mahalanobis_sqr, log_det, observation.n_data_pts)
 
