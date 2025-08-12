@@ -2,10 +2,9 @@ from typing import Callable
 
 import numpy as np
 
-from . import proposal
-from . import params
-from .metropolis_hastings import metropolis_hastings
+from . import params, proposal
 from .adaptive_metropolis import adaptive_metropolis
+from .metropolis_hastings import metropolis_hastings
 
 
 class Sampler:
@@ -304,7 +303,6 @@ class BatchedAdaptiveMetropolisSampler(Sampler):
         ndim = starting_location.size
         self.scale = 2.38**2 / ndim
         self.epsilon_fraction = epsilon_fraction
-        self.alpha_prev = 1
 
     def sample(
         self,
@@ -327,28 +325,14 @@ class BatchedAdaptiveMetropolisSampler(Sampler):
             **self.kwargs,
         )
         self.state = np.atleast_1d(chain[-1, :])
-
-        alpha = accepted / n_steps
-        alpha_sum = self.alpha_prev + alpha
-
-        # adapt the proposal distribution based on the empirical covariance
         empirical_cov = np.atleast_2d(np.cov(chain.T))
-
-        # regularize the covariance matrix
         epsilon = self.epsilon_fraction * np.median(np.diag(empirical_cov))
-        new_cov = self.scale * empirical_cov + np.eye(empirical_cov.shape[0]) * epsilon
-
-        # weight the new covariance with the previous one by the acceptance fractions
         self.proposal_cov = (
-            alpha / alpha_sum * new_cov
-            + self.alpha_prev / alpha_sum * self.proposal_cov
+            self.scale * empirical_cov + np.eye(empirical_cov.shape[0]) * epsilon
         )
-
-        # update the proposal distribution with the new covariance
         new_proposal = proposal.NormalProposalDistribution(self.proposal_cov)
         self.args = [new_proposal]
         self.alpha_prev = alpha
-
         if not burn:
             self.record_batch(n_steps, accepted, chain, logp_chain)
 
