@@ -673,9 +673,7 @@ class UnknownNormalizationModel(ParametricLikelihoodModel):
         """
         yexp = observation.y / N
         cov = self.covariance(observation, ym, N)
-        mahalanobis_sqr, _ = mahalanobis_distance_sqr_cholesky(
-            yexp, ym, cov
-        )
+        mahalanobis_sqr, _ = mahalanobis_distance_sqr_cholesky(yexp, ym, cov)
         return mahalanobis_sqr
 
     def log_likelihood(self, observation: Observation, ym: np.ndarray, N: float):
@@ -696,9 +694,7 @@ class UnknownNormalizationModel(ParametricLikelihoodModel):
         """
         yexp = observation.y / N
         cov = self.covariance(observation, ym, N)
-        mahalanobis_sqr, log_det = mahalanobis_distance_sqr_cholesky(
-            yexp, ym, cov
-        )
+        mahalanobis_sqr, log_det = mahalanobis_distance_sqr_cholesky(yexp, ym, cov)
         return log_likelihood(mahalanobis_sqr, log_det, observation.n_data_pts)
 
 
