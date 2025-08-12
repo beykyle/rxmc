@@ -292,6 +292,7 @@ class BatchedAdaptiveMetropolisSampler(Sampler):
         epsilon: float
             Small term to regularize the covariance matrix.
         """
+        self.proposal_cov = np.atleast_2d(initial_proposal_cov)
         self.proposal = proposal.NormalProposalDistribution(initial_proposal_cov)
         super().__init__(
             params,
@@ -344,8 +345,8 @@ class BatchedAdaptiveMetropolisSampler(Sampler):
         )
 
         # update the proposal distribution with the new covariance
-        proposal = proposal.NormalProposalDistribution(self.proposal_cov)
-        self.args = [proposal]
+        new_proposal = proposal.NormalProposalDistribution(self.proposal_cov)
+        self.args = [new_proposal]
         self.alpha_prev = alpha
 
         if not burn:
