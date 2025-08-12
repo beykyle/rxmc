@@ -264,6 +264,94 @@ class AdaptiveMetropolisSampler(Sampler):
             self.record_batch(n_steps, accepted, chain, logp_chain)
 
 
+class BatchedAdaptiveMetropolisSampler(Sampler):
+    """
+    Adaptive Metropolis sampler for MCMC, which adapts the proposal covariance
+    based on the samples collected in the last batch
+    """
+
+    def __init__(
+        self,
+        params: list[params.Parameter],
+        prior,
+        starting_location: np.ndarray,
+        initial_proposal_cov: np.ndarray,
+        epsilon_fraction: float = 1e-6,
+    ):
+        """
+        Parameters:
+        ----------
+        params: list[params.Parameter]
+            List of parameters to sample.
+        prior: object
+            Prior distribution object that has a method `logpdf`.
+        starting_location: np.ndarray
+            Initial parameter values for the chain.
+        initial_proposal_cov: np.ndarray
+            Initial covariance matrix for the proposal distribution.
+        epsilon: float
+            Small term to regularize the covariance matrix.
+        """
+        self.proposal = proposal.NormalProposalDistribution(initial_proposal_cov)
+        super().__init__(
+            params,
+            prior,
+            starting_location,
+            metropolis_hastings,
+            args=[self.proposal],
+        )
+        ndim = starting_location.size
+        self.scale = 2.38**2 / ndim
+        self.epsilon_fraction = epsilon_fraction
+        self.alpha_prev = 1
+
+    def sample(
+        self,
+        n_steps: int,
+        starting_location: np.ndarray,
+        rng: np.random.Generator,
+        log_posterior: Callable[[np.ndarray], float],
+        burn: bool = False,
+    ):
+        """
+        Overrides `Sampler.sample` method to adapt the proposal
+        covariance based on the samples collected in the last batch.
+        """
+        chain, logp_chain, accepted = self.sampling_algorithm(
+            starting_location,
+            n_steps,
+            log_posterior,
+            rng,
+            *self.args,
+            **self.kwargs,
+        )
+        self.state = np.atleast_1d(chain[-1, :])
+
+        alpha = accepted / n_steps
+        alpha_sum = self.alpha_prev + alpha
+
+        # adapt the proposal distribution based on the empirical covariance
+        empirical_cov = np.atleast_2d(np.cov(chain.T))
+
+        # regularize the covariance matrix
+        epsilon = self.epsilon_fraction * np.median(np.diag(empirical_cov))
+        new_cov = self.scale * empirical_cov + np.eye(empirical_cov.shape[0]) * epsilon
+
+        # weight the new covariance with the previous one by the acceptance fractions
+        self.proposal_cov = (
+            alpha / alpha_sum * new_cov
+            + self.alpha_prev / alpha_sum * self.proposal_cov
+        )
+
+        # update the proposal distribution with the new covariance
+        proposal = proposal.NormalProposalDistribution(self.proposal_cov)
+        self.args = [proposal]
+        self.alpha_prev = alpha
+
+        if not burn:
+            self.record_batch(n_steps, accepted, chain, logp_chain)
+
+
 def _validate_object(obj, name: str, required_attributes=[], required_methods=[]):
     # Check for required attributes
     for attr in required_attributes:
