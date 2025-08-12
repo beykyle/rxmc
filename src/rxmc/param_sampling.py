@@ -332,7 +332,6 @@ class BatchedAdaptiveMetropolisSampler(Sampler):
         )
         new_proposal = proposal.NormalProposalDistribution(self.proposal_cov)
         self.args = [new_proposal]
-        self.alpha_prev = alpha
         if not burn:
             self.record_batch(n_steps, accepted, chain, logp_chain)
 
