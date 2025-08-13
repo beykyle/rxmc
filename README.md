@@ -8,7 +8,7 @@ Bayesian calibration of reaction models with Markov-Chain Monte Carlo, with flex
 
 An example of this code in use is in the development of the [East Lansing Model](https://github.com/beykyle/elm)
 
-See `examples/` for a variety of demos.
+Check out the [`examples/` directory](https://github.com/beykyle/rxmc/blob/main/examples/).
 
 ## documentation
 - TBD
@@ -16,7 +16,7 @@ See `examples/` for a variety of demos.
 ## installation
 ### pypi
 
-Not yet available
+- TBD
 
 ### for development
 ```bash
@@ -72,13 +72,14 @@ This will require that your current python environment satisfies `requirements.t
 ```
 python -m unittest discover ./test
 ```
-## examples
+## examples, demos and tutorials
 
-Check out the demos: 
-- [`examples/linear_calibration_demo.ipynb`](https://github.com/beykyle/rxmc/blob/main/examples/linear_calibration_demo.ipynb) for an illustrative example of fitting a line to data with various likelihood models.
-- [`systematic_err_demo.ipynb`](https://github.com/beykyle/rxmc/blob/main/examples/systematic_err_demo.ipynb) for a demonstration of the likelihood models built into `rxmc`, and how to use them for situations involving systematic errors and multiple independent experimental constraints
-- [`fitting_an_optical_potential.ipynb`](https://github.com/beykyle/rxmc/blob/main/examples/fitting_an_optical_potential.ipynb) for a demonstration of how to fit a local optical potential to experimental data using `rxmc` and `jitR`. 
+check out the [`examples/` directory](https://github.com/beykyle/rxmc/blob/main/examples/)
 
-Other examples demonstrating actual reaction model fitting coming soon.
+In particular, the following notebooks are useful for getting started with `rxmc`: 
+- [`examples/linear_calibration_demo.ipynb`](https://github.com/beykyle/rxmc/blob/main/examples/linear_calibration_demo.ipynb) for an illustrative example of fitting a line to data, which serves as the basic `rxmc` tutorial.
+- [`systematic_err_demo.ipynb`](https://github.com/beykyle/rxmc/blob/main/examples/systematic_err_demo.ipynb) for a comparison of some of the likelihood models built into `rxmc`, and how to use them for situations involving systematic errors and multiple independent experimental constraints
+- [`examples/30s_optical_potential_calibration.ipynb`](https://github.com/beykyle/rxmc/blob/main/examples/30s_optical_potential_calibration.ipynb) for a demo of a full Bayesian calibration of a a local optical potential to real experimental data using `rxmc` and `jitR`, in only 30 seconds!
 
-For a fully fledged example of this code for calibrating an uncertainty quantified global optical potential, check out [East Lansing Model](https://github.com/beykyle/elm)
+
+For a fully fledged example of this code for calibrating an uncertainty quantified global optical potential, check out the [East Lansing Model](https://github.com/beykyle/elm)
