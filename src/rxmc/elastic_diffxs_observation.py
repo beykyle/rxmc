@@ -2,10 +2,16 @@ from typing import Type
 
 import numpy as np
 
+from pint import UnitRegistry
+
 from exfor_tools.distribution import Distribution
 import jitr
 
 from .observation import Observation, FixedCovarianceObservation
+
+# Create a unit registry
+ureg = UnitRegistry()
+
 
 DEFAULT_LMAX = 20
 
@@ -73,12 +79,13 @@ class ElasticDifferentialXSObservation:
         self.quantity = quantity
         self.lmax = lmax
         self.subentry = measurement.subentry
+        self.angle_units = ureg.radian
 
         self.angles_vis = angles_vis
-        angles_rad_vis = angles_vis * np.pi / 180
+        angles_rad_vis = np.deg2rad(angles_vis)
         check_angle_grid(angles_rad_vis, "angles_rad_vis")
 
-        angles_rad_constraint = measurement.x * np.pi / 180
+        angles_rad_constraint = np.deg2rad(measurement.x)
         check_angle_grid(
             angles_rad_constraint,
             f"x values for subentry: {measurement.subentry}",
@@ -97,7 +104,8 @@ class ElasticDifferentialXSObservation:
         self.visualization_workspace = vis_ws
 
         # Convert measurement to correct quantity and normalize to `b/sr`
-        norm = self.compute_normalization(measurement)
+        norm, y_units = self.calculate_normalization(measurement)
+        self.y_units = y_units
 
         # initialize the observation instance
         args, kwargs, y_stat_err = set_up_observation(
@@ -125,36 +133,54 @@ class ElasticDifferentialXSObservation:
     def num_pts_within_interval(self, interval):
         return self._obs.num_pts_within_interval(interval)
 
-    def compute_normalization(self, measurement):
+    def calculate_normalization(self, measurement):
+        # Determine the xs_unit based on self.quantity
+        xs_unit = ureg.barn / ureg.steradian
+        if self.quantity == "dXS/dA":
+            y_unit = xs_unit
+        elif self.quantity in {"dXS/dRuth", "Ay"}:
+            y_unit = ureg.dimensionless
+        else:
+            raise ValueError(f"Unrecognized quantity: {self.quantity}")
+
+        # Process different cases based on the quantity types
         if self.quantity == "dXS/dRuth" and measurement.quantity == "dXS/dA":
-            if measurement.y_units != "b/Sr":
+            measurement_unit = 1 * ureg(measurement.y_units)
+            if not measurement_unit.check(xs_unit):
                 raise ValueError(
-                    f"Expected y_units to be 'b/Sr', got {measurement.y_units}"
+                    f"Expected measurement_unit to be dimensionally compatible with 'b/Sr', got {measurement.y_units}"
                 )
-            return self.constraint_workspace.rutherford / 1000
+
+            conversion_factor = 1.0 / measurement_unit.to(xs_unit).magnitude
+            return self.constraint_workspace.rutherford * conversion_factor, y_unit
+
         elif self.quantity == "dXS/dA" and measurement.quantity == "dXS/dRuth":
-            return 1000 / self.constraint_workspace.rutherford
+            return 1 / self.constraint_workspace.rutherford, y_unit
+
         elif self.quantity == "dXS/dA" and measurement.quantity == "dXS/dA":
-            if measurement.y_units != "b/Sr":
+            measurement_unit = 1 * ureg(measurement.y_units)
+            if not measurement_unit.check(y_unit):
                 raise ValueError(
-                    f"Expected y_units to be 'b/Sr', got {measurement.y_units}"
+                    f"Expected measurement_unit to be dimensionally compatible with 'b/Sr', got {measurement.y_units}"
                 )
-            return 1.0
+
+            return 1.0 / measurement_unit.to(y_unit).magnitude, y_unit
+
         elif (
             self.quantity in {"dXS/dRuth", "Ay"}
             and self.quantity == measurement.quantity
         ):
             if measurement.y_units != "no-dim":
                 raise ValueError(
-                    f"Expected y_units to be 'no-dim', got {measurement.y_units}"
+                    f"Expected measurement_unit to be 'no-dim', got {measurement.y_units}"
                 )
-            return 1.0
+            return 1.0, y_unit
+
         else:
             if self.quantity != measurement.quantity:
                 raise ValueError(
                     f"Quantity mismatch: {self.quantity} != {measurement.quantity}"
                 )
-            return 1.0
 
 
 def set_up_solver(
