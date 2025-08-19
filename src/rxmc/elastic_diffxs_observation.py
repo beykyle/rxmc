@@ -136,6 +136,7 @@ class ElasticDifferentialXSObservation:
     def calculate_normalization(self, measurement):
         # Determine the xs_unit based on self.quantity
         xs_unit = ureg.barn / ureg.steradian
+        rutherford_unit = ureg.millibarn / ureg.steradian
         if self.quantity == "dXS/dA":
             y_unit = xs_unit
         elif self.quantity in {"dXS/dRuth", "Ay"}:
@@ -151,11 +152,12 @@ class ElasticDifferentialXSObservation:
                     f"Expected measurement_unit to be dimensionally compatible with 'b/Sr', got {measurement.y_units}"
                 )
 
-            conversion_factor = 1.0 / measurement_unit.to(xs_unit).magnitude
+            conversion_factor = 1.0 / measurement_unit.to(rutherford_unit).magnitude
             return self.constraint_workspace.rutherford * conversion_factor, y_unit
 
         elif self.quantity == "dXS/dA" and measurement.quantity == "dXS/dRuth":
-            return 1 / self.constraint_workspace.rutherford, y_unit
+            conversion_factor = 1.0 / rutherford_unit.to(y_unit).magnitude
+            return conversion_factor / self.constraint_workspace.rutherford, y_unit
 
         elif self.quantity == "dXS/dA" and measurement.quantity == "dXS/dA":
             measurement_unit = 1 * ureg(measurement.y_units)
