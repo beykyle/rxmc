@@ -811,7 +811,7 @@ class UnknownModelError(ParametricLikelihoodModel):
     ):
         likelihood_params = [
             Parameter(
-                "frac_err",
+                "log fractional err",
                 float,
                 latex_name=r"\gamma",
                 unit="dimensionless",
@@ -819,7 +819,7 @@ class UnknownModelError(ParametricLikelihoodModel):
         ]
         super().__init__(
             likelihood_params,
-            frac_err=0.0,  # this model does not use frac_err
+            frac_err=0.0,  # this model does not use fixed frac_err
             divide_by_N=divide_by_N,
             covariance_scale=covariance_scale,
         )
@@ -828,7 +828,7 @@ class UnknownModelError(ParametricLikelihoodModel):
         self,
         observation: Observation,
         ym: np.ndarray,
-        frac_err: float,
+        log_frac_err: float,
     ):
         r"""
         Default covariance model. Derived classes of `LikelihoodModel` will
@@ -840,7 +840,7 @@ class UnknownModelError(ParametricLikelihoodModel):
                             + \Sigma_{ij}^{sys}
                             + \gamma^2 y_m^2(x_i, \alpha)
             \]
-        where $sigma^2_{i}^{stat}$ is $\gamma$ is the fractional uncorrelated error
+        where $\gamma$ is the fractional uncorrelated error
         (`frac_err`), treated here as a free parameter, and
         all other definitions are the same as `LikelihoodModel.covariance`
 
@@ -851,11 +851,11 @@ class UnknownModelError(ParametricLikelihoodModel):
             Model prediction for the observation.
         observation : Observation
             The observation object containing the observed data.
-        frac_err: float
-            The fraction of the model prediction at point x_i that
+        log_frac_err: float
+            log of fraction of the model prediction at point x_i that
             is treated as the standard deviation of the model prediction
             at that point, such that the model prediction is independent
-            at every point.
+            at every point (log of $\gamma$).
 
         Returns
         -------
@@ -864,7 +864,7 @@ class UnknownModelError(ParametricLikelihoodModel):
         """
         sigma = observation.covariance(ym)
         sigma_model = uncorrelated_model_covariance(
-            frac_err,
+            np.exp(log_frac_err),
             ym,
         )
         cov = sigma + sigma_model
