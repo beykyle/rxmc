@@ -808,7 +808,23 @@ class UnknownModelError(ParametricLikelihoodModel):
         self,
         divide_by_N: bool = False,
         covariance_scale: float = 1.0,
+        averaging=True,
     ):
+        """
+        Initializes the UnknownModelError instance.
+
+        Parameters
+        ----------
+        divide_by_N : bool
+            Whether to divide the covariance matrix by the number of data points.
+        covariance_scale : float
+            Scale factor for the covariance matrix.
+        averaging : bool
+            If True, the model error is calculated using the average of
+            observation.y and ym, i.e., 0.5 * (observation.y + ym).
+            This can help stabilize the optimization when ym is very small
+            or zero. If False, the model error is calculated using ym only.
+        """
         likelihood_params = [
             Parameter(
                 "log fractional err",
@@ -823,6 +839,7 @@ class UnknownModelError(ParametricLikelihoodModel):
             divide_by_N=divide_by_N,
             covariance_scale=covariance_scale,
         )
+        self.averaging = averaging
 
     def covariance(
         self,
@@ -865,7 +882,7 @@ class UnknownModelError(ParametricLikelihoodModel):
         sigma = observation.covariance(ym)
         sigma_model = uncorrelated_model_covariance(
             np.exp(log_frac_err),
-            ym,
+            ym if not self.averaging else 0.5 * (observation.y + ym),
         )
         cov = sigma + sigma_model
         return scale_covariance(
