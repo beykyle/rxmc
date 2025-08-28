@@ -5,6 +5,8 @@ with the flexibility to handle multiple likelihood models and constraints, eithe
 using a batched Metropolis-in-Gibbs approach or a full joint sampling approach.
 """
 
+from typing import Optional
+
 import numpy as np
 import scipy.stats
 
@@ -61,16 +63,16 @@ class ParameterConfig:
         self.initial_proposal_distribution = initial_proposal_distribution
         if self.ndim == 0:
             raise ValueError("Parameter list cannot be empty")
-        if self.prior.ndim != self.ndim:
+        if self.prior.dim != self.ndim:
             raise ValueError(
                 "Prior distribution dimensions do not match number of parameters"
             )
-        if self.initial_proposal_distribution.ndim != self.ndim:
+        if self.initial_proposal_distribution.dim != self.ndim:
             raise ValueError(
                 "Initial proposal distribution dimensions do not match number of parameters"
             )
 
-    def x0(nwalkers: int) -> np.ndarray:
+    def x0(self, nwalkers: int) -> np.ndarray:
         """
         Generate initial positions for walkers.
 
@@ -105,7 +107,7 @@ class CalibrationConfig:
         self,
         evidence: Evidence,
         model_config: ParameterConfig,
-        likelihood_configs: list[ParameterConfig] = [],
+        likelihood_configs: Optional[list[ParameterConfig]] = None,
     ):
         """
         Initialize the CalibrationConfig with evidence, model configuration,
@@ -130,11 +132,11 @@ class CalibrationConfig:
         """
         self.evidence = evidence
         self.model_config = model_config
-        self.likelihood_configs = likelihood_configs
-        self.ndim = model_config.ndim + sum(lc.ndim for lc in likelihood_configs)
+        self.likelihood_configs = likelihood_configs or []
+        self.ndim = model_config.ndim + sum(lc.ndim for lc in self.likelihood_configs)
 
         if (
-            len(self.evidence.constraints)
+            len(self.evidence.constraints) == 0
             and len(self.evidence.parametric_constraints) == 0
         ):
             raise ValueError("Evidence must have at least one constraint")
@@ -153,9 +155,14 @@ class CalibrationConfig:
                 "Likelihood configurations do not match the likelihood models"
                 "in the evidence constraints"
             )
+        for lc, c in zip(self.likelihood_configs, self.evidence.parametric_constraints):
+            if lc.params != c.likelihood_model.params:
+                raise ValueError(
+                    "Likelihood parameters do not match those in the evidence constraints"
+                )
 
         self.dimensions = np.array(
-            [model_config.ndim] + [lc.ndim for lc in likelihood_configs]
+            [self.model_config.ndim] + [lc.ndim for lc in self.likelihood_configs]
         )
 
         # indices used to un-flatten parameter vector into sub-vectors
@@ -176,11 +183,8 @@ class CalibrationConfig:
             Tuple containing the model parameter vector and a list of likelihood
             parameter vectors.
         """
-        xmodel = x[: self.model_config.ndim]
-        xlikelihoods = [
-            x[start:end] for start, end in zip(self.indices[1:-1], self.indices[2:])
-        ]
-        return xmodel, xlikelihoods
+        parts = np.split(x, self.indices[:-1])
+        return parts[0], parts[1:]
 
     def log_prior(self, x) -> float:
         """
@@ -251,9 +255,10 @@ class CalibrationConfig:
         """
         return [constraint.predict(*xmodel) for constraint in self.evidence.constraints]
 
-    def likelihood_model_sector_log_posterior(self, x_lm, lm_index, ym) -> float:
+    def conditional_posterior(self, x_lm, lm_index, ym) -> float:
         """
-        Compute the log posterior for a specific likelihood model sector.
+        Compute the log posterior for the parameters of a specific likelihood
+        model, conditional upon the the observaed data for the corresponding constraints
         Parameters
         ----------
         x_lm : np.ndarray
@@ -268,8 +273,8 @@ class CalibrationConfig:
         float
             Log posterior probability for the likelihood model sector.
         """
-        return self.evidence.constraints[lm_index].marginial_likelihood(
-            x_lm, ym
+        return self.evidence.constraints[lm_index].marginal_log_likelihood(
+            ym, *x_lm
         ) + self.likelihood_configs[lm_index].prior.logpdf(x_lm)
 
     def starting_location(self, nwalkers) -> np.ndarray:
