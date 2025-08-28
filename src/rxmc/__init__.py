@@ -8,6 +8,7 @@ from . import metropolis_hastings
 from . import adaptive_metropolis
 from . import observation
 from . import constraint
+from . import config
 
 from . import elastic_diffxs_observation
 from . import elastic_diffxs_model
