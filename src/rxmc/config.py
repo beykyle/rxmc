@@ -78,10 +78,10 @@ class ParameterConfig:
 
         Parameters
         ----------
-        n_walkers : int
+        nwalkers : int
             Number of walkers to generate initial positions for.
         """
-        return self.initial_proposal_distribution.rvs(n_walkers)
+        return self.initial_proposal_distribution.rvs(nwalkers)
 
 
 class CalibrationConfig:
