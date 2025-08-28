@@ -2,13 +2,13 @@ import unittest
 
 import numpy as np
 from rxmc.likelihood_model import (
+    CorrelatedDiscrepancyModel,
     FixedCovarianceLikelihood,
     LikelihoodModel,
     UnknownModelError,
     UnknownNoiseErrorModel,
     UnknownNoiseFractionErrorModel,
     UnknownNormalizationErrorModel,
-    CorrelatedDiscrepancyModel,
     mahalanobis_distance_sqr_cholesky,
 )
 from rxmc.observation import FixedCovarianceObservation, Observation
@@ -352,7 +352,7 @@ class TestUnknownModelError(unittest.TestCase):
             + self.observation.systematic_offset_covariance
             + self.observation.systematic_normalization_covariance
             * np.outer(self.ym, self.ym)
-            + self.frac_err**2 * np.diag(self.ym**2)
+            + self.frac_err**2 * np.diag(0.5**2 * (self.ym + self.observation.y) ** 2)
         )
 
         # Expected chi-squared value
@@ -368,17 +368,21 @@ class TestUnknownModelError(unittest.TestCase):
         )
 
     def test_covariance(self):
-        cov = self.likelihood.covariance(self.observation, self.ym, self.frac_err)
+        cov = self.likelihood.covariance(
+            self.observation, self.ym, np.log(self.frac_err)
+        )
         self.assertEqual(cov.shape, (3, 3))
         np.testing.assert_array_almost_equal(cov, self.expected_covariance)
 
     def test_chi2(self):
-        chi2_value = self.likelihood.chi2(self.observation, self.ym, self.frac_err)
+        chi2_value = self.likelihood.chi2(
+            self.observation, self.ym, np.log(self.frac_err)
+        )
         self.assertAlmostEqual(chi2_value, self.expected_chi2)
 
     def test_log_likelihood(self):
         log_likelihood_value = self.likelihood.log_likelihood(
-            self.observation, self.ym, self.frac_err
+            self.observation, self.ym, np.log(self.frac_err)
         )
         self.assertAlmostEqual(log_likelihood_value, self.expected_log_likelihood)
 
