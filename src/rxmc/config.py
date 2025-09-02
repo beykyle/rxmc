@@ -156,7 +156,7 @@ class CalibrationConfig:
                 "in the evidence constraints"
             )
         for lc, c in zip(self.likelihood_configs, self.evidence.parametric_constraints):
-            if lc.params != c.likelihood_model.params:
+            if lc.params != c.likelihood.params:
                 raise ValueError(
                     "Likelihood parameters do not match those in the evidence constraints"
                 )
