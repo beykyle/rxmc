@@ -289,6 +289,8 @@ class CalibrationConfig:
             Initial positions for walkers of shape (nwalkers, ndim).
         """
         x0_model = self.model_config.x0(nwalkers)
-        x0_likelihoods = [lc.x0(nwalkers) for lc in self.likelihood_configs]
+        x0_likelihoods = [
+            lc.x0(nwalkers).reshape(nwalkers, lc.ndim) for lc in self.likelihood_configs
+        ]
         x0 = np.hstack([x0_model] + x0_likelihoods)
         return x0
