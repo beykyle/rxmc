@@ -5,36 +5,44 @@ with the flexibility to handle multiple likelihood models and constraints, eithe
 using a batched Metropolis-in-Gibbs approach or a full joint sampling approach.
 """
 
-from typing import Optional
+from typing import Optional, List, Union
 
 import numpy as np
-import scipy.stats
+from scipy.stats import (
+    multivariate_normal,
+    multinomial,
+    dirichlet,
+    wishart,
+    multivariate_t,
+    rv_continuous,
+)
 
 from rxmc.evidence import Evidence
 from rxmc.params import Parameter
+
+# Define a type alias for multivariate distributions
+multivariate_distributions = (
+    multivariate_normal,
+    multinomial,
+    dirichlet,
+    wishart,
+    multivariate_t,
+)
+MultivariateDistribution = Union[*multivariate_distributions]
 
 
 class ParameterConfig:
     """Configuration for a set of parameters, including their prior and initial
     proposal distribution.
-
-    Attributes
-    ----------
-    params : list[Parameter]
-        List of Parameter objects defining the parameters.
-    ndim : int
-        Number of parameters.
-    prior : scipy.stats distribution
-        Prior distribution for the parameters.
-    initial_proposal_distribution : scipy.stats distribution
-        Initial proposal distribution for the parameters.
     """
 
     def __init__(
         self,
-        params: list[Parameter],
-        prior: scipy.stats._distn_infrastructure.rv_frozen,
-        initial_proposal_distribution: scipy.stats._distn_infrastructure.rv_frozen,
+        params: List[Parameter],
+        prior: Union[MultivariateDistribution, List[rv_continuous]],
+        initial_proposal_distribution: Union[
+            MultivariateDistribution, List[rv_continuous]
+        ],
     ):
         """
         Initialize the ParameterConfig with parameters, prior, and initial
@@ -44,9 +52,9 @@ class ParameterConfig:
         ----------
         params : list[Parameter]
             List of Parameter objects defining the parameters.
-        prior : scipy.stats distribution
+        prior : MultivariateDistribution or list of scipy.stats distributions
             Prior distribution for the parameters.
-        initial_proposal_distribution : scipy.stats distribution
+        initial_proposal_distribution : MultivariateDistribution or list of scipy.stats distributions
             Initial proposal distribution for the parameters.
 
         Raises
@@ -63,14 +71,38 @@ class ParameterConfig:
         self.initial_proposal_distribution = initial_proposal_distribution
         if self.ndim == 0:
             raise ValueError("Parameter list cannot be empty")
-        if self.prior.dim != self.ndim:
-            raise ValueError(
-                "Prior distribution dimensions do not match number of parameters"
-            )
-        if self.initial_proposal_distribution.dim != self.ndim:
-            raise ValueError(
-                "Initial proposal distribution dimensions do not match number of parameters"
-            )
+
+        # Check dimensions assuming suitable attributes (like .dim, etc.) exist
+        if isinstance(self.prior, multivariate_distributions):
+            if getattr(self.prior, "dim", len(self.prior.mean())) != self.ndim:
+                raise ValueError(
+                    "Prior distribution dimensions do not match number of parameters"
+                )
+        elif isinstance(self.prior, list):
+            if len(self.prior) != self.ndim:
+                raise ValueError(
+                    "Prior distribution dimensions do not match number of parameters"
+                )
+
+        if isinstance(
+            self.initial_proposal_distribution,
+        ):
+            if (
+                getattr(
+                    self.initial_proposal_distribution,
+                    "dim",
+                    len(self.initial_proposal_distribution.mean()),
+                )
+                != self.ndim
+            ):
+                raise ValueError(
+                    "Initial proposal distribution dimensions do not match number of parameters"
+                )
+        elif isinstance(self.initial_proposal_distribution, list):
+            if len(self.initial_proposal_distribution) != self.ndim:
+                raise ValueError(
+                    "Initial proposal distribution dimensions do not match number of parameters"
+                )
 
     def x0(self, nwalkers: int) -> np.ndarray:
         """
@@ -81,7 +113,36 @@ class ParameterConfig:
         nwalkers : int
             Number of walkers to generate initial positions for.
         """
-        return self.initial_proposal_distribution.rvs(nwalkers)
+        if isinstance(self.initial_proposal_distribution, list):
+            samples = [
+                dist.rvs(nwalkers) for dist in self.initial_proposal_distribution
+            ]
+            return np.column_stack(samples)
+        else:
+            return self.initial_proposal_distribution.rvs(nwalkers)
+
+    def prior_logpdf(self, x: np.ndarray) -> np.ndarray:
+        """
+        Compute the log prior probability of a parameter vector.
+
+        Parameters
+        ----------
+        x : np.ndarray
+            Parameter vector of shape (k, ndim), for getting the log pdf of the
+            prior at k different points, or of shape (ndim,) for just one point.
+
+        Returns
+        -------
+        np.ndarray
+            Log prior probability of the parameter vector(s).
+            Shape (k,) if x has shape (k, ndim),
+            or scalar array if x has shape (ndim,).
+        """
+        x = np.atleast_2d(x)
+        if isinstance(self.prior, list):
+            logpdfs = [dist.logpdf(x[:, i]) for i, dist in enumerate(self.prior)]
+            return np.sum(logpdfs, axis=0)
+        return self.prior.logpdf(x)
 
 
 class CalibrationConfig:
@@ -199,9 +260,9 @@ class CalibrationConfig:
             Log prior probability of the parameter vector.
         """
         xmodel, xlikelihoods = self.split_parameters(x)
-        lprior = self.model_config.prior.logpdf(xmodel)
+        lprior = self.model_config.prior_logpdf(xmodel)
         lprior += sum(
-            lc.prior.logpdf(xlikelihood)
+            lc.prior_logpdf(xlikelihood)
             for lc, xlikelihood in zip(self.likelihood_configs, xlikelihoods)
         )
         return lprior
