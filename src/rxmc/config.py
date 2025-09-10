@@ -5,30 +5,16 @@ with the flexibility to handle multiple likelihood models and constraints, eithe
 using a batched Metropolis-in-Gibbs approach or a full joint sampling approach.
 """
 
-from typing import Optional, List, Union
+from typing import List, Optional, Union
 
 import numpy as np
-from scipy.stats import (
-    multivariate_normal,
-    multinomial,
-    dirichlet,
-    wishart,
-    multivariate_t,
-    rv_continuous,
-)
+from scipy.stats import _multivariate, rv_continuous
 
 from rxmc.evidence import Evidence
 from rxmc.params import Parameter
 
-# Define a type alias for multivariate distributions
-multivariate_distributions = (
-    multivariate_normal,
-    multinomial,
-    dirichlet,
-    wishart,
-    multivariate_t,
-)
-MultivariateDistribution = Union[*multivariate_distributions]
+multivariate_distributions = (_multivariate.multivariate_normal_frozen,)
+MultivariateDistribution = Union[multivariate_distributions]
 
 
 class ParameterConfig:
@@ -74,7 +60,7 @@ class ParameterConfig:
 
         # Check dimensions assuming suitable attributes (like .dim, etc.) exist
         if isinstance(self.prior, multivariate_distributions):
-            if getattr(self.prior, "dim", len(self.prior.mean())) != self.ndim:
+            if getattr(self.prior, "dim", len(self.prior.mean)) != self.ndim:
                 raise ValueError(
                     "Prior distribution dimensions do not match number of parameters"
                 )
@@ -84,14 +70,12 @@ class ParameterConfig:
                     "Prior distribution dimensions do not match number of parameters"
                 )
 
-        if isinstance(
-            self.initial_proposal_distribution,
-        ):
+        if isinstance(self.initial_proposal_distribution, multivariate_distributions):
             if (
                 getattr(
                     self.initial_proposal_distribution,
                     "dim",
-                    len(self.initial_proposal_distribution.mean()),
+                    len(self.initial_proposal_distribution.mean),
                 )
                 != self.ndim
             ):

@@ -1,13 +1,14 @@
 import unittest
+
 import numpy as np
 import scipy.stats
-from rxmc.config import ParameterConfig, CalibrationConfig
-from rxmc.params import Parameter
-from rxmc.evidence import Evidence
+from rxmc.config import CalibrationConfig, ParameterConfig
 from rxmc.constraint import Constraint
-from rxmc.physical_model import Polynomial
+from rxmc.evidence import Evidence
 from rxmc.likelihood_model import LikelihoodModel, UnknownModelError
 from rxmc.observation import Observation
+from rxmc.params import Parameter
+from rxmc.physical_model import Polynomial
 
 
 class TestParameterConfig(unittest.TestCase):
