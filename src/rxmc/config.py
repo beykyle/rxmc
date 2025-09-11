@@ -112,20 +112,17 @@ class ParameterConfig:
         Parameters
         ----------
         x : np.ndarray
-            Parameter vector of shape (k, ndim), for getting the log pdf of the
-            prior at k different points, or of shape (ndim,) for just one point.
+            Parameter vector of shape (ndim,)
 
         Returns
         -------
-        np.ndarray
+        float
             Log prior probability of the parameter vector(s).
-            Shape (k,) if x has shape (k, ndim),
-            or scalar array if x has shape (ndim,).
         """
-        x = np.atleast_2d(x)
+        x = np.atleast_1d(x)
         if isinstance(self.prior, list):
-            logpdfs = [dist.logpdf(x[:, i]) for i, dist in enumerate(self.prior)]
-            return np.sum(logpdfs, axis=0)
+            logpdfs = [dist.logpdf(x[i]) for i, dist in enumerate(self.prior)]
+            return np.sum(logpdfs)
         return self.prior.logpdf(x)
 
 
