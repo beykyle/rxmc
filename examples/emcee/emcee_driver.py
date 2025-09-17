@@ -54,7 +54,7 @@ def run_joint(args, pool, size=1):
         posterior.log_posterior,
         pool=pool,
         backend=backend,
-        moves=emcee.moves.DEMove(),
+        moves=emcee.moves.StretchMove(a=1.4),
     )
 
     # burn-in
@@ -65,29 +65,37 @@ def run_joint(args, pool, size=1):
         p0 = state
         print("Burn-in complete.")
 
-    start = sampler.iteration
+    # production run
     chunk = args.batch_size or args.steps
+    index = 0
+    autocorr = np.empty(args.steps)
+    old_tau = np.inf
     print(
         f"Starting production sampling for {args.steps} steps on {args.chains} chains "
         f"on {size - 1} MPI ranks.\n"
-        f"Printing progress every {chunk} steps."
     )
 
     t0 = time()
-    while sampler.iteration - start < args.steps:
-        remaining = args.steps - (sampler.iteration - start)
-        steps = min(chunk, remaining)
-        print(f"Running {steps} steps...")
-        p0 = sampler.run_mcmc(p0, steps, progress=False)
-        print(f"Completed {sampler.iteration - start}/{args.steps} steps")
-        print(f"acceptance fraction: {np.mean(sampler.acceptance_fraction):.3f}")
-    dt = time() - t0
+    for _ in sampler.sample(p0, iterations=args.steps):
+        if sampler.iteration % chunk:
+            continue
+
+        tau = sampler.get_autocorr_time(tol=0)
+        autocorr[index] = np.mean(tau)
+        index += 1
+
+        converged = np.all(tau * 100 < sampler.iteration)
+        converged &= np.all(np.abs(old_tau - tau) / tau < 0.01)
+        if converged:
+            print(f"Chains converged after {sampler.iteration} steps")
+            break
+        old_tau = tau
+        dt = time() - t0
     print(f"Sampling took {datetime.timedelta(seconds=dt)}")
 
 
 def main():
     comm = MPI.COMM_WORLD
-    rank = comm.Get_rank()
     size = comm.Get_size()
 
     args = parse_args()
@@ -95,7 +103,7 @@ def main():
     posterior.init_posterior(args.input)
 
     # warm up JIT on every rank
-    p0 = posterior._config.starting_location(args.chains)
+    p0 = posterior.starting_location(args.chains)
     posterior.log_posterior_batch(p0)
 
     # timing test serial
@@ -114,15 +122,14 @@ def main():
             else:
                 chunk_size = args.chains // (size - 1)
                 inputs = [
-                    posterior._config.starting_location(chunk_size)
-                    for _ in range(size - 1)
+                    posterior.starting_location(chunk_size) for _ in range(size - 1)
                 ]
                 print(
                     f"Timing {args.chains} samples on {size - 1} ranks with chunk size {chunk_size}..."
                 )
 
                 t0 = time()
-                res = pool.map(posterior.log_posterior_batch, inputs)
+                pool.map(posterior.log_posterior_batch, inputs)
                 dt = time() - t0
                 print(
                     f"{args.chains} samples on {size - 1} ranks in {datetime.timedelta(seconds=dt)} [hh:mm:ss]"

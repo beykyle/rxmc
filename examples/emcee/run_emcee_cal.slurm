@@ -1,10 +1,14 @@
 #!/bin/bash --login
 
-#SBATCH --job-name=emcee_cal_mpi
+#SBATCH --job-name=ume_emcee_chuq
 #SBATCH --ntasks=129
 #SBATCH --cpus-per-task=1
 #SBATCH --mem-per-cpu=1G         
-#SBATCH --time=1:00:00           
+#SBATCH --time=72:00:00           
+
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=beyerkyl@msu.edu
+#SBATCH --output=%x-%j.SLURMout
 
 # --- Environment ---
 module purge
@@ -17,5 +21,9 @@ python -c 'import elm; print(f"Running model version: {elm.__version__}")'
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 export OPENBLAS_NUM_THREADS=$SLURM_CPUS_PER_TASK
 
+# output directory
+OUTPUT_DIR=${SLURM_JOB_NAME}_${SLURM_JOB_ID}
+mkdir -p $OUTPUT_DIR
 
-srun python3 ./run_calibration.py --input ./calibration_config.pkl --chains 128  --steps 1000 --output ./
+# run the damn thing
+srun -n $SLURM_NTASKS  python3 ./emcee_driver.py --input ./calibration_config_ume.pkl --output $OUTPUT_DIR --chains 256  --steps 100000
