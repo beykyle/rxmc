@@ -55,6 +55,7 @@ class LikelihoodModel:
         frac_err: float = 0.0,
         divide_by_N: bool = False,
         covariance_scale: float = 1.0,
+        ndof: int = None,
     ):
         r"""
         Initializes the LikelihoodModel, optionally with a fractional
@@ -72,12 +73,16 @@ class LikelihoodModel:
             observation?
         scale : float = 1.0
             Arbitrary fixed scale constant for covariance matrix
+        ndof : int, optional
+            Degrees of freedom for the likelihood model, if applicable.
+            Defaults to using the number of data points in the observation.
         """
         self.frac_err = frac_err
         self.params = None
         self.n_params = 0
         self.divide_by_N = divide_by_N
         self.covariance_scale = covariance_scale
+        self.ndof = ndof
 
     def covariance(self, observation: Observation, ym: np.ndarray):
         r"""
@@ -119,10 +124,7 @@ class LikelihoodModel:
             Covariance matrix of the observation.
         """
         sigma = observation.covariance(ym)
-        sigma_model = uncorrelated_model_covariance(
-            self.frac_err,
-            ym,
-        )
+        sigma_model = uncorrelated_model_covariance(self.frac_err, ym)
         cov = sigma + sigma_model
         return scale_covariance(
             cov, observation, self.covariance_scale, self.divide_by_N
@@ -187,7 +189,8 @@ class LikelihoodModel:
         mahalanobis_sqr, log_det = mahalanobis_distance_sqr_cholesky(
             observation.y, ym, cov
         )
-        return log_likelihood(mahalanobis_sqr, log_det, observation.n_data_pts)
+        N = self.ndof if self.ndof is not None else observation.n_data_pts
+        return log_likelihood(mahalanobis_sqr, log_det, N)
 
 
 class FixedCovarianceLikelihood(LikelihoodModel):
@@ -278,17 +281,8 @@ class Chi2LikelihoodModel(LikelihoodModel):
     log likelihood.
     """
 
-    def __init__(
-        self,
-        frac_err: float = 0.0,
-        divide_by_N: bool = False,
-        covariance_scale: float = 1.0,
-    ):
-        super().__init__(
-            frac_err=frac_err,
-            divide_by_N=divide_by_N,
-            covariance_scale=covariance_scale,
-        )
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
     def log_likelihood(self, observation: Observation, ym: np.ndarray):
         r"""
@@ -319,18 +313,8 @@ class ParametricLikelihoodModel(LikelihoodModel):
     along with the parameters of a `PhysicalModel`.
     """
 
-    def __init__(
-        self,
-        likelihood_params: list[Parameter],
-        frac_err: float = 0.0,
-        divide_by_N: bool = False,
-        covariance_scale: float = 1.0,
-    ):
-        super().__init__(
-            frac_err=frac_err,
-            divide_by_N=divide_by_N,
-            covariance_scale=covariance_scale,
-        )
+    def __init__(self, likelihood_params: list[Parameter], *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.params = likelihood_params
         self.n_params = len(likelihood_params)
 
@@ -424,12 +408,7 @@ class UnknownNoiseErrorModel(ParametricLikelihoodModel):
     where $\epsilon$ is the statistical `noise` parameter.
     """
 
-    def __init__(
-        self,
-        frac_err: float = 0,
-        divide_by_N: bool = False,
-        covariance_scale: float = 1.0,
-    ):
+    def __init__(self, *args, **kwargs):
         r"""
         Initializes the UnknownNoiseErrorModel, optionally with
         a fractional uncorrelated error.
@@ -444,12 +423,7 @@ class UnknownNoiseErrorModel(ParametricLikelihoodModel):
         likelihood_params = [
             Parameter("log noise", float, latex_name=r"\log{\epsilon}"),
         ]
-        super().__init__(
-            likelihood_params,
-            frac_err=frac_err,
-            divide_by_N=divide_by_N,
-            covariance_scale=covariance_scale,
-        )
+        super().__init__(likelihood_params, *args, **kwargs)
 
     def covariance(self, observation: Observation, ym: np.ndarray, log_epsilon: float):
         r"""
@@ -488,10 +462,7 @@ class UnknownNoiseErrorModel(ParametricLikelihoodModel):
             observation.systematic_offset_covariance
             + observation.systematic_normalization_covariance * np.outer(ym, ym)
         )
-        sigma_model = uncorrelated_model_covariance(
-            self.frac_err,
-            ym,
-        )
+        sigma_model = uncorrelated_model_covariance(self.frac_err, ym)
         sigma_stat = statistical_covariance(np.ones_like(ym) * np.exp(log_epsilon))
         cov = sigma_sys + sigma_model + sigma_stat
         return scale_covariance(
@@ -514,26 +485,16 @@ class UnknownNoiseFractionErrorModel(ParametricLikelihoodModel):
 
     """
 
-    def __init__(
-        self,
-        frac_err: float = 0,
-        divide_by_N: bool = False,
-        covariance_scale: float = 1.0,
-    ):
+    def __init__(self, *args, **kwargs):
         likelihood_params = [
             Parameter(
                 "log noise fraction",
                 float,
                 latex_name=r"\log{\epsilon}",
                 unit="dimensionless",
-            ),
+            )
         ]
-        super().__init__(
-            likelihood_params,
-            frac_err=frac_err,
-            divide_by_N=divide_by_N,
-            covariance_scale=covariance_scale,
-        )
+        super().__init__(likelihood_params, *args, **kwargs)
 
     def covariance(self, observation: Observation, ym: np.ndarray, log_epsilon: float):
         r"""
@@ -573,10 +534,7 @@ class UnknownNoiseFractionErrorModel(ParametricLikelihoodModel):
             observation.systematic_offset_covariance
             + observation.systematic_normalization_covariance * np.outer(ym, ym)
         )
-        sigma_model = uncorrelated_model_covariance(
-            self.frac_err,
-            ym,
-        )
+        sigma_model = uncorrelated_model_covariance(self.frac_err, ym)
         sigma_stat = statistical_covariance(ym * np.exp(log_epsilon))
         cov = sigma_sys + sigma_model + sigma_stat
         return scale_covariance(
@@ -594,18 +552,9 @@ class UnknownNormalizationModel(ParametricLikelihoodModel):
 
     def __init__(self, divide_by_N=False, covariance_scale=1.0):
         likelihood_params = [
-            Parameter(
-                "normalization",
-                float,
-                latex_name=r"N",
-                unit="dimensionless",
-            ),
+            Parameter("normalization", float, latex_name=r"N", unit="dimensionless"),
         ]
-        super().__init__(
-            likelihood_params,
-            divide_by_N=divide_by_N,
-            covariance_scale=covariance_scale,
-        )
+        super().__init__(likelihood_params, *args, **kwargs)
 
     def covariance(self, observation: Observation, ym: np.ndarray, N: float):
         r"""
@@ -623,10 +572,7 @@ class UnknownNormalizationModel(ParametricLikelihoodModel):
             Normalization factor
         """
         sigma_sys = observation.systematic_offset_covariance / (N**2)
-        sigma_model = uncorrelated_model_covariance(
-            self.frac_err,
-            ym,
-        )
+        sigma_model = uncorrelated_model_covariance(self.frac_err, ym)
         sigma_stat = observation.statistical_covariance / (N**2)
         cov = sigma_sys + sigma_model + sigma_stat
         return scale_covariance(
@@ -713,27 +659,16 @@ class UnknownNormalizationErrorModel(ParametricLikelihoodModel):
     where $\eta$ is a free parameter.
     """
 
-    def __init__(
-        self,
-        frac_err: float = 0,
-        divide_by_N: bool = False,
-        covariance_scale: float = 1.0,
-    ):
-        self.frac_err = frac_err
+    def __init__(self, *args, **kwargs):
         likelihood_params = [
             Parameter(
                 "log normalization error",
                 float,
                 latex_name=r"\log{\eta}",
                 unit="dimensionless",
-            ),
+            )
         ]
-        super().__init__(
-            likelihood_params,
-            frac_err=frac_err,
-            divide_by_N=divide_by_N,
-            covariance_scale=covariance_scale,
-        )
+        super().__init__(likelihood_params, *args, **kwargs)
 
     def covariance(self, observation: Observation, ym: np.ndarray, log_eta: float):
         r"""
@@ -804,12 +739,7 @@ class UnknownModelError(ParametricLikelihoodModel):
     This is commonly used as a model-error term or unquantified uncertainty.
     """
 
-    def __init__(
-        self,
-        divide_by_N: bool = False,
-        covariance_scale: float = 1.0,
-        averaging=True,
-    ):
+    def __init__(self, *args, averaging=True, **kwargs):
         """
         Initializes the UnknownModelError instance.
 
@@ -827,18 +757,10 @@ class UnknownModelError(ParametricLikelihoodModel):
         """
         likelihood_params = [
             Parameter(
-                "log fractional err",
-                float,
-                latex_name=r"\gamma",
-                unit="dimensionless",
-            ),
+                "log fractional err", float, latex_name=r"\gamma", unit="dimensionless"
+            )
         ]
-        super().__init__(
-            likelihood_params,
-            frac_err=0.0,  # this model does not use fixed frac_err
-            divide_by_N=divide_by_N,
-            covariance_scale=covariance_scale,
-        )
+        super().__init__(likelihood_params, *args, **kwargs)
         self.averaging = averaging
 
     def covariance(
@@ -902,17 +824,12 @@ class CorrelatedDiscrepancyModel(ParametricLikelihoodModel):
     where $K_{ij}$ is the Radial Basis Function (RBF) kernel
     """
 
-    def __init__(self, frac_err: float = 0, divide_by_N=False, covariance_scale=1.0):
+    def __init__(self, *args, **kwargs):
         likelihood_params = [
             Parameter("discrepancy_lengthscale", float, latex_name=r"\ell"),
             Parameter("discrepancy_amplitude", float, latex_name=r"\eta"),
         ]
-        super().__init__(
-            likelihood_params,
-            frac_err=frac_err,
-            divide_by_N=divide_by_N,
-            covariance_scale=covariance_scale,
-        )
+        super().__init__(likelihood_params, *args, **kwargs)
 
     def covariance(
         self,
@@ -985,7 +902,7 @@ class StudentTLikelihoodModel(LikelihoodModel):
     to deviations from normality compared to the Gaussian likelihood.
     """
 
-    def __init__(self, nu: float = 1.0, frac_err: float = 0.0):
+    def __init__(self, *args, **kwargs):
         r"""
         Initializes the StudentTLikelihoodModel with a specified degrees of freedom.
 
@@ -996,10 +913,12 @@ class StudentTLikelihoodModel(LikelihoodModel):
         frac_err : float
             Fractional uncorrelated error in the model prediction.
         """
-        super().__init__(frac_err=frac_err)
-        self.nu = nu
+        likelihood_params = [
+            Parameter("degrees_of_freedom", float, latex_name=r"\nu"),
+        ]
+        super().__init__(likelihood_params, *args, **kwargs)
 
-    def log_likelihood(self, observation: Observation, ym: np.ndarray):
+    def log_likelihood(self, observation: Observation, ym: np.ndarray, nu: float):
         r"""
         Calculate the log likelihood using the Student's t-distribution.
 
@@ -1009,6 +928,8 @@ class StudentTLikelihoodModel(LikelihoodModel):
             The observation object containing the observed data.
         ym : np.ndarray
             Model prediction for the observation.
+        nu : float
+            Degrees of freedom for the Student's t-distribution.
 
         Returns
         -------
@@ -1021,13 +942,13 @@ class StudentTLikelihoodModel(LikelihoodModel):
         )
 
         # Log likelihood for Student's t-distribution
-        n = observation.n_data_pts
+        n = self.ndof if self.ndof is not None else observation.n_data_pts
         return (
-            sc.special.gammaln((n + self.nu) / 2)
-            - sc.special.gammaln(self.nu / 2)
-            - 0.5 * n * np.log(np.pi * self.nu)
+            sc.special.gammaln((n + nu) / 2)
+            - sc.special.gammaln(nu / 2)
+            - 0.5 * n * np.log(np.pi * nu)
             - 0.5 * log_det
-            - (self.nu + n) / 2 * np.log(1 + mahalanobis_sqr / self.nu)
+            - (nu + n) / 2 * np.log(1 + mahalanobis_sqr / nu)
         )
 
 
