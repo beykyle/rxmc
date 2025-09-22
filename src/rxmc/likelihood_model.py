@@ -124,7 +124,7 @@ class LikelihoodModel:
             Covariance matrix of the observation.
         """
         sigma = observation.covariance(ym)
-        sigma_model = uncorrelated_model_covariance(self.frac_err, ym)
+        sigma_model = uncorrelated_model_covariance(self.frac_err, obs.y)
         cov = sigma + sigma_model
         return scale_covariance(
             cov, observation, self.covariance_scale, self.divide_by_N
