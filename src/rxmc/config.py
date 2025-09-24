@@ -105,7 +105,7 @@ class ParameterConfig:
         else:
             return self.initial_proposal_distribution.rvs(nwalkers)
 
-    def prior_logpdf(self, x: np.ndarray) -> np.ndarray:
+    def prior_logpdf(self, x: np.ndarray) -> float:
         """
         Compute the log prior probability of a parameter vector.
 
@@ -150,6 +150,7 @@ class CalibrationConfig:
         evidence: Evidence,
         model_config: ParameterConfig,
         likelihood_configs: Optional[list[ParameterConfig]] = None,
+        likelihood_scaling: Optional[float] = None,
     ):
         """
         Initialize the CalibrationConfig with evidence, model configuration,
@@ -176,6 +177,7 @@ class CalibrationConfig:
         self.model_config = model_config
         self.likelihood_configs = likelihood_configs or []
         self.ndim = model_config.ndim + sum(lc.ndim for lc in self.likelihood_configs)
+        self.likelihood_scaling = likelihood_scaling or 1.0
 
         if (
             len(self.evidence.constraints) == 0
@@ -261,7 +263,9 @@ class CalibrationConfig:
             Log likelihood of the parameter vector.
         """
         xmodel, xlikelihoods = self.split_parameters(x)
-        return self.evidence.log_likelihood(xmodel, xlikelihoods)
+        return self.likelihood_scaling * self.evidence.log_likelihood(
+            xmodel, xlikelihoods
+        )
 
     def log_posterior(self, x) -> float:
         """
