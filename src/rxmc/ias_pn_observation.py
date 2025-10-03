@@ -86,7 +86,7 @@ class IsobaricAnalogPNObservation:
 
         # set up workspaces to precompute things for the solver
         # for quick evaluation of observables
-        constraint_ws, vis_ws, kinematics = set_up_solver(
+        constraint_ws, vis_ws, kinematics_entrance, kinematics_exit = set_up_solver(
             reaction=self.reaction,
             Elab=measurement.Einc,
             ExIAS=ExIAS,
@@ -97,7 +97,6 @@ class IsobaricAnalogPNObservation:
         self.constraint_workspace = constraint_ws
         self.visualization_workspace = vis_ws
 
-        # TODO handle units
         self.y_units = y_units
 
         # initialize the observation instance
