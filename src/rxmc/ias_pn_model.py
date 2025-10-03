@@ -81,6 +81,11 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
 
         Parameters:
         ----------
+        observation : IsobaricAnalogPNObservation
+            The observation containing the workspace and data.
+        params : tuple
+            The parameters to evaluate the model at, in the order defined
+            by the `calculate_params` function.
 
         Returns:
         -------
@@ -121,6 +126,11 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
 
         Parameters:
         ----------
+        observation : IsobaricAnalogPNObservation
+            The observation containing the workspace and data.
+        params : tuple
+            The parameters to evaluate the model at, in the order defined
+            by the `calculate_params` function.
 
         Returns:
         -------

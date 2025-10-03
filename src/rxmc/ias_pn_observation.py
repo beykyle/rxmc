@@ -37,6 +37,7 @@ class IsobaricAnalogPNObservation:
         self,
         measurement: Distribution,
         reaction: jitr.reactions.Reaction,
+        ExIAS: float,
         lmax: int = DEFAULT_LMAX,
         angles_vis: np.ndarray = np.linspace(0.01, 180, 100),
         ObservationClass: Type[Observation] = Observation,
@@ -47,10 +48,12 @@ class IsobaricAnalogPNObservation:
 
         Parameters:
         ----------
-        measurements : list[Distribution]
-            List of measurements, each containing x, y, and associated errors.
-        reactions : list[jitr.reactions.Reaction]
-            List of reactions associated with the measurements.
+        measurement : Distribution
+            The experimental measurement data.
+        reaction : jitr.reactions.Reaction
+            Reaction information.
+        ExIAS : float
+            Excitation energy of the IAS in the residual nucleus (MeV).
         lmax: int
             Maximum angular momentum
         angles_vis: np.ndarray
