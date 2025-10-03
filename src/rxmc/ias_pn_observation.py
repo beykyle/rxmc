@@ -97,7 +97,15 @@ class IsobaricAnalogPNObservation:
         self.constraint_workspace = constraint_ws
         self.visualization_workspace = vis_ws
 
-        self.y_units = y_units
+        self.y_units = ureg.barn / ureg.steradian
+        measurement_unit = 1 * ureg(measurement.y_units)
+        if not measurement_unit.check(y_unit):
+            raise ValueError(
+                f"Expected measurement_unit to be dimensionally "
+                f"compatible with 'b/Sr', got {measurement.y_units}"
+            )
+
+        norm = 1.0 / measurement_unit.to(self.y_unit).magnitude
 
         # initialize the observation instance
         args, kwargs, y_stat_err = set_up_observation(
