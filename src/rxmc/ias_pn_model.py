@@ -24,13 +24,28 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
         """
         Parameters:
         ----------
+        U_p_coulomb : Callable
+            Function to calculate the proton Coulomb potential.
+            Signature: (r: float, args: tuple) -> complex
+        U_p_central : Callable
+            Function to calculate the proton central potential.
+            Signature: (r: float, args: tuple) -> complex
+        U_p_spin_orbit : Callable
+            Function to calculate the proton spin-orbit potential.
+            Signature: (r: float, args: tuple) -> complex
+        U_n_central : Callable
+            Function to calculate the neutron central potential.
+            Signature: (r: float, args: tuple) -> complex
+        U_n_spin_orbit : Callable
+            Function to calculate the neutron spin-orbit potential.
+            Signature: (r: float, args: tuple) -> complex
         calculate_interaction_from_params : Callable
         params: list[Parameter] = []
         model_name : str, optional
             Name of the model, used for identification purposes.
             Defaults to None.
         """
-        self.model_name = model_name or "ElasticDifferentialXSModel"
+        self.model_name = model_name or "IsobaricAnalogPNXSModel"
         self.U_p_coulomb = U_p_coulomb
         self.U_p_central = U_p_central
         self.U_p_spin_orbit = U_p_spin_orbit
@@ -42,7 +57,7 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
 
     def evaluate(
         self,
-        observation: ElasticDifferentialXSObservation,
+        observation: IsobaricAnalogPNObservation,
         *params: tuple,
     ) -> np.ndarray:
         """
@@ -50,9 +65,6 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
 
         Parameters:
         ----------
-        observation :
-        params : tuple
-            The parameters of the physical model.
 
         Returns:
         -------
@@ -85,7 +97,7 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
 
     def visualizable_model_prediction(
         self,
-        observation: ElasticDifferentialXSObservation,
+        observation: IsobaricAnalogPNObservation,
         *params: tuple,
     ) -> np.ndarray:
         """
@@ -93,10 +105,6 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
 
         Parameters:
         ----------
-        observation : ElasticDifferentialXSObservation
-            The observation containing the reaction data and workspace.
-        params : tuple
-            The parameters of the physical model.
 
         Returns:
         -------

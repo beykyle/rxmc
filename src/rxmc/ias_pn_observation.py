@@ -168,7 +168,7 @@ def set_up_solver(
         angle_rad_constraint,
         lmax,
         channel_radius_fm,
-        tmatrix_abs_tol: float = 1e-8,
+        tmatrix_abs_tol=1e-8,
     )
 
     visualization_workspace = jitr.xs.quasielastic_pn.Workspace(
@@ -179,7 +179,7 @@ def set_up_solver(
         angle_rad_vis,
         lmax,
         channel_radius_fm,
-        tmatrix_abs_tol: float = 1e-8,
+        tmatrix_abs_tol = 1e-8,
     )
 
     return constraint_workspace, visualization_workspace, kinematics_entrance, kinematics_exit

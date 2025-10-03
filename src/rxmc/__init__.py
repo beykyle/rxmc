@@ -12,5 +12,7 @@ from . import config
 
 from . import elastic_diffxs_observation
 from . import elastic_diffxs_model
+from . import ias_pn_observation
+from . import ias_pn_model
 
 from .__version__ import __version__
