@@ -8,7 +8,23 @@ from .physical_model import PhysicalModel
 
 
 class IsobaricAnalogPNXSModel(PhysicalModel):
-    """ """
+    """
+    A model that predicts the (p,n) IAS differential xs for a given reaction.
+    This model requires five interaction potentials:
+    - Proton Coulomb potential: U_p_coulomb
+    - Proton central potential: U_p_central
+    - Proton spin-orbit potential: U_p_spin_orbit
+    - Neutron central potential: U_n_central
+    - Neutron spin-orbit potential: U_n_spin_orbit
+
+    Each potential takes in an arbitrary tuple of params, which are
+    calculated from the model parameters via the `calculate_params` function.
+
+    The `calculate_params` function should have the signature:
+    (ws: jitr.xs.quasielastic_pn.Workspace, *params: tuple) -> tuple
+    and return a tuple of five elements, each being a tuple of parameters
+    to be passed to the corresponding potential function in the order listed above.
+    """
 
     def __init__(
         self,

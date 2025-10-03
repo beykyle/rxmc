@@ -8,6 +8,9 @@ from pint import UnitRegistry
 from .observation import FixedCovarianceObservation, Observation
 from .observation_from_measurement import check_angle_grid, set_up_observation
 
+# Create a unit registry
+ureg = UnitRegistry()
+
 DEFAULT_LMAX = 20
 
 
@@ -49,7 +52,7 @@ class IsobaricAnalogPNObservation:
         reactions : list[jitr.reactions.Reaction]
             List of reactions associated with the measurements.
         lmax: int
-            Maximum angular momentum, defaults to 20.
+            Maximum angular momentum
         angles_vis: np.ndarray
             Array of angles in degrees for visualization.
         ObservationClass: Type[Observation]
@@ -136,7 +139,9 @@ def set_up_solver(
     reaction :
         Reaction information.
     Elab : float
-        Laboratory energy.
+        Laboratory energy of the incoming proton (MeV).
+    ExIAS : float
+        Excitation energy of the IAS in the residual nucleus (MeV).
     angle_rad_constraint : np.array
         Angles to compare to experiment (rad).
     angle_rad_vis : np.array
@@ -179,10 +184,15 @@ def set_up_solver(
         angle_rad_vis,
         lmax,
         channel_radius_fm,
-        tmatrix_abs_tol = 1e-8,
+        tmatrix_abs_tol=1e-8,
     )
 
-    return constraint_workspace, visualization_workspace, kinematics_entrance, kinematics_exit
+    return (
+        constraint_workspace,
+        visualization_workspace,
+        kinematics_entrance,
+        kinematics_exit,
+    )
 
 
 def check_angle_grid(angles_rad: np.ndarray, name: str):
