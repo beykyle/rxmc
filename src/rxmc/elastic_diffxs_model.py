@@ -1,28 +1,15 @@
 from typing import Callable
-import numpy as np
 
 import jitr
+import numpy as np
 
-from .physical_model import PhysicalModel
 from .elastic_diffxs_observation import ElasticDifferentialXSObservation
+from .physical_model import PhysicalModel
 
 
 class ElasticDifferentialXSModel(PhysicalModel):
     """
     A model that predicts the elastic differential xs for a given reaction.
-
-    Should be used within an ElasticDifferentialXSConstraint rather than a
-    regular Constraint.
-
-    Rather than taking in an `Observation` object, this model takes in a
-    `jitr.xs.elastic.DifferentialWorkspace` object, which contains all
-    the relevant precomputed quantities needed to calculate the differential
-    cross section using the provided interaction parameters.
-
-    The model is initialized with two interactions: one for the central
-    potential and one for the spin-orbit interaction. The
-    `calculate_interaction_from_params` function is used to extract
-    the parameters needed for each interaction.
     """
 
     def __init__(

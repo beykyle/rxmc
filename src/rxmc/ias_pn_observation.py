@@ -8,16 +8,12 @@ from pint import UnitRegistry
 from .observation import FixedCovarianceObservation, Observation
 from .observation_from_measurement import check_angle_grid, set_up_observation
 
-# Create a unit registry
-ureg = UnitRegistry()
-
-
 DEFAULT_LMAX = 20
 
 
-class ElasticDifferentialXSObservation:
+class IsobaricAnalogPNObservation:
     """
-    Observation for elastic differential cross sections.
+    Observation for (p,n) isobaric analog state (IAS) reactions.
 
     This class dynamically inherits from `Observation` or any other
     derived class of `Observation` based on the `ObservationClass`
@@ -26,29 +22,25 @@ class ElasticDifferentialXSObservation:
     `FixedCovarianceObservation`, to precompute the covariance matrix inverse
     in cases where the covariance is fixed.
 
-    It is designed to handle elastic differential cross section
-    measurements, specifically absolute differential cross sections,
-    Rutherford normalized differential cross sections, and analyzing
-    powers (Ay).
+    It is designed to handle (p,n) IAS reaction measurements in differential cross
+    section form.
 
-    Internally, this involves initializing a
-    `jitr.xs.elastic.DifferentialWorkspace` which precomputes
-    things like boundary conditions to speed up computation of
-    observables for a given set of interaction parameter.
+    Internally, this involves initializing a jitr.xs.quasielastic_pn.Workspace
+    which precomputes things like boundary conditions to speed up computation of
+    observables for a given set of interaction parameters.
     """
 
     def __init__(
         self,
         measurement: Distribution,
         reaction: jitr.reactions.Reaction,
-        quantity: str,
         lmax: int = DEFAULT_LMAX,
         angles_vis: np.ndarray = np.linspace(0.01, 180, 100),
         ObservationClass: Type[Observation] = Observation,
         error_kwargs: dict = None,
     ):
         """
-        Initialize a ReactionObservation instance.
+        Initialize a Observation instance for the (p,n) IAS reaction.
 
         Parameters:
         ----------
@@ -56,9 +48,6 @@ class ElasticDifferentialXSObservation:
             List of measurements, each containing x, y, and associated errors.
         reactions : list[jitr.reactions.Reaction]
             List of reactions associated with the measurements.
-        quantity: str
-            The type of quantity to be calculated (e.g., "dXS/dA",
-            "dXS/dRuth", "Ay").
         lmax: int
             Maximum angular momentum, defaults to 20.
         angles_vis: np.ndarray
@@ -75,7 +64,6 @@ class ElasticDifferentialXSObservation:
         if not issubclass(ObservationClass, Observation):
             raise ValueError("ObservationClass must be a subclass of Observation")
         self.reaction = reaction
-        self.quantity = quantity
         self.lmax = lmax
         self.subentry = measurement.subentry
         self.angle_units = ureg.radian
@@ -102,8 +90,7 @@ class ElasticDifferentialXSObservation:
         self.constraint_workspace = constraint_ws
         self.visualization_workspace = vis_ws
 
-        # Convert measurement to correct quantity and normalize to `b/sr`
-        norm, y_units = self.calculate_normalization(measurement)
+        # TODO handle units
         self.y_units = y_units
 
         # initialize the observation instance
@@ -132,61 +119,11 @@ class ElasticDifferentialXSObservation:
     def num_pts_within_interval(self, interval):
         return self._obs.num_pts_within_interval(interval)
 
-    def calculate_normalization(self, measurement):
-        # Determine the xs_unit based on self.quantity
-        xs_unit = ureg.barn / ureg.steradian
-        rutherford_unit = ureg.millibarn / ureg.steradian
-        if self.quantity == "dXS/dA":
-            y_unit = xs_unit
-        elif self.quantity in {"dXS/dRuth", "Ay"}:
-            y_unit = ureg.dimensionless
-        else:
-            raise ValueError(f"Unrecognized quantity: {self.quantity}")
-
-        # Process different cases based on the quantity types
-        if self.quantity == "dXS/dRuth" and measurement.quantity == "dXS/dA":
-            measurement_unit = 1 * ureg(measurement.y_units)
-            if not measurement_unit.check(xs_unit):
-                raise ValueError(
-                    f"Expected measurement_unit to be dimensionally compatible with 'b/Sr', got {measurement.y_units}"
-                )
-
-            conversion_factor = 1.0 / measurement_unit.to(rutherford_unit).magnitude
-            return self.constraint_workspace.rutherford * conversion_factor, y_unit
-
-        elif self.quantity == "dXS/dA" and measurement.quantity == "dXS/dRuth":
-            conversion_factor = 1.0 / rutherford_unit.to(y_unit).magnitude
-            return conversion_factor / self.constraint_workspace.rutherford, y_unit
-
-        elif self.quantity == "dXS/dA" and measurement.quantity == "dXS/dA":
-            measurement_unit = 1 * ureg(measurement.y_units)
-            if not measurement_unit.check(y_unit):
-                raise ValueError(
-                    f"Expected measurement_unit to be dimensionally compatible with 'b/Sr', got {measurement.y_units}"
-                )
-
-            return 1.0 / measurement_unit.to(y_unit).magnitude, y_unit
-
-        elif (
-            self.quantity in {"dXS/dRuth", "Ay"}
-            and self.quantity == measurement.quantity
-        ):
-            if measurement.y_units != "no-dim":
-                raise ValueError(
-                    f"Expected measurement_unit to be 'no-dim', got {measurement.y_units}"
-                )
-            return 1.0, y_unit
-
-        else:
-            if self.quantity != measurement.quantity:
-                raise ValueError(
-                    f"Quantity mismatch: {self.quantity} != {measurement.quantity}"
-                )
-
 
 def set_up_solver(
     reaction: jitr.reactions.Reaction,
     Elab: float,
+    ExIAS: float,
     angle_rad_constraint: np.array,
     angle_rad_vis: np.array,
     lmax: int,
@@ -212,26 +149,44 @@ def set_up_solver(
     tuple
         constraint and visualization workspaces.
     """
-    kinematics = reaction.kinematics(Elab)
+    kinematics_entrance = reaction.kinematics(Elab=Elab)
+    kinematics_exit = reaction.kinematics_exit(
+        kinematics_entrance, residual_excitation_energy=ExIAS
+    )
+
     interaction_range_fm = jitr.utils.interaction_range(reaction.target.A)
     a = interaction_range_fm * kinematics.k + 2 * np.pi
     channel_radius_fm = a / kinematics.k
     Ns = jitr.utils.suggested_basis_size(a)
     core_solver = jitr.rmatrix.Solver(Ns)
 
-    integral_ws = jitr.xs.elastic.IntegralWorkspace(
-        reaction=reaction,
-        kinematics=kinematics,
-        channel_radius_fm=channel_radius_fm,
-        solver=core_solver,
-        lmax=lmax,
+    constraint_workspace = jitr.xs.quasielastic_pn.Workspace(
+        reaction,
+        kinematics_entrance,
+        kinematics_exit,
+        core_solver,
+        angle_rad_constraint,
+        lmax,
+        channel_radius_fm,
+        tmatrix_abs_tol: float = 1e-8,
     )
 
-    constraint_ws = jitr.xs.elastic.DifferentialWorkspace(
-        integral_workspace=integral_ws, angles=angle_rad_constraint
-    )
-    visualization_ws = jitr.xs.elastic.DifferentialWorkspace(
-        integral_workspace=integral_ws, angles=angle_rad_vis
+    visualization_workspace = jitr.xs.quasielastic_pn.Workspace(
+        reaction,
+        kinematics_entrance,
+        kinematics_exit,
+        core_solver,
+        angle_rad_vis,
+        lmax,
+        channel_radius_fm,
+        tmatrix_abs_tol: float = 1e-8,
     )
 
-    return constraint_ws, visualization_ws, kinematics
+    return constraint_workspace, visualization_workspace, kinematics_entrance, kinematics_exit
+
+
+def check_angle_grid(angles_rad: np.ndarray, name: str):
+    if len(angles_rad.shape) > 1:
+        raise ValueError(f"{name} must be 1D, is {len(angles_rad.shape)}D")
+    if angles_rad[0] < 0 or angles_rad[-1] > np.pi:
+        raise ValueError(f"{name} must be on [0,pi)")
