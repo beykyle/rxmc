@@ -89,6 +89,7 @@ class IsobaricAnalogPNObservation:
         constraint_ws, vis_ws, kinematics = set_up_solver(
             reaction=self.reaction,
             Elab=measurement.Einc,
+            ExIAS=ExIAS,
             angle_rad_constraint=angles_rad_constraint,
             angle_rad_vis=angles_rad_vis,
             lmax=self.lmax,
@@ -162,9 +163,10 @@ def set_up_solver(
         kinematics_entrance, residual_excitation_energy=ExIAS
     )
 
+    k = kinematics_entrance.k
     interaction_range_fm = jitr.utils.interaction_range(reaction.target.A)
-    a = interaction_range_fm * kinematics.k + 2 * np.pi
-    channel_radius_fm = a / kinematics.k
+    a = interaction_range_fm * k + 2 * np.pi
+    channel_radius_fm = a / k
     Ns = jitr.utils.suggested_basis_size(a)
     core_solver = jitr.rmatrix.Solver(Ns)
 
