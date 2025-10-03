@@ -92,7 +92,7 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
         np.ndarray
             An array, containing the evaluated differential data on the
             angular grid corresponding to the
-            `observation.constraint_workspace`.
+            `observation.constraint_workspace`, in units of b/sr.
         """
         ws = observation.constraint_workspace
         (
@@ -102,17 +102,20 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
             args_n_central,
             args_n_spin_orbit,
         ) = self.calculate_params(ws, *params)
-        xs = ws.xs(
-            self.U_p_coulomb,
-            self.U_p_central,
-            self.U_p_spin_orbit,
-            self.U_n_central,
-            self.U_n_spin_orbit,
-            args_p_coulomb=args_p_coulomb,
-            args_p_central=args_p_central,
-            args_p_spin_orbit=args_p_spin_orbit,
-            args_n_central=args_n_central,
-            args_n_spin_orbit=args_n_spin_orbit,
+        xs = (
+            ws.xs(
+                self.U_p_coulomb,
+                self.U_p_central,
+                self.U_p_spin_orbit,
+                self.U_n_central,
+                self.U_n_spin_orbit,
+                args_p_coulomb=args_p_coulomb,
+                args_p_central=args_p_central,
+                args_p_spin_orbit=args_p_spin_orbit,
+                args_n_central=args_n_central,
+                args_n_spin_orbit=args_n_spin_orbit,
+            )
+            / 1000
         )
         return xs
 
@@ -137,7 +140,7 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
         np.ndarray
             An array, containing the evaluated differential data on the
             angular grid corresponding to the
-            `observation.visualization_workspace`.
+            `observation.visualization_workspace`, in units of b/sr.
         """
         ws = observation.visualization_workspace
         (
@@ -147,16 +150,19 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
             args_n_central,
             args_n_spin_orbit,
         ) = self.calculate_params(ws, *params)
-        xs = ws.xs(
-            self.U_p_coulomb,
-            self.U_p_central,
-            self.U_p_spin_orbit,
-            self.U_n_central,
-            self.U_n_spin_orbit,
-            args_p_coulomb=args_p_coulomb,
-            args_p_central=args_p_central,
-            args_p_spin_orbit=args_p_spin_orbit,
-            args_n_central=args_n_central,
-            args_n_spin_orbit=args_n_spin_orbit,
+        xs = (
+            ws.xs(
+                self.U_p_coulomb,
+                self.U_p_central,
+                self.U_p_spin_orbit,
+                self.U_n_central,
+                self.U_n_spin_orbit,
+                args_p_coulomb=args_p_coulomb,
+                args_p_central=args_p_central,
+                args_p_spin_orbit=args_p_spin_orbit,
+                args_n_central=args_n_central,
+                args_n_spin_orbit=args_n_spin_orbit,
+            )
+            / 1000
         )
         return xs
