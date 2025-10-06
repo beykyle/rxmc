@@ -5,7 +5,7 @@ import numpy as np
 from exfor_tools.distribution import Distribution
 from pint import UnitRegistry
 
-from .observation import FixedCovarianceObservation, Observation
+from .observation import Observation
 from .observation_from_measurement import check_angle_grid, set_up_observation
 
 # Create a unit registry
@@ -41,7 +41,7 @@ class IsobaricAnalogPNObservation:
         lmax: int = DEFAULT_LMAX,
         angles_vis: np.ndarray = np.linspace(0.01, 180, 100),
         ObservationClass: Type[Observation] = Observation,
-        error_kwargs: dict = None,
+        error_kwargs: dict = {},
     ):
         """
         Initialize a Observation instance for the (p,n) IAS reaction.
@@ -73,6 +73,7 @@ class IsobaricAnalogPNObservation:
         self.lmax = lmax
         self.subentry = measurement.subentry
         self.angle_units = ureg.radian
+        self.quantity = "dXS/dA"
 
         self.angles_vis = angles_vis
         angles_rad_vis = np.deg2rad(angles_vis)
@@ -99,13 +100,13 @@ class IsobaricAnalogPNObservation:
 
         self.y_units = ureg.barn / ureg.steradian
         measurement_unit = 1 * ureg(measurement.y_units)
-        if not measurement_unit.check(y_unit):
+        if not measurement_unit.check(self.y_units):
             raise ValueError(
                 f"Expected measurement_unit to be dimensionally "
-                f"compatible with 'b/Sr', got {measurement.y_units}"
+                f"compatible with 'b/sr', got {measurement.y_units}"
             )
 
-        norm = 1.0 / measurement_unit.to(self.y_unit).magnitude
+        norm = 1.0 / measurement_unit.to(self.y_units).magnitude
 
         # initialize the observation instance
         args, kwargs, y_stat_err = set_up_observation(
