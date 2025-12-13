@@ -9,6 +9,7 @@ from . import adaptive_metropolis
 from . import observation
 from . import constraint
 from . import config
+from . import correlated_discrepancy_likelihood_model
 
 from . import elastic_diffxs_observation
 from . import elastic_diffxs_model
