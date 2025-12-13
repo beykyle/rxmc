@@ -21,8 +21,6 @@ class SklearnKernelGPDiscrepancyModel(ParametricLikelihoodModel):
         kernel: Kernel,
         jitter: float = 1e-10,
         param_prefix: str = "discrepancy_",
-        *args,
-        **kwargs,
     ):
         self.kernel = kernel
         self.jitter = float(jitter)
@@ -45,7 +43,7 @@ class SklearnKernelGPDiscrepancyModel(ParametricLikelihoodModel):
                 )
             )
 
-        super().__init__(likelihood_params, *args, **kwargs)
+        super().__init__(likelihood_params)
 
     def _kernel_matrix(
         self, observation: Observation, theta_vec: np.ndarray
