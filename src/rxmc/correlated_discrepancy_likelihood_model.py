@@ -69,6 +69,5 @@ class SklearnKernelGPDiscrepancyModel(ParametricLikelihoodModel):
         if self.jitter > 0:
             cov = cov + self.jitter * np.eye(observation.n_data_pts)
 
-        return scale_covariance(
-            cov, observation, self.covariance_scale, self.divide_by_N
-        )
+        return cov
+
