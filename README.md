@@ -81,5 +81,7 @@ In particular, the following notebooks are useful for getting started with `rxmc
 - [`systematic_err_demo.ipynb`](https://github.com/beykyle/rxmc/blob/main/examples/systematic_err_demo.ipynb) for a comparison of some of the likelihood models built into `rxmc`, and how to use them for situations involving systematic errors and multiple independent experimental constraints
 - [`examples/30s_optical_potential_calibration.ipynb`](https://github.com/beykyle/rxmc/blob/main/examples/30s_optical_potential_calibration.ipynb) for a demo of a full Bayesian calibration of a a local optical potential to real experimental data using `rxmc` and `jitR`, in only 30 seconds!
 
+## use with third party MCMC samplers
 
-For a fully fledged example of this code for calibrating an uncertainty quantified global optical potential, check out the [East Lansing Model](https://github.com/beykyle/elm)
+The `Evidence` class in `rxmc` can be used with any MCMC sampler that requires a function which returns the log-likelihood of a given parameter set. `rxmc.config.CalibrationConfig` provides a convenient way to package together an `Evidence` object with MCMC sampler settings, and can be used to run MCMC sampling with third party samplers like [`emcee`](https://emcee.readthedocs.io/en/stable/) or [`pymc`](https://www.pymc.io/). A fully fledged example of setting up an inference problem
+with `rxmc`, and then using an `emcee` `EnsembleSampler` to sample from the posterior in a massively parallel MPI approach can be found in [`examples/emcee/`](https://github.com/beykyle/rxmc/blob/main/examples/emcee/). 
