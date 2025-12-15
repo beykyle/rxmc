@@ -24,10 +24,11 @@ def parse_args():
     parser.add_argument("--steps", type=int)
     parser.add_argument("--output", type=str, default="./")
     parser.add_argument("--burnin", type=int, default=0)
-    parser.add_argument("--batch_size", type=int, default=None)
+    parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--mode", type=str, choices=["joint"], default="joint")
     parser.add_argument("--serial-timing-test", action="store_true")
     parser.add_argument("--MPI-timing-test", action="store_true")
+    parser.add_argument("--step-size", type=float, default=2.0)
     return parser.parse_args()
 
 
@@ -35,26 +36,35 @@ def run_joint(args, pool, size=1):
     output_path = Path(args.output)
     output_path.mkdir(parents=True, exist_ok=True)
     backend_path = output_path / "chains.h5"
-    backend = emcee.backends.HDFBackend(backend_path)
 
-    ndim = posterior.NDIM
+    # Check if the backend file already exists and handle it appropriately.
+    if backend_path.exists():
+        # File exists: load the backend to continue the sampling process.
+        backend = emcee.backends.HDFBackend(backend_path)
 
-    if not backend_path.exists():
-        backend.reset(nwalkers=args.chains, ndim=ndim)
-
-    if backend.iteration == 0:
-        p0 = posterior.starting_location(args.chains)
-        backend.reset(args.chains, ndim)
+        if backend.iteration == 0:
+            # If, for some reason, the backend exists but has zero iterations.
+            print("Backend found but has zero iterations; resetting...")
+            backend.reset(args.chains, ndim=posterior.NDIM)
+            p0 = posterior.starting_location(args.chains)
+        else:
+            # Normal case: Backend exists and has prior progress.
+            print(f"Resuming from iteration {backend.iteration}")
+            p0 = backend.get_last_sample().coords
     else:
-        p0 = None
+        # File does not exist: create a new backend and reset it.
+        backend = emcee.backends.HDFBackend(backend_path)
+        print("Initializing new backend...")
+        backend.reset(args.chains, ndim=posterior.NDIM)
+        p0 = posterior.starting_location(args.chains)
 
     sampler = emcee.EnsembleSampler(
         args.chains,
-        ndim,
+        posterior.NDIM,
         posterior.log_posterior,
         pool=pool,
         backend=backend,
-        moves=emcee.moves.StretchMove(a=1.4),
+        moves=emcee.moves.StretchMove(a=args.step_size),
     )
 
     # burn-in
@@ -89,8 +99,14 @@ def run_joint(args, pool, size=1):
         if converged:
             print(f"Chains converged after {sampler.iteration} steps")
             break
+        else:
+            print(
+                f"Step {sampler.iteration}: mean autocorr time = {np.mean(tau):.1f} "
+                f"steps"
+            )
         old_tau = tau
         dt = time() - t0
+
     print(f"Sampling took {datetime.timedelta(seconds=dt)}")
 
 
@@ -104,7 +120,7 @@ def main():
 
     # warm up JIT on every rank
     p0 = posterior.starting_location(args.chains)
-    posterior.log_posterior_batch(p0)
+    posterior.log_posterior(p0[0])
 
     # timing test serial
     if args.serial_timing_test:

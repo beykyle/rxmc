@@ -1,23 +1,23 @@
 import dill as pickle
 import numpy as np
 
-_config = None
+_CONFIG = None
 NDIM = None
 
 
 def init_posterior(config_path):
     """Initialize the global CalibrationConfig on this rank."""
-    global _config
+    global _CONFIG
     global NDIM
     with open(config_path, "rb") as f:
         cfg = pickle.load(f)
-    _config = cfg
+    _CONFIG = cfg
     NDIM = cfg.ndim
 
 
 def starting_location(nwalkers):
     """Generate starting locations for the walkers."""
-    return _config.starting_location(nwalkers)
+    return _CONFIG.starting_location(nwalkers)
 
 
 def log_posterior(theta):
@@ -26,13 +26,13 @@ def log_posterior(theta):
 
     Parameters
     ----------
-    theta : ndarray, shape (ndim)
+    theta : ndarray, shape (NDIM,)
 
     Returns
     -------
     log_prob : float
     """
-    return _config.log_posterior(theta)
+    return _CONFIG.log_posterior(theta)
 
 
 def log_posterior_batch(thetas):
@@ -41,10 +41,10 @@ def log_posterior_batch(thetas):
 
     Parameters
     ----------
-    thetas : ndarray, shape (nwalkers, ndim)
+    thetas : ndarray, shape (nwalkers, NDIM)
 
     Returns
     -------
     log_probs : ndarray, shape (nwalkers,)
     """
-    return np.array([_config.log_posterior(theta) for theta in thetas])
+    return np.array([_CONFIG.log_posterior(theta) for theta in thetas])
