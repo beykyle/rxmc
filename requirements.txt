@@ -1,3 +1,5 @@
+scikit-learn>=1.0.0
+emcee>=3.0.0
 mpi4py>=4.0
 numpy>=2.2.6
 pandas>=2.2
@@ -5,4 +7,3 @@ scipy>=1.15
 pint>=0.2
 jitr>=2.5.1
 exfor-tools>=0.4
-

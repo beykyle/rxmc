@@ -52,7 +52,7 @@ class Polynomial(PhysicalModel):
     def __init__(self, order: int):
         params = []
         for i in range(order + 1):
-            params.append(Parameter(f"f{i}", latex_name=f"a_{i}", dtype=float))
+            params.append(Parameter(f"a{i}", latex_name=f"a_{i}", dtype=float))
         self.order = order
         super().__init__(params)
 
