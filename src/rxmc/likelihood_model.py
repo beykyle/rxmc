@@ -498,20 +498,159 @@ class UnknownNoiseFractionErrorModel(ParametricLikelihoodModel):
         return cov
 
 
-class UnknownNormalizationModel(ParametricLikelihoodModel):
+class UnknownDataNormalizationModel(ParametricLikelihoodModel):
     r"""
-    A `ParametricLikelihoodModel` in which the (log of the) multiplicative
-    factor of the model output is a free parameter. In this case, the
-    covariance does not include systematic errors due to the
+    A `ParametricLikelihoodModel` in which the (log of the)
+    multiplicative factor of the data is a free parameter. In this case,
+    the covariance does not include systematic errors due to the
     normalization, as the data are explicitly re-normalized.
 
     This corresponds to a statistical model:
         \[
-            y_i = \rho y_m(x_i, \alpha) + \epsilon_i + \dots
+            \rho y_i + \rho \epsilon_i =  y_m(x_i, \alpha) + \epsilon_i + \dots
         \]
 
     where $\rho$ is a free parameter corresponding to the multiplicative
-    normalization factor.
+    normalization factor of the experimental data. This is useful when
+    the absolute normalization of the data is uncertain.
+
+    This should not be confused with `UnknownNormalizationModel`, in
+    which the normalization of the model output is a free parameter.  In
+    fact, the confusion between them is related to Peelle's Pertinent
+    Puzzle, or D'Agostin bias.
+    """
+
+    def __init__(self):
+        likelihood_params = [
+            Parameter(
+                "log normalization",
+                float,
+                latex_name=r"\log{\rho}",
+                unit="dimensionless",
+            ),
+        ]
+        super().__init__(likelihood_params)
+
+    def covariance(self, observation: Observation, ym: np.ndarray, log_rho: float):
+        r"""
+        Returns the statistical covariance matrix:
+            \[
+                \Sigma_{ij}^{stat} = \sigma^2_{i}^{stat} \delta_{ij}
+            \]
+        where $\sigma^2_{i}^{stat}$ is the statistical variance of the i-th
+        observation, (`observation.statistical_covariance`).
+
+        When the normalization is a free parameter, the systematic
+        normalization contribution to the covariance is not included,
+        as the data are explicitly re-normalized.
+
+        Parameters
+        ----------
+        observation : Observation
+            The observation object containing the observed data.
+        ym : np.ndarray
+            Model prediction for the observation
+        log_rho : float
+            natural log of the multiplicative normalization factor.
+        """
+        return observation.statistical_covariance
+
+    def residual(self, observation: Observation, ym: np.ndarray, log_rho: float):
+        r"""
+        Returns the residual between the renormalized model prediction ym and
+        observation.y
+
+        Parameters:
+        ----------
+        observation : Observation
+            The observation object containing the observed data.
+        ym : np.ndarray
+            Model prediction for the observation.
+        log_rho : float
+            natural log of the multiplicative normalization factor.
+
+        Returns
+        -------
+        np.ndarray
+            Residual vector.
+        """
+        return observation.y * np.exp(log_rho) - ym
+
+    def chi2(self, observation: Observation, ym: np.ndarray, log_rho: float):
+        r"""
+        Calculate the generalised chi-squared statistic. This is the
+        square of the Mahalanobis distance between y and ym
+
+        Parameters
+        ----------
+        observation : Observation
+            The observation object containing the observed data.
+        ym : np.ndarray
+            Model prediction for the observation.
+        log_rho : float
+            natural log of the multiplicative normalization factor.
+
+        Returns
+        -------
+        float
+            Chi-squared statistic.
+        """
+        rho = np.exp(log_rho)
+        cov = rho**2 * self.covariance(observation, ym, log_rho)
+        mahalanobis_sqr, _ = mahalanobis_distance_sqr_cholesky(
+            observation.y * rho, ym, cov
+        )
+        return mahalanobis_sqr
+
+    def log_likelihood(self, observation: Observation, ym: np.ndarray, log_rho: float):
+        r"""
+        Returns the log_likelihood that ym reproduces y, given the covariance
+
+        Parameters
+        ----------
+        ym : np.ndarray
+            Model prediction for the observation.
+        observation : Observation
+            The observation object containing the observed data.
+        log_rho : float
+            natural log of the multiplicative normalization factor.
+
+        Returns
+        -------
+        float
+        """
+        rho = np.exp(log_rho)
+        cov = rho**2 * self.covariance(observation, ym, log_rho)
+        mahalanobis_sqr, log_det = mahalanobis_distance_sqr_cholesky(
+            observation.y * rho, ym, cov
+        )
+        return log_likelihood(mahalanobis_sqr, log_det, observation.n_data_pts)
+
+
+class UnknownNormalizationModel(ParametricLikelihoodModel):
+    r"""
+    A `ParametricLikelihoodModel` in which the (log of the)
+    multiplicative factor of the model output is a free parameter. In
+    this case, the covariance does not include systematic errors due to
+    the normalization, as the data are explicitly re-normalized.
+
+    This corresponds to a statistical model:
+        \[
+            y_i  + \epsilon_i = \rho y_m(x_i, \alpha) + \epsilon_i + \dots
+        \]
+
+    where $\rho$ is a free parameter corresponding to the multiplicative
+    normalization factor. This corresponds to the Kennedy & O'Hagan
+    (2001) treatment of normalization of model output in in 'Bayesian
+    calibration of computer models'. Here the normalization is not
+    associated with the data, but is a latent parameter which scales the
+    model output to best fit the data.
+
+    This should not be confused with `UnknownDataNormalizationModel`, in
+    which the normalization of the data is a free parameter.
+
+    In fact, the confusion between them is related to Peelle's Pertinent
+    Puzzle, or D'Agostin bias.
     """
 
     def __init__(self):
