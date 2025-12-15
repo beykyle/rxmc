@@ -84,6 +84,7 @@ def run_joint(args, pool, size=1):
         f"Starting production sampling for {args.steps} steps on {args.chains} chains "
         f"on {size - 1} MPI ranks.\n"
     )
+    sys.stdout.flush()
 
     t0 = time()
     for _ in sampler.sample(p0, iterations=args.steps):
@@ -104,6 +105,7 @@ def run_joint(args, pool, size=1):
                 f"Step {sampler.iteration}: mean autocorr time = {np.mean(tau):.1f} "
                 f"steps"
             )
+        sys.stdout.flush()
         old_tau = tau
         dt = time() - t0
 
