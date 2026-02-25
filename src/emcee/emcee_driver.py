@@ -29,6 +29,7 @@ def parse_args():
     parser.add_argument("--serial-timing-test", action="store_true")
     parser.add_argument("--MPI-timing-test", action="store_true")
     parser.add_argument("--step-size", type=float, default=2.0)
+    parser.add_argument("--rtol", type=float, default=0.01)
     return parser.parse_args()
 
 
@@ -96,7 +97,7 @@ def run_joint(args, pool, size=1):
         index += 1
 
         converged = np.all(tau * 100 < sampler.iteration)
-        converged &= np.all(np.abs(old_tau - tau) / tau < 0.01)
+        converged &= np.all(np.abs(old_tau - tau) / tau < args.rtol)
         if converged:
             print(f"Chains converged after {sampler.iteration} steps")
             break
