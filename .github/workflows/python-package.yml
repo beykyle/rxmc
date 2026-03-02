@@ -64,7 +64,7 @@ jobs:
       run: |
         pytest -v 
 
-#    - name: run jupyter notebook tests
-#      run: |
-#        pip install -r examples/requirements.txt
-#        pytest --nbval examples/*.ipynb -v
+    - name: run jupyter notebook tests
+      run: |
+        pip install -r examples/requirements.txt
+        pytest --nbval examples/ -v
