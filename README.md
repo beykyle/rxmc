@@ -1,3 +1,6 @@
+[![Python package](https://github.com/beykyle/rxmc/actions/workflows/python-package.yml/badge.svg)](https://github.com/beykyle/rxmc/actions/workflows/python-package.yml)
+
+
 # RxMC
 Bayesian calibration of reaction models, with flexible and composable models for the likelihood and body of evidence.
 - curate the corpus of experimental constraints (e.g. using [`exfor_tools`](https://github.com/beykyle/exfor_tools))
