@@ -52,11 +52,44 @@ class Sampler:
         self.logp_chain = np.empty((0,))
         self.state = np.atleast_1d(starting_location)
 
+        # construction time checks
         _validate_object(
             prior,
             "prior",
             required_methods=["logpdf"],
         )
+
+        self._validate_prior()
+
+        if self.starting_location.shape != (len(self.params),):
+            raise ValueError(
+                f"starting_location must be a 1D array of length {len(self.params)}, "
+                f"but got shape {self.starting_location.shape}"
+            )
+
+    def _validate_prior(self):
+        n = len(self.params)
+
+        # Construct a dummy 1D test input of correct size
+        test_input = np.zeros(n)
+
+        try:
+            result = self.prior.logpdf(test_input)
+        except Exception as e:
+            raise TypeError(f"prior.logpdf must accept a 1D array of length {n}") from e
+
+        result = np.asarray(result)
+
+        # Enforce scalar output
+        if result.shape not in [(), (1,)]:
+            raise ValueError(
+                f"prior.logpdf must return a scalar for input shape ({n},), "
+                f"but returned shape {result.shape}"
+            )
+
+        # Optional: enforce numeric type
+        if not np.issubdtype(result.dtype, np.number):
+            raise TypeError("prior.logpdf must return a numeric scalar")
 
     def record_batch(
         self, n_steps: int, n_accepted: int, chain: np.ndarray, logp_chain: np.ndarray
@@ -189,6 +222,27 @@ class MetropolisHastingsSampler(Sampler):
                 "The proposal must be a callable object that takes in a "
                 "parameter vector and an rng returns a proposed parameter"
                 " vector."
+            )
+
+    def _validate_proposal(self):
+        n = len(self.params)
+
+        # Construct a dummy 1D test input of correct size
+        test_input = np.zeros(n)
+        rng = np.random.default_rng()
+
+        try:
+            result = self.proposal(test_input, rng)
+        except Exception as e:
+            raise TypeError(
+                "proposal must be callable and accept a parameter vector and an rng"
+            ) from e
+
+        result = np.asarray(result)
+
+        if result.shape != (n,):
+            raise ValueError(
+                f"proposal must return a 1D array of length {n}, but returned shape {result.shape}"
             )
 
 

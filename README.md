@@ -10,13 +10,14 @@ An example of this code in use is in the development of the [East Lansing Model]
 
 Check out the [`examples/` directory](https://github.com/beykyle/rxmc/blob/main/examples/).
 
-## documentation
-- TBD
 
 ## installation
 ### pypi
 
-- TBD
+```
+pip install rxmc
+```
+
 
 ### for development
 ```bash
@@ -70,11 +71,23 @@ This will require that your current python environment satisfies `requirements.t
 ## test
 
 ```
-python -m unittest discover ./test
+pytest
 ```
+
+The examples and demos also serve as tests:
+
+```
+pip install -r examples/requirements.txt
+pytest --nbmake examples/
+```
+
 ## examples, demos and tutorials
 
-check out the [`examples/` directory](https://github.com/beykyle/rxmc/blob/main/examples/)
+check out the [`examples/` directory](https://github.com/beykyle/rxmc/blob/main/examples/). First install example specific dependencies:
+
+```
+pip install -r examples/requirements.txt
+```
 
 In particular, the following notebooks are useful for getting started with `rxmc`: 
 - [`examples/linear_calibration_demo.ipynb`](https://github.com/beykyle/rxmc/blob/main/examples/linear_calibration_demo.ipynb) for an illustrative example of fitting a line to data, which serves as the basic `rxmc` tutorial.

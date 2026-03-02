@@ -1,0 +1,6 @@
+matplotlib
+corner
+nbmake
+nbval
+pytest
+

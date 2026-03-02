@@ -319,7 +319,7 @@ class CalibrationConfig:
         float
             Log posterior probability for the likelihood model sector.
         """
-        return self.evidence.constraints[lm_index].marginal_log_likelihood(
+        return self.evidence.constraints[lm_index].conditional_log_likelihood(
             ym, *x_lm
         ) + self.likelihood_configs[lm_index].prior.logpdf(x_lm)
 
