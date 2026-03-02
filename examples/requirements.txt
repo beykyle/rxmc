@@ -3,4 +3,7 @@ corner
 nbmake
 nbval
 pytest
+dill
+emcee
+scipy
 
