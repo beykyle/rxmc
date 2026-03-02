@@ -13,11 +13,21 @@ Check out the [`examples/` directory](https://github.com/beykyle/rxmc/blob/main/
 
 
 ## installation
+
+
 ### pypi
 
 ```
 pip install rxmc
 ```
+
+To also install the command line interface:
+
+```
+pip install rxm[cli]
+```
+
+The use of the CLI is demonstrated in `examples/rxmc_with_emcee_sampler/`.
 
 
 ### for development
