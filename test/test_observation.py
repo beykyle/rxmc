@@ -159,6 +159,7 @@ class TestObservation(unittest.TestCase):
             observation.residual(ym), expected_residual
         )
 
+
 class TestFixedCovarianceObservation(unittest.TestCase):
 
     def test_fixed_covariance_initialization(self):
