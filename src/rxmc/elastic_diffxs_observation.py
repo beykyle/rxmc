@@ -5,7 +5,7 @@ import numpy as np
 from exfor_tools.distribution import Distribution
 from pint import UnitRegistry
 
-from .observation import FixedCovarianceObservation, Observation
+from .observation import Observation
 from .observation_from_measurement import check_angle_grid, set_up_observation
 
 # Create a unit registry
@@ -128,9 +128,6 @@ class ElasticDifferentialXSObservation:
 
     def residual(self, ym):
         return self._obs.residual(ym)
-
-    def num_pts_within_interval(self, interval):
-        return self._obs.num_pts_within_interval(interval)
 
     def calculate_normalization(self, measurement):
         # Determine the xs_unit based on self.quantity

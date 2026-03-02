@@ -145,9 +145,9 @@ class Walker:
             # model whose parameters we're sampling, rather than the
             # whole evidence
             def log_posterior_lm(x):
-                return sampler.prior.logpdf(x) + constraint.marginal_log_likelihood(
-                    ym, x
-                )
+                return np.sum(
+                    sampler.prior.logpdf(x)
+                ) + constraint.conditional_log_likelihood(ym, x)
 
             # get the starting location for this likelihood model
             x0 = starting_locations[i]
@@ -182,10 +182,14 @@ class Walker:
         float
             The log-prior probability.
         """
-        return self.model_sampler.prior.logpdf(model_params) + sum(
-            lm.prior.logpdf(likelihood_params[i])
+        x = np.sum(self.model_sampler.prior.logpdf(np.atleast_1d(model_params)))
+
+        y = sum(
+            np.sum(lm.prior.logpdf(np.atleast_1d(likelihood_params[i])))
             for i, lm in enumerate(self.likelihood_samplers)
         )
+
+        return float(x + y)
 
     def walk(
         self,
@@ -253,7 +257,6 @@ class Walker:
 
         # do real walk
         for i, steps_in_batch in enumerate(batches):
-
             # Gibb's sample physical model parameters
             self.run_model_batch(
                 steps_in_batch,

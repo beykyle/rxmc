@@ -159,24 +159,6 @@ class TestObservation(unittest.TestCase):
             observation.residual(ym), expected_residual
         )
 
-    def test_num_pts_within_interval(self):
-        x = np.array([1, 2, 3, 4])
-        y = np.array([10, 12, 14, 16])
-        ylow = np.array([9, 11, 13, 15])
-        yhigh = np.array([11, 13, 15, 17])
-        observation = Observation(x, y)
-        num_pts = observation.num_pts_within_interval(ylow, yhigh)
-        self.assertEqual(num_pts, 4)
-
-    def test_num_pts_within_interval_out(self):
-        x = np.array([1, 2, 3, 4])
-        y = np.array([10, 15, 14, -12])
-        ylow = np.array([9, 11, 13, 15])
-        yhigh = np.array([11, 13, 15, 17])
-        observation = Observation(x, y)
-        num_pts = observation.num_pts_within_interval(ylow, yhigh)
-        self.assertEqual(num_pts, 2)
-
 
 class TestFixedCovarianceObservation(unittest.TestCase):
 

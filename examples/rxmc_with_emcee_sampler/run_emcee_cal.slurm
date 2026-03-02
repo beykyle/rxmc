@@ -25,6 +25,6 @@ srun -n $SLURM_NTASKS /usr/bin/time python3 ./emcee_driver.py \
     --input ./rxmc_poly_demo_conf.pkl \
     --output $OUTPUT_DIR \
     --chains 128  \
-    --steps 2000 \
+    --steps 20000 \
     --batch-size 100 \
     --step-size 2.0

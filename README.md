@@ -1,22 +1,34 @@
-# rxmc
-Bayesian calibration of reaction models with Markov-Chain Monte Carlo, with flexible and composable models for the likelihood and body of evidence.
+[![Python package](https://github.com/beykyle/rxmc/actions/workflows/python-package.yml/badge.svg)](https://github.com/beykyle/rxmc/actions/workflows/python-package.yml)
+
+
+# RxMC
+Bayesian calibration of reaction models, with flexible and composable models for the likelihood and body of evidence.
 - curate the corpus of experimental constraints (e.g. using [`exfor_tools`](https://github.com/beykyle/exfor_tools))
 - efficiently calculate your model's corresponding predictions for these observables using [`jitR`](https://github.com/beykyle/jitr)
 - choose from a variety of likelihood models, or extend the basic [`LikelihoodModel`](https://github.com/beykyle/rxmc/blob/main/src/rxmc/likelihood_model.py) class to implement your own.
-- package the constraints, physical model (and solver), and likelihood model together in a [`Evidence`](https://github.com/beykyle/rxmc/blob/main/src/rxmc/evidence.py) object which provides the likelihood of a given model parameter, for use in Bayesian calibration 
-- run Bayesian calibration using a [`Walker`](https://github.com/beykyle/rxmc/blob/main/src/rxmc/walker.py)
-
-An example of this code in use is in the development of the [East Lansing Model](https://github.com/beykyle/elm)
+- package the constraints, physics model, solver, and likelihood model together in a [`Evidence`](https://github.com/beykyle/rxmc/blob/main/src/rxmc/evidence.py) object which provides the likelihood of a given model parameter, for use in Bayesian calibration 
+- run Bayesian calibration using a [`Walker`](https://github.com/beykyle/rxmc/blob/main/src/rxmc/walker.py), or using a 3rd party MCMC sampler like [emcee](https://emcee.readthedocs.io/en/stable/user/sampler/).
 
 Check out the [`examples/` directory](https://github.com/beykyle/rxmc/blob/main/examples/).
 
-## documentation
-- TBD
 
 ## installation
+
+
 ### pypi
 
-- TBD
+```
+pip install rxmc
+```
+
+To also install the command line interface:
+
+```
+pip install rxm[cli]
+```
+
+The use of the CLI is demonstrated in `examples/rxmc_with_emcee_sampler/`.
+
 
 ### for development
 ```bash
@@ -70,18 +82,24 @@ This will require that your current python environment satisfies `requirements.t
 ## test
 
 ```
-python -m unittest discover ./test
+pytest
 ```
+
+The examples and demos also serve as tests:
+
+```
+pip install -r examples/requirements.txt
+pytest --nbmake examples/
+```
+
 ## examples, demos and tutorials
 
-check out the [`examples/` directory](https://github.com/beykyle/rxmc/blob/main/examples/)
+check out the [`examples/` directory](https://github.com/beykyle/rxmc/blob/main/examples/). First install example specific dependencies:
+
+```
+pip install -r examples/requirements.txt
+```
 
 In particular, the following notebooks are useful for getting started with `rxmc`: 
 - [`examples/linear_calibration_demo.ipynb`](https://github.com/beykyle/rxmc/blob/main/examples/linear_calibration_demo.ipynb) for an illustrative example of fitting a line to data, which serves as the basic `rxmc` tutorial.
-- [`systematic_err_demo.ipynb`](https://github.com/beykyle/rxmc/blob/main/examples/systematic_err_demo.ipynb) for a comparison of some of the likelihood models built into `rxmc`, and how to use them for situations involving systematic errors and multiple independent experimental constraints
 - [`examples/30s_optical_potential_calibration.ipynb`](https://github.com/beykyle/rxmc/blob/main/examples/30s_optical_potential_calibration.ipynb) for a demo of a full Bayesian calibration of a a local optical potential to real experimental data using `rxmc` and `jitR`, in only 30 seconds!
-
-## use with third party MCMC samplers
-
-The `Evidence` class in `rxmc` can be used with any MCMC sampler that requires a function which returns the log-likelihood of a given parameter set. `rxmc.config.CalibrationConfig` provides a convenient way to package together an `Evidence` object with MCMC sampler settings, and can be used to run MCMC sampling with third party samplers like [`emcee`](https://emcee.readthedocs.io/en/stable/) or [`pymc`](https://www.pymc.io/). A fully fledged example of setting up an inference problem
-with `rxmc`, and then using an `emcee` `EnsembleSampler` to sample from the posterior in a massively parallel MPI approach can be found in [`examples/emcee/`](https://github.com/beykyle/rxmc/blob/main/examples/emcee/). 

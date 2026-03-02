@@ -1,0 +1,10 @@
+emcee>=3.0.0
+mpi4py>=4.0
+numpy<=2.3
+pandas>=2.2
+scipy>=1.15
+pint>=0.2
+jitr>=2.6
+exfor-tools>=0.4
+dill
+schwimmbad

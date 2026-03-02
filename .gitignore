@@ -1,5 +1,6 @@
 #slurm
 *.out
+*.slurm
 
 # data
 *.h5

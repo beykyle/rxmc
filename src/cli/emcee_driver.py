@@ -4,10 +4,23 @@ import sys
 from pathlib import Path
 from time import time
 
-import emcee
-import mpi4py.MPI as MPI
 import numpy as np
-from schwimmbad import MPIPool
+
+try:
+    import emcee
+    import mpi4py.MPI as MPI
+    from schwimmbad import MPIPool
+except ImportError as e:
+    print(
+        "Required packages not found."
+        "Please install emcee, mpi4py, and schwimmbad to run this script."
+        " If you are using pip, you can install them with:\n"
+        "pip install rxmc[cli]\n"
+        "If you are installing from source, make sure to install the optional dependencies with:\n"
+        "pip install -e .\n"
+        "pip install -e .[cli]\n"
+    )
+    raise e
 
 import posterior
 
@@ -29,6 +42,7 @@ def parse_args():
     parser.add_argument("--serial-timing-test", action="store_true")
     parser.add_argument("--MPI-timing-test", action="store_true")
     parser.add_argument("--step-size", type=float, default=2.0)
+    parser.add_argument("--rtol", type=float, default=0.01)
     return parser.parse_args()
 
 
@@ -96,7 +110,7 @@ def run_joint(args, pool, size=1):
         index += 1
 
         converged = np.all(tau * 100 < sampler.iteration)
-        converged &= np.all(np.abs(old_tau - tau) / tau < 0.01)
+        converged &= np.all(np.abs(old_tau - tau) / tau < args.rtol)
         if converged:
             print(f"Chains converged after {sampler.iteration} steps")
             break

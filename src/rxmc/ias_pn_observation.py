@@ -131,9 +131,6 @@ class IsobaricAnalogPNObservation:
     def residual(self, ym):
         return self._obs.residual(ym)
 
-    def num_pts_within_interval(self, interval):
-        return self._obs.num_pts_within_interval(interval)
-
 
 def set_up_solver(
     reaction: jitr.reactions.Reaction,

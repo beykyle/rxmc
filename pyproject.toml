@@ -10,7 +10,7 @@ authors = [
 description = "Uncertainty quantification and calibration of reaction models with Markov-Chain Monte Carlo, with flexible and composable models for the likelihood and corpus of constraints"
 readme = "README.md"
 requires-python = ">=3.10"
-dynamic = ["dependencies", "version"]
+dynamic = ["dependencies", "version", "optional-dependencies"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
@@ -21,10 +21,11 @@ where = ["src"]
 
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}
+optional-dependencies = {cli = {file = ["requirements_emcee.txt"]}}
 
 [tool.setuptools_scm]
 write_to = "src/rxmc/__version__.py"
 
 # Specify the console script entry point
 [project.scripts]
-mcmc = "calibration.mcmc:main"
+emcee_driver = "rxmc.cli.emcee_driver:main"

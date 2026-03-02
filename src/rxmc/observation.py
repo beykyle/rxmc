@@ -166,44 +166,6 @@ class Observation:
         assert ym.shape == self.y.shape
         return self.y - ym
 
-    def num_pts_within_interval(
-        self,
-        ylow: np.ndarray,
-        yhigh: np.ndarray,
-        xlim=None,
-    ):
-        """
-        Returns the number of points in y that fall between ylow and yhigh,
-        useful for calculating emperical coverages
-
-        Parameters
-        ----------
-        ylow : np.ndarray, same shape as self.y
-        yhigh : np.ndarray, same shape as self.y
-        xlim : tuple, optional
-            If provided, only consider points where self.x is within
-            this range. Defaults to None, meaning all points are
-            considered.
-
-        Returns
-        -------
-        int
-            The number of points in self.y (within xlim) that fall
-            within the specified interval defined by ylow and yhigh.
-        """
-        mask = np.ones_like(self.y, dtype=bool)
-        if xlim is not None:
-            xlow, xhigh = xlim
-            mask = np.logical_and(self.x >= xlow, self.x < xhigh)
-        return int(
-            np.sum(
-                np.logical_and(
-                    self.y[mask] >= ylow[mask],
-                    self.y[mask] < yhigh[mask],
-                )
-            )
-        )
-
 
 class FixedCovarianceObservation(Observation):
     """
