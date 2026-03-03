@@ -1,3 +1,5 @@
+"""Public package exports for rxmc."""
+
 from . import physical_model
 from . import likelihood_model
 from . import evidence

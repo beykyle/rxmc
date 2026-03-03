@@ -1,3 +1,5 @@
+"""Proposal distributions for Markov chain samplers."""
+
 import numpy as np
 from scipy import stats
 
@@ -15,11 +17,18 @@ class ProposalDistribution:
     def __call__(self, x, rng):
         """
         Generate a proposed sample based on the current sample `x`.
-        Parameters:
-            x (numpy.ndarray): Current sample from the Markov chain.
-            rng (numpy.random.Generator): Random number generator instance.
-        Returns:
-            numpy.ndarray: Proposed sample.
+
+        Parameters
+        ----------
+        x : numpy.ndarray
+            Current sample from the Markov chain.
+        rng : numpy.random.Generator
+            Random number generator instance.
+
+        Returns
+        ----------
+        numpy.ndarray
+            Proposed sample.
         """
         raise NotImplementedError("This method should be overridden by subclasses")
 
@@ -33,8 +42,11 @@ class NormalProposalDistribution(ProposalDistribution):
     def __init__(self, cov):
         """
         Initialize the proposal distribution with a covariance matrix.
-        Parameters:
-            cov (numpy.ndarray): Covariance matrix for the multivariate normal distribution.
+
+        Parameters
+        ----------
+        cov : numpy.ndarray
+            Covariance matrix for the multivariate normal distribution.
         """
         self.cov = cov
 
@@ -51,8 +63,11 @@ class HalfNormalProposalDistribution(ProposalDistribution):
     def __init__(self, scale):
         """
         Initialize the proposal distribution with a scale parameter.
-        Parameters:
-            scale (float): Scale parameter for the half-normal distribution.
+
+        Parameters
+        ----------
+        scale : float
+            Scale parameter for the half-normal distribution.
         """
         self.scale = scale
 
@@ -69,8 +84,11 @@ class LogspaceNormalProposalDistribution(ProposalDistribution):
     def __init__(self, scale):
         """
         Initialize the proposal distribution with a scale parameter.
-        Parameters:
-            scale (float): Scale parameter for the log-normal distribution.
+
+        Parameters
+        ----------
+        scale : float
+            Scale parameter for the log-normal distribution.
         """
         self.scale = scale
 

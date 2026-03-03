@@ -1,3 +1,5 @@
+"""Sampling wrappers and sampler implementations."""
+
 from typing import Callable
 
 import numpy as np
@@ -24,7 +26,7 @@ class Sampler:
     ):
         """
         Initializes the Sampler with the provided parameters.
-        Parameters:
+        Parameters
         ----------
         params: list[params.Parameter]
             List of parameters to sample.
@@ -64,7 +66,7 @@ class Sampler:
         """
         Records the batch of samples and acceptance statistics.
 
-        Parameters:
+        Parameters
         ----------
         n_steps: int
             Number of steps in the batch.
@@ -94,7 +96,7 @@ class Sampler:
         sampling algorithm, updating the state and recording the chain,
         log posterior values, and acceptance statistics.
 
-        Parameters:
+        Parameters
         ----------
         n_steps: int
             Number of steps to sample.
@@ -160,7 +162,7 @@ class MetropolisHastingsSampler(Sampler):
         proposal: proposal.ProposalDistribution,
     ):
         """
-        Parameters:
+        Parameters
         ----------
         params: list[params.Parameter]
             List of parameters to sample.
@@ -208,7 +210,7 @@ class AdaptiveMetropolisSampler(Sampler):
         epsilon_fraction: float = 1e-6,
     ):
         """
-        Parameters:
+        Parameters
         ----------
         params: list[params.Parameter]
             List of parameters to sample.
@@ -278,7 +280,7 @@ class BatchedAdaptiveMetropolisSampler(Sampler):
         epsilon_fraction: float = 1e-6,
     ):
         """
-        Parameters:
+        Parameters
         ----------
         params: list[params.Parameter]
             List of parameters to sample.

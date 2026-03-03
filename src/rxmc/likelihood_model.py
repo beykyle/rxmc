@@ -1,3 +1,5 @@
+"""Likelihood model definitions used by rxmc constraints."""
+
 import numpy as np
 import scipy as sc
 
@@ -105,7 +107,7 @@ class LikelihoodModel:
         Returns the residual between the model prediction ym and
         observation.y
 
-        Parameters:
+        Parameters
         ----------
         observation : Observation
             The observation object containing the observed data.
@@ -564,7 +566,7 @@ class UnknownNormalizationModel(ParametricLikelihoodModel):
         Returns the residual between the renormalized model prediction ym and
         observation.y
 
-        Parameters:
+        Parameters
         ----------
         observation : Observation
             The observation object containing the observed data.
@@ -839,6 +841,8 @@ class StudentTLikelihoodModel(LikelihoodModel):
 def scale_covariance(
     cov: np.ndarray, observation: Observation, scale: float, divide_by_N: bool
 ) -> np.ndarray:
+    """Return covariance scaled by ``scale`` and optionally by sample count."""
+
     if divide_by_N:
         scale /= observation.n_data_pts
     return scale * cov
@@ -849,13 +853,19 @@ def mahalanobis_distance_sqr_cholesky(y, ym, cov):
     Calculate the square of the Mahalanobis distance between
     y and ym, and the log determinant of the covariance matrix.
 
-    Parameters:
-    y (array-like): The observation vector.
-    ym (array-like): The model prediction vector.
-    cov (array-like): The covariance matrix.
+    Parameters
+    ----------
+    y : array-like
+        The observation vector.
+    ym : array-like
+        The model prediction vector.
+    cov : array-like
+        The covariance matrix.
 
-    Returns:
-    tuple: Mahalanobis distance and log determinant of the covariance matrix.
+    Returns
+    ----------
+    tuple[float, float]
+        The squared Mahalanobis distance and log determinant of ``cov``.
     """
     L = sc.linalg.cholesky(cov, lower=True)
     z = sc.linalg.solve_triangular(L, y - ym, lower=True)
@@ -869,13 +879,19 @@ def log_likelihood(mahalanobis_sqr: float, log_det: float, n: int):
     r"""
     Calculate the log likelihood of a multivariate normal distribution.
 
-    Parameters:
-    mahalanobis_sqr (float): The Mahalanobis distance.
-    log_det (float): The log determinant of the covariance matrix.
-    n (int): The dimension of the data.
+    Parameters
+    ----------
+    mahalanobis_sqr : float
+        The squared Mahalanobis distance.
+    log_det : float
+        The log determinant of the covariance matrix.
+    n : int
+        The dimension of the data.
 
-    Returns:
-    float: The log likelihood value.
+    Returns
+    ----------
+    float
+        The log-likelihood value.
     """
     return -0.5 * (mahalanobis_sqr + log_det + n * np.log(2 * np.pi))
 

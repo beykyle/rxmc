@@ -1,3 +1,5 @@
+"""Physical model interfaces and built-in toy models."""
+
 import numpy as np
 
 from .observation import Observation
@@ -6,17 +8,19 @@ from .params import Parameter
 
 class PhysicalModel:
     """
-    Represents an arbitrary parameteric model $y_{model}(x;params)$, for
-    comparison to some experimental measurement $\{x_i, y(x_i)\}$ contained
-    in an Observation object
+    Represent a parametric model ``y_model(x; params)``.
+
+    The model is compared against measured data held by an
+    :class:`~rxmc.observation.Observation`.
     """
 
     def __init__(self, params: list[Parameter]):
         """
         Initialize the PhysicalModel with a list of parameters.
-        Parameters:
+
+        Parameters
         ----------
-        params: list[Parameter]
+        params : list[Parameter]
             A list of Parameter objects that define the model's parameters.
             Each Parameter should have a name and a dtype.
         """
@@ -28,10 +32,12 @@ class PhysicalModel:
         Evaluate the model at the given parameter values.
         Should be overridden by subclasses.
 
-        Parameters:
+        Parameters
         ----------
-        observation: Observation object containing x and y data.
-        params: Parameters for the model, should match the model's parameters.
+        observation : Observation
+            Observation object containing x and y data.
+        *params : tuple
+            Parameters for the model, in the same order as ``self.params``.
 
         """
         raise NotImplementedError("Subclasses must implement the evaluate method.")
@@ -42,11 +48,9 @@ class PhysicalModel:
 
 class Polynomial(PhysicalModel):
     """
-    Polynomial model for fitting, of the form:
-    \[
-        y_{model}(x; params) = \sum_{i=0}^{n} a_i x^i
-    \]
-    where $params = [a_0, a_1, ..., a_n]$.
+    Polynomial model for fitting.
+
+    The model form is ``y_model(x; params) = sum(a_i * x**i)``.
     """
 
     def __init__(self, order: int):
@@ -60,18 +64,22 @@ class Polynomial(PhysicalModel):
         """
         Evaluate the polynomial model at the given parameter values.
 
-        Parameters:
+        Parameters
         ----------
-            observation: Observation
-                Observation object containing x and y data.
-            params: tuple
-                coefficients for the polynomial
+        observation : Observation
+            Observation object containing x and y data.
+        *params : tuple
+            Coefficients for the polynomial.
 
-        Returns:
-            numpy.ndarray: Evaluated polynomial values at observation.x.
+        Returns
+        ----------
+        numpy.ndarray
+            Evaluated polynomial values at ``observation.x``.
 
-        Raises:
-            ValueError: If the number of parameters does not match the model order.
+        Raises
+        ----------
+        ValueError
+            If the number of parameters does not match the model order.
         """
         if len(params) != self.order + 1:
             raise ValueError(

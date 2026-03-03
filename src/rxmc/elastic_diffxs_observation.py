@@ -1,3 +1,5 @@
+"""Observation helpers for elastic differential cross sections."""
+
 from typing import Type
 
 import jitr
@@ -50,7 +52,7 @@ class ElasticDifferentialXSObservation:
         """
         Initialize a ReactionObservation instance.
 
-        Parameters:
+        Parameters
         ----------
         measurements : list[Distribution]
             List of measurements, each containing x, y, and associated errors.
@@ -124,15 +126,23 @@ class ElasticDifferentialXSObservation:
         self.n_data_pts = self._obs.n_data_pts
 
     def covariance(self, y):
+        """Delegate covariance computation to the wrapped observation."""
+
         return self._obs.covariance(y)
 
     def residual(self, ym):
+        """Delegate residual computation to the wrapped observation."""
+
         return self._obs.residual(ym)
 
     def num_pts_within_interval(self, interval):
+        """Delegate interval counting to the wrapped observation."""
+
         return self._obs.num_pts_within_interval(interval)
 
     def calculate_normalization(self, measurement):
+        """Compute normalization factors and output units for a measurement."""
+
         # Determine the xs_unit based on self.quantity
         xs_unit = ureg.barn / ureg.steradian
         rutherford_unit = ureg.millibarn / ureg.steradian
