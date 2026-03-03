@@ -13,6 +13,7 @@ Check out the [`examples/` directory](https://github.com/beykyle/rxmc/blob/main/
 ## documentation
 - Build locally with:
   ```bash
+  pip install -e .
   pip install -r docs/requirements.txt
   sphinx-build -b html docs docs/_build/html
   ```
