@@ -1,3 +1,5 @@
+"""Utilities to convert measurement objects into observations."""
+
 from typing import Type
 
 import jitr
@@ -124,6 +126,8 @@ def set_up_observation(
 
 
 def check_angle_grid(angles_rad: np.ndarray, name: str):
+    """Validate that ``angles_rad`` is 1D and bounded on ``[0, pi)``."""
+
     if len(angles_rad.shape) > 1:
         raise ValueError(f"{name} must be 1D, is {len(angles_rad.shape)}D")
     if angles_rad[0] < 0 or angles_rad[-1] > np.pi:

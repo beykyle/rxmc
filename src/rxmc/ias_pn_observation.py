@@ -1,3 +1,5 @@
+"""Observation helpers for (p,n) IAS data."""
+
 from typing import Type
 
 import jitr
@@ -46,7 +48,7 @@ class IsobaricAnalogPNObservation:
         """
         Initialize a Observation instance for the (p,n) IAS reaction.
 
-        Parameters:
+        Parameters
         ----------
         measurement : Distribution
             The experimental measurement data.
@@ -126,12 +128,18 @@ class IsobaricAnalogPNObservation:
         self.n_data_pts = self._obs.n_data_pts
 
     def covariance(self, y):
+        """Delegate covariance computation to the wrapped observation."""
+
         return self._obs.covariance(y)
 
     def residual(self, ym):
+        """Delegate residual computation to the wrapped observation."""
+
         return self._obs.residual(ym)
 
     def num_pts_within_interval(self, interval):
+        """Delegate interval counting to the wrapped observation."""
+
         return self._obs.num_pts_within_interval(interval)
 
 
@@ -209,6 +217,8 @@ def set_up_solver(
 
 
 def check_angle_grid(angles_rad: np.ndarray, name: str):
+    """Validate that ``angles_rad`` is 1D and bounded on ``[0, pi)``."""
+
     if len(angles_rad.shape) > 1:
         raise ValueError(f"{name} must be 1D, is {len(angles_rad.shape)}D")
     if angles_rad[0] < 0 or angles_rad[-1] > np.pi:

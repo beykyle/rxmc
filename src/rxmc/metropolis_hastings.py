@@ -1,3 +1,5 @@
+"""Metropolis-Hastings Markov chain Monte Carlo algorithm."""
+
 from typing import Callable, Tuple
 
 import numpy as np
@@ -13,24 +15,24 @@ def metropolis_hastings(
     """
     Performs Metropolis-Hastings MCMC sampling.
 
-    Parameters:
-        x0 : np.ndarray
-            Initial parameter values for the chain.
-        n_steps : int
-            Number of steps/samples to generate.
-        log_posterior : Callable[[np.ndarray], float]
-            Function to compute the log posterior probability of
-            the parameters.
-        rng : np.random.Generator
-            Random number generator for reproducibility.
-        propose : Callable[[np.ndarray, np.random.Generator], np.ndarray]
-            Function to propose new parameter values.
-    Returns:
-        tuple:
-            - numpy.ndarray: The chain of samples generated.
-            - numpy.ndarray: Log posteriors corresponding to the samples.
-            - int: The number of accepted proposals.
+    Parameters
+    ----------
+    x0 : np.ndarray
+        Initial parameter values for the chain.
+    n_steps : int
+        Number of steps/samples to generate.
+    log_posterior : Callable[[np.ndarray], float]
+        Function to compute the log posterior probability.
+    rng : np.random.Generator
+        Random number generator for reproducibility.
+    propose : Callable[[np.ndarray, np.random.Generator], np.ndarray]
+        Function to propose new parameter values.
 
+    Returns
+    ----------
+    tuple[np.ndarray, np.ndarray, int]
+        The generated chain, corresponding log-posterior values,
+        and count of accepted proposals.
     """
     chain = np.zeros((n_steps, x0.size))
     logp_chain = np.zeros((n_steps,))

@@ -1,3 +1,5 @@
+"""Physical models for elastic differential cross sections."""
+
 from typing import Callable
 
 import jitr
@@ -26,7 +28,7 @@ class ElasticDifferentialXSModel(PhysicalModel):
         """
         Initialize the ElasticDifferentialXSModel with the interactions and
         a function to calculate the subparameters.
-        Parameters:
+        Parameters
         ----------
         quantity : str
             The type of quantity to be calculated (e.g., "dXS/dA",
@@ -75,15 +77,15 @@ class ElasticDifferentialXSModel(PhysicalModel):
         """
         Evaluate the model at the given parameters.
 
-        Parameters:
+        Parameters
         ----------
         observation : ElasticDifferentialXSObservation
             The observation containing the reaction data and workspace.
         params : tuple
             The parameters of the physical model.
 
-        Returns:
-        -------
+        Returns
+        ----------
         np.ndarray
             An array, containing the evaluated differential data on the
             angular grid corresponding to the
@@ -109,15 +111,15 @@ class ElasticDifferentialXSModel(PhysicalModel):
         """
         Visualize the model at the given parameters.
 
-        Parameters:
+        Parameters
         ----------
         observation : ElasticDifferentialXSObservation
             The observation containing the reaction data and workspace.
         params : tuple
             The parameters of the physical model.
 
-        Returns:
-        -------
+        Returns
+        ----------
         np.ndarray
             An array, containing the evaluated differential data on the
             angular grid corresponding to the

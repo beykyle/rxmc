@@ -1,3 +1,5 @@
+"""Aggregate evidence across multiple independent constraints."""
+
 import numpy as np
 
 from .constraint import Constraint

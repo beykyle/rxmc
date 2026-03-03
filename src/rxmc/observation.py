@@ -1,3 +1,5 @@
+"""Observation data containers and covariance helpers."""
+
 from collections.abc import Iterable
 
 import numpy as np
@@ -10,7 +12,7 @@ class Observation:
     and offset of all or some of the data points of the the dependent
     variable y.
 
-    Attributes:
+    Attributes
     ----------
     x : np.ndarray
         The independent variable data.
@@ -163,6 +165,8 @@ class Observation:
         )
 
     def residual(self, ym: np.ndarray):
+        """Return residuals ``y - ym`` for the observation."""
+
         assert ym.shape == self.y.shape
         return self.y - ym
 
@@ -272,8 +276,12 @@ class FixedCovarianceObservation(Observation):
 
 
 def is_array_like(obj):
+    """Return ``True`` when ``obj`` is iterable but not a string/bytes."""
+
     return isinstance(obj, Iterable) and not isinstance(obj, (str, bytes))
 
 
 def is_scalar_like(obj):
+    """Return ``True`` when ``obj`` behaves like a scalar numeric value."""
+
     return np.isscalar(obj) or isinstance(obj, (int, float, complex))

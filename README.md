@@ -11,7 +11,14 @@ An example of this code in use is in the development of the [East Lansing Model]
 Check out the [`examples/` directory](https://github.com/beykyle/rxmc/blob/main/examples/).
 
 ## documentation
-- TBD
+- Build locally with:
+  ```bash
+  pip install -e .
+  pip install -r docs/requirements.txt
+  sphinx-build -b html docs docs/_build/html
+  ```
+- API docs are generated automatically from docstrings via Sphinx autodoc.
+- Documentation is published to GitHub Pages by `.github/workflows/docs.yml`.
 
 ## installation
 ### pypi

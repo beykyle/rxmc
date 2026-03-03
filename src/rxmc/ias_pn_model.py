@@ -1,3 +1,5 @@
+"""Physical models for (p,n) IAS differential cross sections."""
+
 from typing import Callable
 
 import jitr
@@ -38,7 +40,7 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
         model_name: str = None,
     ):
         """
-        Parameters:
+        Parameters
         ----------
         U_p_coulomb : Callable
             Function to calculate the proton Coulomb potential.
@@ -79,7 +81,7 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
         """
         Evaluate the model at the given parameters.
 
-        Parameters:
+        Parameters
         ----------
         observation : IsobaricAnalogPNObservation
             The observation containing the workspace and data.
@@ -87,8 +89,8 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
             The parameters to evaluate the model at, in the order defined
             by the `calculate_params` function.
 
-        Returns:
-        -------
+        Returns
+        ----------
         np.ndarray
             An array, containing the evaluated differential data on the
             angular grid corresponding to the
@@ -127,7 +129,7 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
         """
         Visualize the model at the given parameters.
 
-        Parameters:
+        Parameters
         ----------
         observation : IsobaricAnalogPNObservation
             The observation containing the workspace and data.
@@ -135,8 +137,8 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
             The parameters to evaluate the model at, in the order defined
             by the `calculate_params` function.
 
-        Returns:
-        -------
+        Returns
+        ----------
         np.ndarray
             An array, containing the evaluated differential data on the
             angular grid corresponding to the

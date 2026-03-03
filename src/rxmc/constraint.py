@@ -1,3 +1,5 @@
+"""Constraint composition of observations, models, and likelihoods."""
+
 import numpy as np
 
 from .likelihood_model import LikelihoodModel
@@ -28,7 +30,7 @@ class Constraint:
         """
         Initialize the Constraint with some Observations, a PhysicalModel, and
 
-        Parameters:
+        Parameters
         ----------
         observations: list[Observation]
             The observed data that the model will attempt to reproduce.
@@ -47,7 +49,7 @@ class Constraint:
         """
         Compute the model output for each observation, given model_params.
 
-        Parameters:
+        Parameters
         ----------
         model_params : tuple
             The parameters of the physical model
@@ -59,7 +61,7 @@ class Constraint:
         Calculate the log probability density function that the
         model predictions, given the parameters, reproduce the observed data.
 
-        Parameters:
+        Parameters
         ----------
         model_params : tuple
             The parameters of the physical model
@@ -67,8 +69,8 @@ class Constraint:
             Additional parameters for the likelihood model, if any.
 
 
-        Returns:
-        -------
+        Returns
+        ----------
         float
             The log probability density of the observation given the
             parameters.
@@ -86,7 +88,7 @@ class Constraint:
         likelihood_params provided, reproduces the observations in the
         constraints.
 
-        Parameters:
+        Parameters
         ----------
         ym : list
             The model predictions for the observed data.
@@ -94,8 +96,8 @@ class Constraint:
             Additional parameters for the likelihood model, if any.
 
 
-        Returns:
-        -------
+        Returns
+        ----------
         float
             The log probability density of the observation given the
             parameters.
@@ -110,15 +112,15 @@ class Constraint:
         Calculate the chi-squared statistic (or Mahalanobis distance) between
         the model prediction, given the parameters, and the observed data.
 
-        Parameters:
+        Parameters
         ----------
         model_params : tuple
             The parameters of the physical model
         likelihood_params : tuple, optional
             Additional parameters for the likelihood model, if any.
 
-        Returns:
-        -------
+        Returns
+        ----------
         float
             The chi-squared statistic.
         """
@@ -134,13 +136,13 @@ class Constraint:
         Generate predictions for each observation using the physical model
         with the provided parameters.
 
-        Parameters:
+        Parameters
         ----------
         *model_params : tuple
             The parameters of the physical model.
 
-        Returns:
-        -------
+        Returns
+        ----------
         list[np.ndarray]
             The predicted values for each observation.
         """
@@ -153,7 +155,7 @@ class Constraint:
         Count the number of points within the specified interval for each
         observation.
 
-        Parameters:
+        Parameters
         ----------
         ylow : list[np.ndarray]
             Lower bounds of the intervals for each observation.
@@ -162,8 +164,8 @@ class Constraint:
         xlim : tuple, optional
             Limits for the x-axis, if applicable.
 
-        Returns:
-        -------
+        Returns
+        ----------
         int
             The total number of points within the specified intervals across
             all observations.
@@ -181,7 +183,7 @@ class Constraint:
         specified intervals for each observation, as a fraction of the total
         number of data points.
 
-        Parameters:
+        Parameters
         ----------
         ylow : list[np.ndarray]
             Lower bounds of the intervals for each observation.
@@ -190,8 +192,8 @@ class Constraint:
         xlim : tuple, optional
             Limits for the x-axis, if applicable.
 
-        Returns:
-        -------
+        Returns
+        ----------
         float
             The empirical coverage across all observations.
         """

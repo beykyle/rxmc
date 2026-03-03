@@ -1,3 +1,5 @@
+"""Likelihood models with correlated discrepancy terms."""
+
 import numpy as np
 from sklearn.gaussian_process.kernels import Kernel
 
@@ -56,6 +58,8 @@ class SklearnKernelGPDiscrepancyModel(ParametricLikelihoodModel):
         return k(X)  # (N,N)
 
     def covariance(self, observation: Observation, ym: np.ndarray, *kernel_theta):
+        """Return covariance including observational and discrepancy components."""
+
         if len(kernel_theta) != self.n_params:
             raise ValueError(
                 f"Expected {self.n_params} kernel hyperparameters, got {len(kernel_theta)}"
@@ -70,4 +74,3 @@ class SklearnKernelGPDiscrepancyModel(ParametricLikelihoodModel):
             cov = cov + self.jitter * np.eye(observation.n_data_pts)
 
         return cov
-

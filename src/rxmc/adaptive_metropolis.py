@@ -1,3 +1,5 @@
+"""Adaptive Metropolis sampling algorithms."""
+
 import numpy as np
 from typing import Callable, Tuple
 
@@ -14,8 +16,8 @@ def adaptive_metropolis(
 ) -> Tuple[np.ndarray, np.ndarray, int]:
     """
     Adaptive Metropolis algorithm with a sliding window covariance adaptation.
-        Parameters:
-        ---------
+        Parameters
+        ----------
         x0 : np.ndarray
             Initial point in the parameter space.
         n_steps : int
