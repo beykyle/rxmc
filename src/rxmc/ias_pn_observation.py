@@ -173,8 +173,8 @@ def set_up_solver(
 
     k = kinematics_entrance.k
     interaction_range_fm = jitr.utils.interaction_range(reaction.target.A)
-    a = interaction_range_fm * k + 2 * np.pi
-    channel_radius_fm = a / k
+    channel_radius_fm = max(30, interaction_range_fm + 8)
+    a = channel_radius_fm * k
     Ns = jitr.utils.suggested_basis_size(a)
     core_solver = jitr.rmatrix.Solver(Ns)
 

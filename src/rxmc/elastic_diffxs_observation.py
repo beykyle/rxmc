@@ -5,7 +5,7 @@ import numpy as np
 from exfor_tools.distribution import Distribution
 from pint import UnitRegistry
 
-from .observation import FixedCovarianceObservation, Observation
+from .observation import Observation
 from .observation_from_measurement import check_angle_grid, set_up_observation
 
 # Create a unit registry
@@ -214,8 +214,8 @@ def set_up_solver(
     """
     kinematics = reaction.kinematics(Elab)
     interaction_range_fm = jitr.utils.interaction_range(reaction.target.A)
-    a = interaction_range_fm * kinematics.k + 2 * np.pi
-    channel_radius_fm = a / kinematics.k
+    channel_radius_fm = max(30, interaction_range_fm + 8)
+    a = kinematics.k * channel_radius_fm
     Ns = jitr.utils.suggested_basis_size(a)
     core_solver = jitr.rmatrix.Solver(Ns)
 
