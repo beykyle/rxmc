@@ -43,6 +43,8 @@ class ElasticDifferentialXSObservation:
         reaction: jitr.reactions.Reaction,
         quantity: str,
         lmax: int = DEFAULT_LMAX,
+        wavelengths_beyond_range=5.0,
+        zeros_per_node=5,
         angles_vis: np.ndarray = np.linspace(0.01, 180, 100),
         ObservationClass: Type[Observation] = Observation,
         error_kwargs: dict = None,
@@ -61,6 +63,10 @@ class ElasticDifferentialXSObservation:
             "dXS/dRuth", "Ay").
         lmax: int
             Maximum angular momentum, defaults to 20.
+        wavelengths_beyond_range: float
+            Number of wavelengths beyond the interaction range to set the channel radius.
+        zeros_per_node: int
+            Number of zeros of the basis functions per node in the R-matrix solver.
         angles_vis: np.ndarray
             Array of angles in degrees for visualization.
         ObservationClass: Type[Observation]
@@ -98,6 +104,8 @@ class ElasticDifferentialXSObservation:
             angle_rad_constraint=angles_rad_constraint,
             angle_rad_vis=angles_rad_vis,
             lmax=self.lmax,
+            wavelengths_beyond_range=wavelengths_beyond_range,
+            zeros_per_node=zeros_per_node,
         )
         self.constraint_workspace = constraint_ws
         self.visualization_workspace = vis_ws
@@ -187,9 +195,11 @@ class ElasticDifferentialXSObservation:
 def set_up_solver(
     reaction: jitr.reactions.Reaction,
     Elab: float,
-    angle_rad_constraint: np.array,
-    angle_rad_vis: np.array,
+    angle_rad_constraint: np.ndarray,
+    angle_rad_vis: np.ndarray,
     lmax: int,
+    wavelengths_beyond_range: float = 5.0,
+    zeros_per_node: int = 5,
 ):
     """
     Set up the solver for the reaction.
@@ -206,18 +216,24 @@ def set_up_solver(
         Angles to visualize on (rad)
     lmax : int
         Maximum angular momentum.
-
+    wavelengths_beyond_range : float
+        Number of wavelengths beyond the interaction
+        range to set the channel radius.
+    zeros_per_node : int
+        Number of zeros of the basis functions per
+        node in the R-matrix solver.
     Returns
     -------
     tuple
         constraint and visualization workspaces.
     """
     kinematics = reaction.kinematics(Elab)
+    k = kinematics.k
     interaction_range_fm = jitr.utils.interaction_range(reaction.target.A)
-    channel_radius_fm = interaction_range_fm + 12
-    a = kinematics.k * channel_radius_fm
-    Ns = jitr.utils.suggested_basis_size(a)
-    core_solver = jitr.rmatrix.Solver(Ns)
+    a = k * interaction_range_fm + wavelengths_beyond_range * 2 * np.pi
+    channel_radius_fm = a / k
+    N = jitr.utils.suggested_basis_size(a, zeros_per_node)
+    core_solver = jitr.rmatrix.Solver(N)
 
     integral_ws = jitr.xs.elastic.IntegralWorkspace(
         reaction=reaction,
