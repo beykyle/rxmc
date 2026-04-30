@@ -48,6 +48,7 @@ class ElasticDifferentialXSObservation:
         angles_vis: np.ndarray = np.linspace(0.01, 180, 100),
         ObservationClass: Type[Observation] = Observation,
         error_kwargs: dict = None,
+        compound_correction: np.ndarray = None,
     ):
         """
         Initialize a ReactionObservation instance.
@@ -77,6 +78,10 @@ class ElasticDifferentialXSObservation:
             can supply `FixedCovarianceObservation` instead here.
         error_kwargs: dict
             Additional keyword arguments for error handling.
+        compound_correction: np.ndarray
+            Optional array of the compound contribution to the differential
+            cross section in mb/sr to be added to the calculated cross section
+            before comparing to data.
         """
         if not issubclass(ObservationClass, Observation):
             raise ValueError("ObservationClass must be a subclass of Observation")
@@ -85,6 +90,7 @@ class ElasticDifferentialXSObservation:
         self.lmax = lmax
         self.subentry = measurement.subentry
         self.angle_units = ureg.radian
+        self.compound_correction = compound_correction
 
         self.angles_vis = angles_vis
         angles_rad_vis = np.deg2rad(angles_vis)

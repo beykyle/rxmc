@@ -104,6 +104,13 @@ class ElasticDifferentialXSModel(PhysicalModel):
             args_central=central_params,
             args_spin_orbit=spin_orbit_params,
         )
+        if observation.compound_correction is not None:
+            if observation.quantity not in ["dXS/dA", "dXS/dRuth"]:
+                raise ValueError(
+                    "Compound correction can only be applied to dXS/dA and dXS/dRuth."
+                )
+            xs.dsdo += observation.compound_correction
+            xs.t += 2 * np.pi * np.trapz(observation.compound_correction, ws.angles)
         return self.extractor(xs, ws)
 
     def visualizable_model_prediction(
@@ -128,6 +135,11 @@ class ElasticDifferentialXSModel(PhysicalModel):
             angular grid corresponding to the
             `observation.visualization_workspace`.
         """
+        if observation.quantity != self.quantity:
+            raise ValueError(
+                f"Observation quantity {observation.quantity} does not match "
+                f"model quantity {self.quantity}."
+            )
         ws = observation.visualization_workspace
         central_params, spin_orbit_params = self.calculate_interaction_from_params(
             ws, *params
@@ -138,6 +150,18 @@ class ElasticDifferentialXSModel(PhysicalModel):
             args_central=central_params,
             args_spin_orbit=spin_orbit_params,
         )
+        if observation.compound_correction is not None:
+            cn = np.interp(
+                ws.angles,
+                observation.constraint_workspace.angles,
+                observation.compound_correction,
+            )
+            if observation.quantity not in ["dXS/dA", "dXS/dRuth"]:
+                raise ValueError(
+                    "Compound correction can only be applied to dXS/dA and dXS/dRuth."
+                )
+            xs.dsdo += cn
+            xs.t += 2 * np.pi * np.trapz(cn, ws.angles)
         return self.extractor(xs, ws)
 
 
