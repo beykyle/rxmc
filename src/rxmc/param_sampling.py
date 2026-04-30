@@ -51,6 +51,7 @@ class Sampler:
         self.chain = np.empty((0, starting_location.size))
         self.logp_chain = np.empty((0,))
         self.state = np.atleast_1d(starting_location)
+        self.bounds = np.array([param.bounds for param in params])
 
         _validate_object(
             prior,
@@ -111,6 +112,7 @@ class Sampler:
         """
         chain, logp_chain, accepted = self.sampling_algorithm(
             starting_location,
+            self.bounds,
             n_steps,
             log_posterior,
             rng,
@@ -250,6 +252,7 @@ class AdaptiveMetropolisSampler(Sampler):
         """
         chain, logp_chain, accepted = self.sampling_algorithm(
             starting_location,
+            self.bounds,
             n_steps,
             log_posterior,
             rng,
@@ -318,6 +321,7 @@ class BatchedAdaptiveMetropolisSampler(Sampler):
         """
         chain, logp_chain, accepted = self.sampling_algorithm(
             starting_location,
+            self.bounds,
             n_steps,
             log_posterior,
             rng,

@@ -5,6 +5,7 @@ import numpy as np
 
 def metropolis_hastings(
     x0: np.ndarray,
+    bounds: np.ndarray,
     n_steps: int,
     log_posterior: Callable[[np.ndarray], float],
     rng: np.random.Generator,
@@ -16,6 +17,9 @@ def metropolis_hastings(
     Parameters:
         x0 : np.ndarray
             Initial parameter values for the chain.
+        bounds : np.ndarray
+            Bounds for the parameters, shape (n_params, 2) where each row is
+            [lower, upper].
         n_steps : int
             Number of steps/samples to generate.
         log_posterior : Callable[[np.ndarray], float]
@@ -39,6 +43,11 @@ def metropolis_hastings(
     x = x0
     for i in range(n_steps):
         x_new = propose(x, rng)
+        if np.any(x_new < bounds[:, 0]) or np.any(x_new > bounds[:, 1]):
+            # reject if out of bounds
+            chain[i, ...] = x
+            logp_chain[i] = logp
+            continue
         logp_new = log_posterior(x_new)
         # use sum log exp trick
         # https://gregorygundersen.com/blog/2020/02/09/log-sum-exp/
