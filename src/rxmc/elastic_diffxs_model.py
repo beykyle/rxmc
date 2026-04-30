@@ -89,6 +89,11 @@ class ElasticDifferentialXSModel(PhysicalModel):
             angular grid corresponding to the
             `observation.constraint_workspace`.
         """
+        if observation.quantity != self.quantity:
+            raise ValueError(
+                f"Observation quantity {observation.quantity} does not match "
+                f"model quantity {self.quantity}."
+            )
         ws = observation.constraint_workspace
         central_params, spin_orbit_params = self.calculate_interaction_from_params(
             ws, *params
