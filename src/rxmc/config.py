@@ -1,8 +1,6 @@
 """
 Configuration classes for parameters and calibration settings, useful for
-Markov Chain Monte Carlo (MCMC) simulations using external libraries like emcee,
-with the flexibility to handle multiple likelihood models and constraints, either
-using a batched Metropolis-in-Gibbs approach or a full joint sampling approach.
+Markov Chain Monte Carlo (MCMC) simulations using external libraries like emcee.
 """
 
 from typing import List, Optional, Union
@@ -340,3 +338,54 @@ class CalibrationConfig:
         ]
         x0 = np.hstack([x0_model] + x0_likelihoods)
         return x0
+
+    def prior_transform(self, u):
+        """
+        Dynesty prior transform.
+
+        Parameters
+        ----------
+        u : array-like, shape (ndim,)
+            Unit-cube coordinates, each in [0, 1).
+
+        Returns
+        -------
+        theta : ndarray, shape (ndim,)
+            Physical parameter vector.
+        """
+        if not isinstance(self.model_config.prior, list):
+            raise NotImplementedError(
+                "Prior transform only implemented for list of distributions"
+            )
+        for lc in self.likelihood_configs:
+            if not isinstance(lc.prior, list):
+                raise NotImplementedError(
+                    "Prior transform only implemented for list of distributions"
+                )
+
+        u = np.asarray(u)
+
+        if u.shape[-1] != self.ndim:
+            raise ValueError(f"Expected u with length {self.ndim}, got shape {u.shape}")
+
+        # Avoid exact 0 or 1 causing infinities for some distributions.
+        # For truncnorm this is usually okay, but clipping is harmless and safer.
+        eps = np.finfo(float).eps
+        u = np.clip(u, eps, 1.0 - eps)
+
+        theta = np.empty(u.shape, dtype=float)
+
+        # model params
+        for i, param in enumerate(self.model_config.params):
+            dist = self.model_config.prior[i]
+            theta[i] = dist.ppf(u[i])
+
+        # nuisance params
+        offset = self.model_config.ndim
+        for j, lc in enumerate(self.likelihood_configs):
+            for k, param in enumerate(lc.params):
+                dist = lc.prior[k]
+                theta[offset + k] = dist.ppf(u[offset + k])
+            offset += lc.ndim
+
+        return theta
