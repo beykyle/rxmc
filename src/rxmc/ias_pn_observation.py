@@ -42,6 +42,8 @@ class IsobaricAnalogPNObservation:
         angles_vis: np.ndarray = np.linspace(0.01, 180, 100),
         ObservationClass: Type[Observation] = Observation,
         error_kwargs: dict = {},
+        wavelengths_beyond_range: float = 1.0,
+        zeros_per_node: int = 5,
     ):
         """
         Initialize a Observation instance for the (p,n) IAS reaction.
@@ -66,6 +68,10 @@ class IsobaricAnalogPNObservation:
             can supply `FixedCovarianceObservation` instead here.
         error_kwargs: dict
             Additional keyword arguments for error handling.
+        wavelengths_beyond_range: float
+            Number of wavelengths beyond the interaction range to set the channel radius.
+        zeros_per_node: int
+            Number of zeros of the basis functions per node in the R-matrix solver.
         """
         if not issubclass(ObservationClass, Observation):
             raise ValueError("ObservationClass must be a subclass of Observation")
@@ -142,6 +148,8 @@ def set_up_solver(
     angle_rad_constraint: np.array,
     angle_rad_vis: np.array,
     lmax: int,
+    wavelengths_beyond_range: float = 1.0,
+    zeros_per_node: int = 5,
 ):
     """
     Set up the solver for the reaction.
@@ -160,6 +168,12 @@ def set_up_solver(
         Angles to visualize on (rad)
     lmax : int
         Maximum angular momentum.
+    wavelengths_beyond_range : float
+        Number of wavelengths beyond the interaction
+        range to set the channel radius.
+    zeros_per_node : int
+        Number of zeros of the basis functions per
+        node in the R-matrix solver.
 
     Returns
     -------
@@ -172,11 +186,11 @@ def set_up_solver(
     )
 
     k = kinematics_entrance.k
-    interaction_range_fm = jitr.utils.interaction_range(reaction.target.A)
-    channel_radius_fm = interaction_range_fm + 12
-    a = channel_radius_fm * k
-    Ns = jitr.utils.suggested_basis_size(a)
-    core_solver = jitr.rmatrix.Solver(Ns)
+    interaction_range_fm = jitr.utils.interaction_range(reaction.target.A) + 2
+    a = k * interaction_range_fm + wavelengths_beyond_range * 2 * np.pi
+    channel_radius_fm = a / k
+    N = jitr.utils.suggested_basis_size(a, zeros_per_node)
+    core_solver = jitr.rmatrix.Solver(N)
 
     constraint_workspace = jitr.xs.quasielastic_pn.Workspace(
         reaction,

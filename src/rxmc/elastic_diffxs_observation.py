@@ -43,7 +43,7 @@ class ElasticDifferentialXSObservation:
         reaction: jitr.reactions.Reaction,
         quantity: str,
         lmax: int = DEFAULT_LMAX,
-        wavelengths_beyond_range=5.0,
+        wavelengths_beyond_range=1.0,
         zeros_per_node=5,
         angles_vis: np.ndarray = np.linspace(0.01, 180, 100),
         ObservationClass: Type[Observation] = Observation,
@@ -235,7 +235,7 @@ def set_up_solver(
     """
     kinematics = reaction.kinematics(Elab)
     k = kinematics.k
-    interaction_range_fm = 1.2 * reaction.target.A ** (1 / 3) + 1.0
+    interaction_range_fm = jitr.utils.interaction_range(reaction.target.A) + 2
     a = k * interaction_range_fm + wavelengths_beyond_range * 2 * np.pi
     channel_radius_fm = a / k
     N = jitr.utils.suggested_basis_size(a, zeros_per_node)
