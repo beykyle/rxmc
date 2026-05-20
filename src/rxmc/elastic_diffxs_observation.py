@@ -204,7 +204,7 @@ def set_up_solver(
     angle_rad_constraint: np.ndarray,
     angle_rad_vis: np.ndarray,
     lmax: int,
-    wavelengths_beyond_range: float = 5.0,
+    wavelengths_beyond_range: float = 1.0,
     zeros_per_node: int = 5,
 ):
     """
@@ -235,7 +235,7 @@ def set_up_solver(
     """
     kinematics = reaction.kinematics(Elab)
     k = kinematics.k
-    interaction_range_fm = jitr.utils.interaction_range(reaction.target.A)
+    interaction_range_fm = 1.2 * reaction.target.A ** (1 / 3) + 1.0
     a = k * interaction_range_fm + wavelengths_beyond_range * 2 * np.pi
     channel_radius_fm = a / k
     N = jitr.utils.suggested_basis_size(a, zeros_per_node)
