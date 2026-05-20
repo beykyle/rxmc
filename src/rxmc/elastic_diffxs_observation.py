@@ -43,7 +43,7 @@ class ElasticDifferentialXSObservation:
         reaction: jitr.reactions.Reaction,
         quantity: str,
         lmax: int = DEFAULT_LMAX,
-        wavelengths_beyond_range=1.0,
+        wavelengths_beyond_range=2.0,
         zeros_per_node=5,
         angles_vis: np.ndarray = np.linspace(0.01, 180, 100),
         ObservationClass: Type[Observation] = Observation,
@@ -204,7 +204,7 @@ def set_up_solver(
     angle_rad_constraint: np.ndarray,
     angle_rad_vis: np.ndarray,
     lmax: int,
-    wavelengths_beyond_range: float = 1.0,
+    wavelengths_beyond_range: float = 2.0,
     zeros_per_node: int = 5,
 ):
     """

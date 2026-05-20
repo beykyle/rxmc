@@ -42,7 +42,7 @@ class IsobaricAnalogPNObservation:
         angles_vis: np.ndarray = np.linspace(0.01, 180, 100),
         ObservationClass: Type[Observation] = Observation,
         error_kwargs: dict = {},
-        wavelengths_beyond_range: float = 1.0,
+        wavelengths_beyond_range: float = 2.0,
         zeros_per_node: int = 5,
     ):
         """
@@ -148,7 +148,7 @@ def set_up_solver(
     angle_rad_constraint: np.array,
     angle_rad_vis: np.array,
     lmax: int,
-    wavelengths_beyond_range: float = 1.0,
+    wavelengths_beyond_range: float = 2.0,
     zeros_per_node: int = 5,
 ):
     """
