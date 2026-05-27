@@ -17,8 +17,8 @@ class Walker:
         self,
         model_sampler: Sampler,
         evidence: Evidence,
-        likelihood_samplers: list[Sampler] = [],
-        rng: np.random.Generator = np.random.default_rng(42),
+        likelihood_samplers: list[Sampler] | None = None,
+        rng: np.random.Generator | None = None,
     ):
         """
         Initialize the Sampler with a list of samplers.
@@ -40,9 +40,9 @@ class Walker:
 
         # constant attributes
         self.model_sampler = model_sampler
-        self.likelihood_samplers = likelihood_samplers
+        self.likelihood_samplers = likelihood_samplers or []
         self.evidence = evidence
-        self.rng = rng
+        self.rng = rng if rng is not None else np.random.default_rng(42)
 
         self.gibbs_sampling = len(self.likelihood_samplers) > 0
 
@@ -66,7 +66,7 @@ class Walker:
                     f"'evidence.parametric_constraints[{i}]'"
                 )
 
-    def run_model_batch(self, n_steps, x0, likelihood_params=[], burn=False):
+    def run_model_batch(self, n_steps, x0, likelihood_params=None, burn=False):
         """
         Walks the model parameter space for fixed values of the
         `likelihood_params`
@@ -95,6 +95,7 @@ class Walker:
         accepted: float
             The acceptance rate of the model sampling algorithm.
         """
+        likelihood_params = likelihood_params or []
         self.model_sampler.sample(
             n_steps,
             x0,
@@ -146,7 +147,7 @@ class Walker:
             # whole evidence
             def log_posterior_lm(x):
                 return sampler.prior.logpdf(x) + constraint.marginal_log_likelihood(
-                    ym, x
+                    ym, *np.atleast_1d(x)
                 )
 
             # get the starting location for this likelihood model

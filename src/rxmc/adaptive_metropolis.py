@@ -1,9 +1,11 @@
-import numpy as np
 from typing import Callable, Tuple
+
+import numpy as np
 
 
 def adaptive_metropolis(
     x0: np.ndarray,
+    bounds: np.ndarray,
     n_steps: int,
     log_posterior: Callable[[np.ndarray], float],
     rng: np.random.Generator,
@@ -18,6 +20,8 @@ def adaptive_metropolis(
         ---------
         x0 : np.ndarray
             Initial point in the parameter space.
+        bounds : np.ndarray
+            Bounds for the parameters, shape (n_params, 2).
         n_steps : int
             Number of MCMC steps to perform.
         log_posterior : Callable[[np.ndarray], float]
@@ -52,7 +56,8 @@ def adaptive_metropolis(
 
     for i in range(start, start + n_steps):
         if i < adapt_start:
-            proposal_cov = np.diag((x0 * 0.01) ** 2)
+            proposal_scale = np.maximum(np.abs(x0), 1.0) * 0.01
+            proposal_cov = np.diag(proposal_scale**2)
         else:
             # Determine the index range for the sliding window
             start_idx = max(0, i - window_size)
@@ -60,13 +65,15 @@ def adaptive_metropolis(
 
             # Use the window of samples to compute the covariance
             cov = np.atleast_2d(np.cov(history_subset.T))
-            cov += epsilon_fraction * (
-                np.eye(dim) @ np.mean(history_subset, axis=0) ** 2
-            )
+            cov += epsilon_fraction * np.diag(np.mean(history_subset, axis=0) ** 2)
             proposal_cov = scale * cov
 
         # Propose new point
         x_new = rng.multivariate_normal(x, proposal_cov)
+        if np.any(x_new < bounds[:, 0]) or np.any(x_new > bounds[:, 1]):
+            chain[i, :] = x
+            logp_chain[i - start] = logp
+            continue
         logp_new = log_posterior(x_new)
 
         # Acceptance probability

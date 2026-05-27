@@ -1,7 +1,7 @@
 import numpy as np
 from sklearn.gaussian_process.kernels import Kernel
 
-from .likelihood_model import ParametricLikelihoodModel, scale_covariance
+from .likelihood_model import ParametricLikelihoodModel
 from .observation import Observation
 from .params import Parameter
 
@@ -70,4 +70,3 @@ class SklearnKernelGPDiscrepancyModel(ParametricLikelihoodModel):
             cov = cov + self.jitter * np.eye(observation.n_data_pts)
 
         return cov
-

@@ -1,7 +1,8 @@
 import unittest
+
 import numpy as np
-from rxmc.observation import Observation, FixedCovarianceObservation
-from rxmc.elastic_diffxs_observation import ElasticDifferentialXSObservation
+
+from rxmc.observation import FixedCovarianceObservation, Observation
 
 
 class TestObservation(unittest.TestCase):

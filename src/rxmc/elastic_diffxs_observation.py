@@ -6,7 +6,10 @@ from exfor_tools.distribution import Distribution
 from pint import UnitRegistry
 
 from .observation import Observation
-from .observation_from_measurement import check_angle_grid, set_up_observation
+from .observation_from_measurement import (
+    check_angle_grid,
+    set_up_observation,
+)
 
 # Create a unit registry
 ureg = UnitRegistry()
@@ -39,9 +42,17 @@ class ElasticDifferentialXSObservation:
 
     def __init__(
         self,
-        measurement: Distribution,
+        x: np.ndarray,
+        y: np.ndarray,
+        Elab: float,
         reaction: jitr.reactions.Reaction,
         quantity: str,
+        measurement_quantity: str,
+        y_units: str,
+        y_stat_err=None,
+        y_sys_err_normalization=None,
+        y_sys_err_offset=None,
+        dataset_label: str | None = None,
         lmax: int = DEFAULT_LMAX,
         wavelengths_beyond_range=2.0,
         zeros_per_node=5,
@@ -55,13 +66,27 @@ class ElasticDifferentialXSObservation:
 
         Parameters:
         ----------
-        measurements : list[Distribution]
-            List of measurements, each containing x, y, and associated errors.
-        reactions : list[jitr.reactions.Reaction]
-            List of reactions associated with the measurements.
+        x : np.ndarray
+            Measured angle grid in degrees.
+        y : np.ndarray
+            Measured observable values.
+        Elab : float
+            Laboratory energy of the measurement in MeV.
         quantity: str
             The type of quantity to be calculated (e.g., "dXS/dA",
             "dXS/dRuth", "Ay").
+        measurement_quantity: str
+            The quantity represented by the supplied `y` values.
+        y_units: str
+            Units of the supplied `y` values.
+        y_stat_err : np.ndarray, optional
+            Statistical errors associated with `y`.
+        y_sys_err_normalization : float or array-like, optional
+            Systematic normalization error(s) associated with `y`.
+        y_sys_err_offset : float or array-like, optional
+            Systematic offset error(s) associated with `y`.
+        dataset_label : str, optional
+            Human-readable dataset identifier used in error messages.
         lmax: int
             Maximum angular momentum, defaults to 20.
         wavelengths_beyond_range: float
@@ -88,7 +113,7 @@ class ElasticDifferentialXSObservation:
         self.reaction = reaction
         self.quantity = quantity
         self.lmax = lmax
-        self.subentry = measurement.subentry
+        self.subentry = dataset_label
         self.angle_units = ureg.radian
         self.compound_correction = compound_correction
 
@@ -96,17 +121,18 @@ class ElasticDifferentialXSObservation:
         angles_rad_vis = np.deg2rad(angles_vis)
         check_angle_grid(angles_rad_vis, "angles_rad_vis")
 
-        angles_rad_constraint = np.deg2rad(measurement.x)
+        angles_rad_constraint = np.deg2rad(x)
+        label = dataset_label or "dataset"
         check_angle_grid(
             angles_rad_constraint,
-            f"x values for subentry: {measurement.subentry}",
+            f"x values for {label}",
         )
 
         # set up workspaces to precompute things for the solver
         # for quick evaluation of observables
         constraint_ws, vis_ws, kinematics = set_up_solver(
             reaction=self.reaction,
-            Elab=measurement.Einc,
+            Elab=Elab,
             angle_rad_constraint=angles_rad_constraint,
             angle_rad_vis=angles_rad_vis,
             lmax=self.lmax,
@@ -117,15 +143,21 @@ class ElasticDifferentialXSObservation:
         self.visualization_workspace = vis_ws
 
         # Convert measurement to correct quantity and normalize to `b/sr`
-        norm, y_units = self.calculate_normalization(measurement)
-        self.y_units = y_units
+        norm, normalized_y_units = self.calculate_normalization(
+            measurement_quantity, y_units
+        )
+        self.y_units = normalized_y_units
 
         # initialize the observation instance
         args, kwargs, y_stat_err = set_up_observation(
             ObservationClass,
-            measurement=measurement,
-            normalization=norm,
             x=angles_rad_constraint,
+            y=y,
+            y_stat_err=y_stat_err,
+            y_sys_err_normalization=y_sys_err_normalization,
+            y_sys_err_offset=y_sys_err_offset,
+            dataset_label=dataset_label,
+            normalization=norm,
             **error_kwargs if error_kwargs is not None else {},
         )
 
@@ -146,7 +178,44 @@ class ElasticDifferentialXSObservation:
     def num_pts_within_interval(self, interval):
         return self._obs.num_pts_within_interval(interval)
 
-    def calculate_normalization(self, measurement):
+    @classmethod
+    def from_measurement(
+        cls,
+        measurement: Distribution,
+        reaction: jitr.reactions.Reaction,
+        quantity: str,
+        lmax: int = DEFAULT_LMAX,
+        wavelengths_beyond_range=2.0,
+        zeros_per_node=5,
+        angles_vis: np.ndarray = np.linspace(0.01, 180, 100),
+        ObservationClass: Type[Observation] = Observation,
+        error_kwargs: dict = None,
+        compound_correction: np.ndarray = None,
+    ):
+        return cls(
+            x=measurement.x,
+            y=measurement.y,
+            Elab=measurement.Einc,
+            reaction=reaction,
+            quantity=quantity,
+            measurement_quantity=measurement.quantity,
+            y_units=measurement.y_units,
+            y_stat_err=measurement.statistical_err,
+            y_sys_err_normalization=measurement.systematic_norm_err,
+            y_sys_err_offset=measurement.systematic_offset_err,
+            dataset_label=getattr(measurement, "subentry", None),
+            lmax=lmax,
+            wavelengths_beyond_range=wavelengths_beyond_range,
+            zeros_per_node=zeros_per_node,
+            angles_vis=angles_vis,
+            ObservationClass=ObservationClass,
+            error_kwargs=error_kwargs,
+            compound_correction=compound_correction,
+        )
+
+    def calculate_normalization(
+        self, measurement_quantity: str, measurement_y_units: str
+    ):
         # Determine the xs_unit based on self.quantity
         xs_unit = ureg.barn / ureg.steradian
         rutherford_unit = ureg.millibarn / ureg.steradian
@@ -158,43 +227,45 @@ class ElasticDifferentialXSObservation:
             raise ValueError(f"Unrecognized quantity: {self.quantity}")
 
         # Process different cases based on the quantity types
-        if self.quantity == "dXS/dRuth" and measurement.quantity == "dXS/dA":
-            measurement_unit = 1 * ureg(measurement.y_units)
+        if self.quantity == "dXS/dRuth" and measurement_quantity == "dXS/dA":
+            measurement_unit = 1 * ureg(measurement_y_units)
             if not measurement_unit.check(xs_unit):
                 raise ValueError(
-                    f"Expected measurement_unit to be dimensionally compatible with 'b/Sr', got {measurement.y_units}"
+                    "Expected measurement_unit to be dimensionally compatible "
+                    f"with 'b/Sr', got {measurement_y_units}"
                 )
 
             conversion_factor = 1.0 / measurement_unit.to(rutherford_unit).magnitude
             return self.constraint_workspace.rutherford * conversion_factor, y_unit
 
-        elif self.quantity == "dXS/dA" and measurement.quantity == "dXS/dRuth":
+        elif self.quantity == "dXS/dA" and measurement_quantity == "dXS/dRuth":
             conversion_factor = 1.0 / rutherford_unit.to(y_unit).magnitude
             return conversion_factor / self.constraint_workspace.rutherford, y_unit
 
-        elif self.quantity == "dXS/dA" and measurement.quantity == "dXS/dA":
-            measurement_unit = 1 * ureg(measurement.y_units)
+        elif self.quantity == "dXS/dA" and measurement_quantity == "dXS/dA":
+            measurement_unit = 1 * ureg(measurement_y_units)
             if not measurement_unit.check(y_unit):
                 raise ValueError(
-                    f"Expected measurement_unit to be dimensionally compatible with 'b/Sr', got {measurement.y_units}"
+                    "Expected measurement_unit to be dimensionally compatible "
+                    f"with 'b/Sr', got {measurement_y_units}"
                 )
 
             return 1.0 / measurement_unit.to(y_unit).magnitude, y_unit
 
         elif (
             self.quantity in {"dXS/dRuth", "Ay"}
-            and self.quantity == measurement.quantity
+            and self.quantity == measurement_quantity
         ):
-            if measurement.y_units != "no-dim":
+            if measurement_y_units != "no-dim":
                 raise ValueError(
-                    f"Expected measurement_unit to be 'no-dim', got {measurement.y_units}"
+                    f"Expected measurement_unit to be 'no-dim', got {measurement_y_units}"
                 )
             return 1.0, y_unit
 
         else:
-            if self.quantity != measurement.quantity:
+            if self.quantity != measurement_quantity:
                 raise ValueError(
-                    f"Quantity mismatch: {self.quantity} != {measurement.quantity}"
+                    f"Quantity mismatch: {self.quantity} != {measurement_quantity}"
                 )
 
 

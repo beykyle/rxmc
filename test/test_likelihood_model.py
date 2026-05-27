@@ -1,9 +1,11 @@
 import unittest
 
 import numpy as np
+
 from rxmc.likelihood_model import (
     FixedCovarianceLikelihood,
     LikelihoodModel,
+    StudentTLikelihoodModel,
     UnknownModelError,
     UnknownNoiseErrorModel,
     UnknownNoiseFractionErrorModel,
@@ -423,6 +425,13 @@ class TestUnknownModelError(unittest.TestCase):
             self.observation, self.ym, np.log(self.frac_err)
         )
         self.assertAlmostEqual(log_likelihood_value, self.expected_log_likelihood)
+
+
+class TestStudentTLikelihoodModel(unittest.TestCase):
+    def test_exposes_parametric_interface(self):
+        likelihood = StudentTLikelihoodModel()
+        self.assertEqual(likelihood.n_params, 1)
+        self.assertEqual(likelihood.params[0].name, "degrees_of_freedom")
 
 
 if __name__ == "__main__":
