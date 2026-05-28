@@ -786,7 +786,7 @@ class UnknownModelError(ParametricLikelihoodModel):
         return cov
 
 
-class StudentTLikelihoodModel(LikelihoodModel):
+class StudentTLikelihoodModel(ParametricLikelihoodModel):
     r"""
     A `LikelihoodModel` that uses a Student's t-distribution for the likelihood.
     This is useful when the data has heavy tails or outliers, as it is more robust

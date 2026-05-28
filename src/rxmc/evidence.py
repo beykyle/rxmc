@@ -22,8 +22,8 @@ class Evidence:
 
     def __init__(
         self,
-        constraints: list[Constraint] = [],
-        parametric_constraints: list[Constraint] = [],
+        constraints: list[Constraint] | None = None,
+        parametric_constraints: list[Constraint] | None = None,
         weights: np.ndarray = None,
         weights_parametric: np.ndarray = None,
     ):
@@ -60,6 +60,9 @@ class Evidence:
             physical model parameters, or if there are mismatches in the likelihood
             models assigned to the constraints.
         """
+        constraints = constraints or []
+        parametric_constraints = parametric_constraints or []
+
         if len(constraints) > 0:
             self.model_params = constraints[0].physical_model.params
         elif len(parametric_constraints) > 0:
@@ -130,7 +133,9 @@ class Evidence:
             )
         self.weights_parametric = weights_parametric
 
-    def log_likelihood(self, model_params, likelihood_params: list[tuple] = []):
+    def log_likelihood(
+        self, model_params, likelihood_params: list[tuple] | None = None
+    ):
         """
         Calculate the log likelihood
 
@@ -145,6 +150,7 @@ class Evidence:
         float
             The total log likelihood.
         """
+        likelihood_params = likelihood_params or []
         assert len(likelihood_params) == len(self.parametric_constraints)
 
         # Serial computation if no executor is provided

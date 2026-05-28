@@ -1,7 +1,5 @@
 import unittest
 
-from rxmc import constraint
-
 
 class TestFixedCovConstraint(unittest.TestCase):
 

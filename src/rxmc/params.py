@@ -1,9 +1,9 @@
 from collections import OrderedDict
-from json import load, dumps
+from json import dumps, load
 from pathlib import Path
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
 
 class Parameter:

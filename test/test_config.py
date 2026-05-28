@@ -2,6 +2,7 @@ import unittest
 
 import numpy as np
 import scipy.stats
+
 from rxmc.config import CalibrationConfig, ParameterConfig
 from rxmc.constraint import Constraint
 from rxmc.evidence import Evidence
@@ -38,6 +39,17 @@ class TestParameterConfig(unittest.TestCase):
                 prior=self.prior,
                 initial_proposal_distribution=self.initial_proposal_dist,
             )
+
+    def test_single_parameter_x0_shape(self):
+        config = ParameterConfig(
+            params=[self.param1],
+            prior=scipy.stats.multivariate_normal(mean=[0], cov=[[1]]),
+            initial_proposal_distribution=scipy.stats.multivariate_normal(
+                mean=[0], cov=[[1]]
+            ),
+        )
+        x0 = config.x0(4)
+        self.assertEqual(x0.shape, (4, 1))
 
 
 class TestCalibrationConfig(unittest.TestCase):
@@ -120,6 +132,85 @@ class TestCalibrationConfig(unittest.TestCase):
         model_params, likelihood_params = config.split_parameters(x)
         np.testing.assert_array_equal(model_params, [1.0, 2.0])
         np.testing.assert_array_equal(likelihood_params[0], [0.0])
+
+    def test_black_box_bayes_interface(self):
+        config = CalibrationConfig(
+            evidence=self.evidence,
+            model_config=self.model_config,
+            likelihood_configs=[self.likelihood_config],
+        )
+
+        self.assertEqual(config.parameter_names, ["a0", "a1", "log fractional err"])
+
+        x0_single = config.starting_location(1)
+        self.assertEqual(x0_single.shape, (1, 3))
+
+        x0_batch = config.starting_location(4)
+        self.assertEqual(x0_batch.shape, (4, 3))
+
+        theta = np.array([1.0, 2.0, 0.0])
+        batched = config.log_posterior_batch(np.vstack([theta, theta]))
+        self.assertEqual(batched.shape, (2,))
+        np.testing.assert_allclose(
+            batched,
+            [config.log_posterior(theta), config.log_posterior(theta)],
+        )
+
+    def test_conditional_posterior_uses_parametric_constraint(self):
+        config = CalibrationConfig(
+            evidence=self.evidence,
+            model_config=self.model_config,
+            likelihood_configs=[self.likelihood_config],
+        )
+
+        xmodel = np.array([1.0, 1.0])
+        ym = self.evidence.parametric_constraints[0].predict(*xmodel)
+        x_lm = np.array([0.0])
+
+        expected = self.evidence.parametric_constraints[0].marginal_log_likelihood(
+            ym, *x_lm
+        ) + self.likelihood_config.prior_logpdf(x_lm)
+        self.assertAlmostEqual(config.conditional_posterior(x_lm, 0, ym), expected)
+
+    def test_starting_location_with_single_parameter_sectors(self):
+        model = Polynomial(0)
+        likelihood = UnknownModelError()
+        observation = Observation(
+            x=np.array([1.0, 2.0]),
+            y=np.array([1.0, 1.1]),
+            y_stat_err=np.array([0.1, 0.1]),
+        )
+        evidence = Evidence(
+            parametric_constraints=[
+                Constraint(
+                    observations=[observation],
+                    physical_model=model,
+                    likelihood_model=likelihood,
+                )
+            ]
+        )
+        model_config = ParameterConfig(
+            params=model.params,
+            prior=scipy.stats.multivariate_normal(mean=[0], cov=[[1]]),
+            initial_proposal_distribution=scipy.stats.multivariate_normal(
+                mean=[0], cov=[[1]]
+            ),
+        )
+        likelihood_config = ParameterConfig(
+            params=likelihood.params,
+            prior=scipy.stats.multivariate_normal(mean=[0], cov=[[1]]),
+            initial_proposal_distribution=scipy.stats.multivariate_normal(
+                mean=[0], cov=[[1]]
+            ),
+        )
+        config = CalibrationConfig(
+            evidence=evidence,
+            model_config=model_config,
+            likelihood_configs=[likelihood_config],
+        )
+
+        x0 = config.starting_location(5)
+        self.assertEqual(x0.shape, (5, 2))
 
 
 if __name__ == "__main__":

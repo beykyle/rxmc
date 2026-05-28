@@ -2,12 +2,11 @@ import unittest
 
 import numpy as np
 
-from rxmc.physical_model import Polynomial
-from rxmc.likelihood_model import LikelihoodModel
-from rxmc.observation import Observation
 from rxmc.constraint import Constraint
 from rxmc.evidence import Evidence
-from rxmc.likelihood_model import log_likelihood
+from rxmc.likelihood_model import LikelihoodModel
+from rxmc.observation import Observation
+from rxmc.physical_model import Polynomial
 
 
 class TestEvidence(unittest.TestCase):

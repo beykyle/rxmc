@@ -1,87 +1,204 @@
 # rxmc
-Bayesian calibration of reaction models with Markov-Chain Monte Carlo, with flexible and composable models for the likelihood and body of evidence.
-- curate the corpus of experimental constraints (e.g. using [`exfor_tools`](https://github.com/beykyle/exfor_tools))
-- efficiently calculate your model's corresponding predictions for these observables using [`jitR`](https://github.com/beykyle/jitr)
-- choose from a variety of likelihood models, or extend the basic [`LikelihoodModel`](https://github.com/beykyle/rxmc/blob/main/src/rxmc/likelihood_model.py) class to implement your own.
-- package the constraints, physical model (and solver), and likelihood model together in a [`Evidence`](https://github.com/beykyle/rxmc/blob/main/src/rxmc/evidence.py) object which provides the likelihood of a given model parameter, for use in Bayesian calibration 
-- run Bayesian calibration using a [`Walker`](https://github.com/beykyle/rxmc/blob/main/src/rxmc/walker.py)
 
-An example of this code in use is in the development of the [East Lansing Model](https://github.com/beykyle/elm)
+`rxmc` is an orchestration layer for Bayesian calibration of reaction models to
+large data sets with flexible likelihood modeling.
 
-Check out the [`examples/` directory](https://github.com/beykyle/rxmc/blob/main/examples/).
+It is built around two complementary workflows:
 
-## documentation
-- TBD
+1. **External-sampler orchestration** via `rxmc.config.CalibrationConfig`
+   for drivers such as
+   [`black-box-bayes`](https://github.com/beykyle/black-box-bayes/).
+2. **In-package end-to-end prototyping** via `rxmc.walker.Walker`
+   for smaller problems where you want to run the full MCMC workflow locally.
 
-## installation
-### pypi
+The package composes:
 
-- TBD
+- curated experimental data as `Observation` objects,
+- model predictions via `PhysicalModel`,
+- statistical assumptions via `LikelihoodModel`,
+- independent data-model pairings via `Constraint`,
+- and full calibration problems via `Evidence`.
 
-### for development
+
+## Installation
+
+### Development / local use
+
 ```bash
 git clone git@github.com:beykyle/rxmc.git
 cd rxmc
-```
-
-Then install an editable version locally like so:
-
-```
 pip install -ve .
 ```
 
-It is **highly recommended** that you use an isolated virtual environment (e.g. using [venv](https://packaging.python.org/en/latest/guides/installing-using-pip-and-virtual-environments/) or [conda/mamba](https://mamba.readthedocs.io/en/latest/)), as this action will install all of the dependencies in `requirements.txt`, at the specific version required.
+It is strongly recommended to use an isolated environment.
 
+### `conda` / `mamba`
 
-For example, with `conda`:
-
-
-```
+```bash
 conda env create -f environment.yml
 conda activate rxmc
 pip install -ve . --no-deps
 ```
 
-or, similarily, with `mamba`:
-```
+```bash
 mamba env create -f environment.yml
 mamba activate rxmc
 pip install -ve . --no-deps
 ```
 
-or with `venv`:
+### `venv`
 
-```
+```bash
 python -m venv .rxmc
 source .rxmc/bin/activate
 pip install -r requirements.txt
 pip install -ve .
 ```
 
-The advantages of `conda` and `mamba` is that they can install heavy binary dependencies like `openmpi` required by `mpi4py`. 
+### `uv`:
 
-Some users may want to use their own custom environment, e.g. setup using the `module` system on a cluster. If you don't want to create an isolated environment for `rxmc`, but also don't want `pip` to overwrite the package versions you havein your environment with the ones in `requirements.txt`, you can
-
+```bash
+uv env create
+uv env use python
+uv install -e .
 ```
-pip install -ve . --no-deps
+
+### Optional extras
+
+Install the example notebook runtime dependencies with:
+
+```bash
+pip install -ve '.[examples]'
 ```
-This will require that your current python environment satisfies `requirements.txt`. 
 
-## test
+Install the full validation toolchain with:
 
+```bash
+pip install -ve '.[validation]'
 ```
-python -m unittest discover ./test
+
+## Supported workflow 1: external samplers with `CalibrationConfig`
+
+`CalibrationConfig` packages a calibration problem into a flat parameter space
+for external drivers. It exposes the interface expected by
+`black-box-bayes`-style tooling:
+
+- `ndim`
+- `starting_location(nwalkers)`
+- `log_posterior(theta)`
+- `log_likelihood(theta)`
+- `prior_transform(u)`
+- `log_posterior_batch(thetas)` (optional convenience interface)
+- `parameter_names`
+
+Typical flow:
+
+1. Build `Observation` objects from your measurements.
+2. Define a `PhysicalModel`.
+3. Choose a `LikelihoodModel`.
+4. Combine them into `Constraint` objects and then `Evidence`.
+5. Wrap the problem in `ParameterConfig` and `CalibrationConfig`.
+6. Hand the resulting object to an external sampler.
+
+This is the recommended path for larger production calibrations.
+
+## Supported workflow 2: in-package MCMC with `Walker`
+
+`Walker` is the smaller-scale, in-package path. It coordinates:
+
+- one sampler for the physical-model parameters, and
+- optional additional samplers for parametric likelihood sectors.
+
+It alternates between these sectors in a Gibbs-style workflow and is useful
+for:
+
+- prototyping new likelihood models,
+- validating new observation/model compositions,
+- and running smaller end-to-end inference problems without introducing an
+  external orchestration layer.
+
+## Core concepts
+
+### `Observation`
+
+Represents measured data and its covariance structure, including:
+
+- statistical errors,
+- systematic normalization errors,
+- systematic offset errors,
+- or fixed covariance matrices.
+
+### `PhysicalModel`
+
+Maps model parameters to predicted observables for a given `Observation`.
+
+### `LikelihoodModel`
+
+Encodes how predictions are compared to observations. Built-in options include:
+
+- Gaussian covariance-based likelihoods,
+- unknown noise models,
+- unknown normalization / normalization-error models,
+- unknown model-error terms,
+- Student-t likelihoods,
+- and a Gaussian-process discrepancy model using sklearn kernels.
+
+### `Constraint`
+
+Pairs observations, a physical model, and a likelihood model.
+
+### `Evidence`
+
+Aggregates multiple independent constraints that share the same physical-model
+parameterization.
+
+## Examples and tutorials
+
+The `examples/` directory contains richer notebooks and demos. The most useful
+entry points are:
+
+- `examples/linear_calibration_demo.ipynb` for the basic workflow,
+- `examples/systematic_err_demo.ipynb` for likelihood comparisons and
+  systematic-error handling,
+- `examples/30s_optical_potential_calibration.ipynb` for a realistic optical
+  potential calibration example,
+- `examples/normalization_inference.ipynb` for normalization-focused modeling,
+- `examples/sampling_algos.ipynb` for sampling comparisons.
+
+## Testing
+
+Run the full validation matrix with:
+
+```bash
+python -m isort --check-only src test
+python -m black --check src test
+python -m ruff check src test
+python -m nbqa isort --check examples/*.ipynb
+python -m black --check --ipynb examples/*.ipynb
+python -m nbqa ruff examples/*.ipynb
+python -m pytest
 ```
-## examples, demos and tutorials
 
-check out the [`examples/` directory](https://github.com/beykyle/rxmc/blob/main/examples/)
+If you want to apply the formatting fixes locally instead of only checking them:
 
-In particular, the following notebooks are useful for getting started with `rxmc`: 
-- [`examples/linear_calibration_demo.ipynb`](https://github.com/beykyle/rxmc/blob/main/examples/linear_calibration_demo.ipynb) for an illustrative example of fitting a line to data, which serves as the basic `rxmc` tutorial.
-- [`systematic_err_demo.ipynb`](https://github.com/beykyle/rxmc/blob/main/examples/systematic_err_demo.ipynb) for a comparison of some of the likelihood models built into `rxmc`, and how to use them for situations involving systematic errors and multiple independent experimental constraints
-- [`examples/30s_optical_potential_calibration.ipynb`](https://github.com/beykyle/rxmc/blob/main/examples/30s_optical_potential_calibration.ipynb) for a demo of a full Bayesian calibration of a a local optical potential to real experimental data using `rxmc` and `jitR`, in only 30 seconds!
+```bash
+python -m isort src test
+python -m black src test
+python -m ruff check --fix src test
+python -m nbqa isort examples/*.ipynb
+python -m black --ipynb examples/*.ipynb
+python -m nbqa ruff --fix --unsafe-fixes examples/*.ipynb
+```
 
-## use with third party MCMC samplers
+Run only the unit tests with:
 
-The `Evidence` class in `rxmc` can be used with any MCMC sampler that requires a function which returns the log-likelihood of a given parameter set. `rxmc.config.CalibrationConfig` provides a convenient way to package together an `Evidence` object with MCMC sampler settings, and can be used to run MCMC sampling with third party samplers like [`emcee`](https://emcee.readthedocs.io/en/stable/) or [`pymc`](https://www.pymc.io/). A fully fledged example of setting up an inference problem
-with `rxmc`, and then using an `emcee` `EnsembleSampler` to sample from the posterior in a massively parallel MPI approach can be found in [`examples/emcee/`](https://github.com/beykyle/rxmc/blob/main/examples/emcee/). 
+```bash
+python -m pytest test
+```
+
+Run only the notebooks with:
+
+```bash
+python -m pytest examples
+```
+

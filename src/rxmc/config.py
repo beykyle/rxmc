@@ -1,8 +1,10 @@
 """
-Configuration classes for parameters and calibration settings, useful for
-Markov Chain Monte Carlo (MCMC) simulations using external libraries like emcee,
-with the flexibility to handle multiple likelihood models and constraints, either
-using a batched Metropolis-in-Gibbs approach or a full joint sampling approach.
+Configuration helpers for calibration workflows.
+
+`CalibrationConfig` is the main integration surface for external samplers such
+as black-box-bayes. It exposes a flat parameterization of an `Evidence`
+instance along with the minimal sampler-facing methods needed to evaluate the
+posterior and generate starting locations.
 """
 
 from typing import List, Optional, Union
@@ -102,8 +104,8 @@ class ParameterConfig:
                 dist.rvs(nwalkers) for dist in self.initial_proposal_distribution
             ]
             return np.column_stack(samples)
-        else:
-            return self.initial_proposal_distribution.rvs(nwalkers)
+        samples = np.atleast_1d(self.initial_proposal_distribution.rvs(nwalkers))
+        return samples.reshape(nwalkers, -1)
 
     def prior_logpdf(self, x: np.ndarray) -> float:
         """
@@ -177,7 +179,9 @@ class CalibrationConfig:
         self.model_config = model_config
         self.likelihood_configs = likelihood_configs or []
         self.ndim = model_config.ndim + sum(lc.ndim for lc in self.likelihood_configs)
-        self.likelihood_scaling = likelihood_scaling or 1.0
+        self.likelihood_scaling = (
+            1.0 if likelihood_scaling is None else likelihood_scaling
+        )
 
         if (
             len(self.evidence.constraints) == 0
@@ -287,6 +291,39 @@ class CalibrationConfig:
             return -np.inf
         return lp + ll
 
+    @property
+    def parameter_names(self) -> list[str]:
+        """
+        Flat parameter names in the same order as sampler-facing vectors.
+
+        This property is provided for compatibility with external drivers such
+        as black-box-bayes, which can use the names when exporting inference
+        results.
+        """
+        return [param.name for pc in self.parameter_configs for param in pc.params]
+
+    @property
+    def parameter_configs(self) -> list[ParameterConfig]:
+        """
+        All parameter sectors in flattened order.
+        """
+        return [self.model_config] + self.likelihood_configs
+
+    def log_posterior_batch(self, thetas: np.ndarray) -> np.ndarray:
+        """
+        Evaluate the log posterior for a batch of parameter vectors.
+
+        This is primarily a convenience for external orchestration layers. The
+        current implementation is serial but preserves the advertised interface.
+        """
+        thetas = np.atleast_2d(np.asarray(thetas, dtype=float))
+        if thetas.shape[-1] != self.ndim:
+            raise ValueError(
+                f"Expected thetas with trailing dimension {self.ndim}, "
+                f"got shape {thetas.shape}"
+            )
+        return np.array([self.log_posterior(theta) for theta in thetas], dtype=float)
+
     def predict(self, xmodel) -> list[np.ndarray]:
         """
         Generate predictions for each constraint given model parameters.
@@ -299,7 +336,8 @@ class CalibrationConfig:
         list[np.ndarray]
             List of predictions for each constraint.
         """
-        return [constraint.predict(*xmodel) for constraint in self.evidence.constraints]
+        constraints = self.evidence.constraints + self.evidence.parametric_constraints
+        return [constraint.predict(*xmodel) for constraint in constraints]
 
     def conditional_posterior(self, x_lm, lm_index, ym) -> float:
         """
@@ -319,9 +357,9 @@ class CalibrationConfig:
         float
             Log posterior probability for the likelihood model sector.
         """
-        return self.evidence.constraints[lm_index].marginal_log_likelihood(
+        return self.evidence.parametric_constraints[lm_index].marginal_log_likelihood(
             ym, *x_lm
-        ) + self.likelihood_configs[lm_index].prior.logpdf(x_lm)
+        ) + self.likelihood_configs[lm_index].prior_logpdf(x_lm)
 
     def starting_location(self, nwalkers) -> np.ndarray:
         """
@@ -340,3 +378,54 @@ class CalibrationConfig:
         ]
         x0 = np.hstack([x0_model] + x0_likelihoods)
         return x0
+
+    def prior_transform(self, u):
+        """
+        Dynesty prior transform.
+
+        Parameters
+        ----------
+        u : array-like, shape (ndim,)
+            Unit-cube coordinates, each in [0, 1).
+
+        Returns
+        -------
+        theta : ndarray, shape (ndim,)
+            Physical parameter vector.
+        """
+        if not isinstance(self.model_config.prior, list):
+            raise NotImplementedError(
+                "Prior transform only implemented for list of distributions"
+            )
+        for lc in self.likelihood_configs:
+            if not isinstance(lc.prior, list):
+                raise NotImplementedError(
+                    "Prior transform only implemented for list of distributions"
+                )
+
+        u = np.asarray(u)
+
+        if u.shape[-1] != self.ndim:
+            raise ValueError(f"Expected u with length {self.ndim}, got shape {u.shape}")
+
+        # Avoid exact 0 or 1 causing infinities for some distributions.
+        # For truncnorm this is usually okay, but clipping is harmless and safer.
+        eps = np.finfo(float).eps
+        u = np.clip(u, eps, 1.0 - eps)
+
+        theta = np.empty(u.shape, dtype=float)
+
+        # model params
+        for i, param in enumerate(self.model_config.params):
+            dist = self.model_config.prior[i]
+            theta[i] = dist.ppf(u[i])
+
+        # nuisance params
+        offset = self.model_config.ndim
+        for j, lc in enumerate(self.likelihood_configs):
+            for k, param in enumerate(lc.params):
+                dist = lc.prior[k]
+                theta[offset + k] = dist.ppf(u[offset + k])
+            offset += lc.ndim
+
+        return theta
