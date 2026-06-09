@@ -55,7 +55,7 @@ class IsobaricAnalogPNObservation:
         """
         Initialize a Observation instance for the (p,n) IAS reaction.
 
-        Parameters:
+        Parameters
         ----------
         x : np.ndarray
             Measured angle grid in degrees.

@@ -33,19 +33,23 @@ class LikelihoodModel:
     to a PhysicalModel.
 
     The default behavior uses the following covariance matrix:
-        \[
-            \Sigma_{ij} = \sigma^2_{i}^{stat} \delta_{ij}
-                        + \Sigma_{ij}^{sys}
-                        + \gamma^2 y_m^2(x_i, \alpha)
-        \]
+
+    .. math::
+
+        \Sigma_{ij} = \sigma^2_{i}^{stat} \delta_{ij}
+                    + \Sigma_{ij}^{sys}
+                    + \gamma^2 y_m^2(x_i, \alpha)
+
     where $sigma^2_{i}^{stat}$ is the statistical variance of the i-th
     observation, (`observation.statistical_covariance`) and $\gamma$ is the
     fractional uncorrelated error (`self.frac_err`).
 
     Here, $Sigma_{ij}^{sys}$ is the systematic covariance matrix:
-        \[
-            \Sigma_{ij}^{sys} = \eta**2 y_m(x_i, \alpha) y_m(x_j, \alpha) + \omega,
-        \]
+
+    .. math::
+
+        \Sigma_{ij}^{sys} = \eta**2 y_m(x_i, \alpha) y_m(x_j, \alpha) + \omega,
+
     where $\eta$ is the uncertainty in the overall normalization of the
     observation (`observation.y_sys_err_normalization`) and $\omega$ is the
     uncertainty in the additive normalization to the observation
@@ -87,19 +91,23 @@ class LikelihoodModel:
         override this.
 
         Returns the following covariance matrix:
-            \[
-                \Sigma_{ij} = \sigma^2_{i}^{stat} \delta_{ij}
-                            + \Sigma_{ij}^{sys}
-                            + \gamma^2 y_m^2(x_i, \alpha)
-            \]
+
+        .. math::
+
+            \Sigma_{ij} = \sigma^2_{i}^{stat} \delta_{ij}
+                        + \Sigma_{ij}^{sys}
+                        + \gamma^2 y_m^2(x_i, \alpha)
+
         where $sigma^2_{i}^{stat}$ is the statistical variance of the i-th
         observation, (`observation.statistical_covariance`) and $\gamma$ is the
         fractional uncorrelated error (`self.frac_err`).
 
         Here, $Sigma_{ij}^{sys}$ is the systematic covariance matrix:
-            \[
-                \Sigma_{ij}^{sys} = \eta**2 y_m(x_i, \alpha) y_m(x_j, \alpha) + \omega,
-            \]
+
+        .. math::
+
+            \Sigma_{ij}^{sys} = \eta**2 y_m(x_i, \alpha) y_m(x_j, \alpha) + \omega,
+
         where $\eta$ is the uncertainty in the overall normalization of the
         observation (`observation.y_sys_err_normalization`) and $\omega$ is the
         uncertainty in the additive normalization to the observation
@@ -396,9 +404,9 @@ class UnknownNoiseErrorModel(ParametricLikelihoodModel):
     No matter the Observation, the statistical contribution to the covariance
     thus always takes the form:
 
-    \[
+    .. math::
+
         \Sigma_{ij}^{stat} = \epsilon^2 \delta_{ij}
-    \]
 
     where $\epsilon$ is the statistical `noise` parameter.
     """
@@ -416,18 +424,20 @@ class UnknownNoiseErrorModel(ParametricLikelihoodModel):
     def covariance(self, observation: Observation, ym: np.ndarray, log_epsilon: float):
         r"""
         Returns the following covariance matrix:
-            \[
-                \Sigma_{ij} = \sigma^2_{i}^{stat} \delta_{ij}
-                            + \Sigma_{ij}^{sys}
-                            + \gamma^2 y_m^2(x_i, \alpha)
-            \]
+
+        .. math::
+
+            \Sigma_{ij} = \sigma^2_{i}^{stat} \delta_{ij}
+                        + \Sigma_{ij}^{sys}
+                        + \gamma^2 y_m^2(x_i, \alpha)
+
         where sigma^2_{i}^{stat} is the statistical variance of the i-th
         observation, which is dependent on the parameter $\epsilon$, which
         is the statistical `noise`:
 
-        \[
+        .. math::
+
             \sigma^2_{i}^{stat} = \epsilon^2 \delta_{ij}
-        \]
 
         (note this class ignores `observation.statistical_covariance`,
         replacing it with $\epsilon$).
@@ -463,9 +473,9 @@ class UnknownNoiseFractionErrorModel(ParametricLikelihoodModel):
 
     This implies the statistical contribution to the covariance takes the form:
 
-    \[
+    .. math::
+
         \Sigma_{ij}^{stat} = \epsilon^2 y(x_i)^2 \delta_{ij}
-    \]
 
 
     """
@@ -484,18 +494,20 @@ class UnknownNoiseFractionErrorModel(ParametricLikelihoodModel):
     def covariance(self, observation: Observation, ym: np.ndarray, log_epsilon: float):
         r"""
         Returns the following covariance matrix:
-            \[
-                \Sigma_{ij} = \sigma^2_{i}^{stat} \delta_{ij}
-                            + \Sigma_{ij}^{sys}
-                            + \gamma^2 y_m^2(x_i, \alpha)
-            \]
+
+        .. math::
+
+            \Sigma_{ij} = \sigma^2_{i}^{stat} \delta_{ij}
+                        + \Sigma_{ij}^{sys}
+                        + \gamma^2 y_m^2(x_i, \alpha)
+
         where sigma^2_{i}^{stat} is the statistical variance of the i-th
         observation, which is dependent on the parameter $\epsilon$, which
         is the statistical `noise_fraction`:
 
-        \[
+        .. math::
+
             \Sigma_{ij}^{stat} = \epsilon^2 y(x_i)^2 \delta_{ij}
-        \]
 
         (note this class ignores `observation.statistical_covariance`, substituting it with
         the variable `noise_fraction` multiplied by `ym`) and $\gamma$ is the
@@ -532,9 +544,10 @@ class UnknownNormalizationModel(ParametricLikelihoodModel):
     the normalization, as the data are explicitly re-normalized.
 
     This corresponds to a statistical model:
-        \[
-            y_i  + \epsilon_i = \rho y_m(x_i, \alpha) + \epsilon_i + \dots
-        \]
+
+    .. math::
+
+        y_i  + \epsilon_i = \rho y_m(x_i, \alpha) + \epsilon_i + \dots
 
     where $\rho$ is a free parameter corresponding to the multiplicative
     normalization factor. This corresponds to the Kennedy & O'Hagan
@@ -564,9 +577,11 @@ class UnknownNormalizationModel(ParametricLikelihoodModel):
     def covariance(self, observation: Observation, ym: np.ndarray, log_rho: float):
         r"""
         Returns the statistical covariance matrix:
-            \[
-                \Sigma_{ij}^{stat} = \sigma^2_{i}^{stat} \delta_{ij}
-            \]
+
+        .. math::
+
+            \Sigma_{ij}^{stat} = \sigma^2_{i}^{stat} \delta_{ij}
+
         where $\sigma^2_{i}^{stat}$ is the statistical variance of the i-th
         observation, (`observation.statistical_covariance`).
 
@@ -590,7 +605,7 @@ class UnknownNormalizationModel(ParametricLikelihoodModel):
         Returns the residual between the renormalized model prediction ym and
         observation.y
 
-        Parameters:
+        Parameters
         ----------
         observation : Observation
             The observation object containing the observed data.
@@ -665,9 +680,9 @@ class UnknownNormalizationErrorModel(ParametricLikelihoodModel):
     This implies the systematic normalization contribution to the
     covariance takes the form:
 
-        \[
-            \Sigma_{ij}^{sys norm} = \eta**2 y_m(x_i, \alpha) y_m(x_j, \alpha)
-        \]
+    .. math::
+
+        \Sigma_{ij}^{sys norm} = \eta**2 y_m(x_i, \alpha) y_m(x_j, \alpha)
 
     where $\eta$ is a free parameter.
     """
@@ -686,19 +701,23 @@ class UnknownNormalizationErrorModel(ParametricLikelihoodModel):
     def covariance(self, observation: Observation, ym: np.ndarray, log_eta: float):
         r"""
         Returns the following covariance matrix:
-            \[
-                \Sigma_{ij} = \sigma^2_{i}^{stat} \delta_{ij}
-                            + \Sigma_{ij}^{sys}
-                            + \gamma^2 y_m^2(x_i, \alpha)
-            \]
+
+        .. math::
+
+            \Sigma_{ij} = \sigma^2_{i}^{stat} \delta_{ij}
+                        + \Sigma_{ij}^{sys}
+                        + \gamma^2 y_m^2(x_i, \alpha)
+
         where $sigma^2_{i}^{stat}$ is the statistical variance of the i-th
         observation, (`observation.statistical_covariance`) and $\gamma$ is the
         fractional uncorrelated error (`self.frac_err`).
 
         Here, $Sigma_{ij}^{sys}$ is the systematic covariance matrix:
-            \[
-                \Sigma_{ij}^{sys} = \eta**2 y_m(x_i, \alpha) y_m(x_j, \alpha) + \omega,
-            \]
+
+        .. math::
+
+            \Sigma_{ij}^{sys} = \eta**2 y_m(x_i, \alpha) y_m(x_j, \alpha) + \omega,
+
         where $\eta$ is the uncertainty in the overall normalization of the
         observation (`y_sys_err_normalization` - in this case, this value is a parameter,
         and  corresponding value in `observation` is ignored) and $\omega$ is
@@ -737,9 +756,9 @@ class UnknownModelError(ParametricLikelihoodModel):
     is a free parameter $\gamma$, such that the covariance due to the
     uncorrelated model error takes the form:
 
-    \[
+    .. math::
+
         \Sigma_{ij}^{uncorrelated} = \gamma^2 y_m(x_i, \alpha)^2 \delta_{ij}
-    \]
 
     where $\gamma$ is a free parameter.
 
@@ -750,7 +769,6 @@ class UnknownModelError(ParametricLikelihoodModel):
         """
         Initializes the UnknownModelError instance.
 
-        Parameters
         Parameters
         ----------
         averaging : bool, optional
@@ -777,11 +795,13 @@ class UnknownModelError(ParametricLikelihoodModel):
         override this.
 
         Returns the following covariance matrix:
-            \[
-                \Sigma_{ij} = \sigma^2_{i}^{stat} \delta_{ij}
-                            + \Sigma_{ij}^{sys}
-                            + \gamma^2 y_m^2(x_i, \alpha)
-            \]
+
+        .. math::
+
+            \Sigma_{ij} = \sigma^2_{i}^{stat} \delta_{ij}
+                        + \Sigma_{ij}^{sys}
+                        + \gamma^2 y_m^2(x_i, \alpha)
+
         where $\gamma$ is the fractional uncorrelated error
         (`frac_err`), treated here as a free parameter, and
         all other definitions are the same as `LikelihoodModel.covariance`

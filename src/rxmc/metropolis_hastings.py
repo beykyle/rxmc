@@ -50,7 +50,7 @@ def metropolis_hastings(
     """
     chain = np.zeros((n_steps, x0.size))
     logp_chain = np.zeros((n_steps,))
-    logp = log_posterior(x0)
+    logp = float(np.squeeze(log_posterior(x0)))
     accepted = 0
     x = x0
     for i in range(n_steps):
@@ -59,7 +59,7 @@ def metropolis_hastings(
             chain[i, ...] = x
             logp_chain[i] = logp
             continue
-        logp_new = log_posterior(x_new)
+        logp_new = float(np.squeeze(log_posterior(x_new)))
         log_ratio = min(0, logp_new - logp)
         xi = np.log(rng.random())
         if xi < log_ratio:
