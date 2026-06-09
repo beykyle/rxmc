@@ -76,7 +76,7 @@ def adaptive_metropolis(
     accepted = 0
 
     x = x0.copy()
-    logp = log_posterior(x)
+    logp = float(log_posterior(x))
     scale = 2.38**2 / dim
 
     for i in range(start, start + n_steps):
@@ -95,7 +95,7 @@ def adaptive_metropolis(
             chain[i, :] = x
             logp_chain[i - start] = logp
             continue
-        logp_new = log_posterior(x_new)
+        logp_new = float(log_posterior(x_new))
 
         log_ratio = min(0, logp_new - logp)
         if np.log(rng.random()) < log_ratio:

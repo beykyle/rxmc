@@ -158,10 +158,12 @@ class Walker:
         float
             Sum of log prior densities for model and likelihood parameters.
         """
-        return self.model_sampler.prior.logpdf(model_params) + sum(
+        lp = self.model_sampler.prior.logpdf(model_params)
+        lp += sum(
             lm.prior.logpdf(likelihood_params[i])
             for i, lm in enumerate(self.likelihood_samplers)
         )
+        return float(np.squeeze(lp))
 
     def walk(
         self,
