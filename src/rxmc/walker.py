@@ -128,9 +128,10 @@ class Walker:
             ym = constraint.predict(*model_params)
 
             def log_posterior_lm(x):
-                return sampler.prior.logpdf(x) + constraint.marginal_log_likelihood(
+                lp = sampler.prior.logpdf(x) + constraint.marginal_log_likelihood(
                     ym, *np.atleast_1d(x)
                 )
+                return float(np.squeeze(lp))
 
             x0 = starting_locations[i]
             sampler.sample(n_steps, x0, self.rng, log_posterior_lm, burn=burn)
