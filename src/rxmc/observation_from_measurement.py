@@ -88,7 +88,7 @@ def set_up_observation(
             )
         else:
             y_sys_err_offset_value = (
-                float(y_sys_err_offset_value)
+                np.asarray(y_sys_err_offset_value).item()
                 if offset_is_scalar
                 else y_sys_err_offset_value[0]
             )
@@ -109,7 +109,7 @@ def set_up_observation(
         else:
             y_sys_err_normalization_mask = None
             y_sys_err_normalization_value = (
-                float(ratio) if ratio_is_scalar else ratio[0]
+                np.asarray(ratio).item() if ratio_is_scalar else ratio[0]
             )
 
     if ObservationClass is Observation:

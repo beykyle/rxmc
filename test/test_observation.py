@@ -3,6 +3,7 @@ import unittest
 import numpy as np
 
 from rxmc.observation import FixedCovarianceObservation, Observation
+from rxmc.observation_from_measurement import set_up_observation
 
 
 class TestObservation(unittest.TestCase):
@@ -209,6 +210,36 @@ class TestFixedCovarianceObservation(unittest.TestCase):
         covariance = np.array([0.1, 0.2])
         obs = FixedCovarianceObservation(x, y, covariance)
         np.testing.assert_array_almost_equal(obs.covariance(y), np.diag(covariance))
+
+
+class TestSetUpObservation(unittest.TestCase):
+
+    def test_scalar_like_offset_error_supported(self):
+        x = np.array([1.0, 2.0])
+        y = np.array([3.0, 4.0])
+        normalization = np.ones_like(y)
+        args, kwargs, _ = set_up_observation(
+            Observation,
+            y=y,
+            normalization=normalization,
+            x=x,
+            y_sys_err_offset=np.array(0.1),
+        )
+        np.testing.assert_array_equal(args[0], x)
+        self.assertEqual(kwargs["y_sys_err_offset"], 0.1)
+
+    def test_scalar_like_normalization_error_supported(self):
+        x = np.array([1.0, 2.0])
+        y = np.array([3.0, 4.0])
+        normalization = np.ones_like(y)
+        _, kwargs, _ = set_up_observation(
+            Observation,
+            y=y,
+            normalization=normalization,
+            x=x,
+            y_sys_err_normalization=np.array(0.05),
+        )
+        self.assertEqual(kwargs["y_sys_err_normalization"], 0.05)
 
 
 if __name__ == "__main__":
