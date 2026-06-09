@@ -165,6 +165,19 @@ entry points are:
 - `examples/normalization_inference.ipynb` for normalization-focused modeling,
 - `examples/sampling_algos.ipynb` for sampling comparisons.
 
+## Documentation
+
+The full API reference and rendered example notebooks are hosted at
+**https://beykyle.github.io/rxmc/**.
+
+To build the documentation locally:
+
+```bash
+pip install -ve '.[docs]'
+cd docs && make html
+# then open docs/_build/html/index.html
+```
+
 ## Testing
 
 Run the full validation matrix with:
@@ -175,7 +188,7 @@ python -m black --check src test
 python -m ruff check src test
 python -m nbqa isort --check examples/*.ipynb
 python -m black --check --ipynb examples/*.ipynb
-python -m nbqa ruff examples/*.ipynb
+python -m ruff check examples/*.ipynb
 python -m pytest
 ```
 
@@ -187,7 +200,6 @@ python -m black src test
 python -m ruff check --fix src test
 python -m nbqa isort examples/*.ipynb
 python -m black --ipynb examples/*.ipynb
-python -m nbqa ruff --fix --unsafe-fixes examples/*.ipynb
 ```
 
 Run only the unit tests with:

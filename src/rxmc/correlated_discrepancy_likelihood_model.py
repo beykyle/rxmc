@@ -1,3 +1,12 @@
+"""
+Gaussian-process discrepancy likelihood model using sklearn kernels.
+
+:class:`SklearnKernelGPDiscrepancyModel` adds a GP discrepancy term to the
+observation covariance, with the kernel hyperparameters sampled alongside the
+physical-model parameters via the :class:`~rxmc.likelihood_model.ParametricLikelihoodModel`
+interface.
+"""
+
 import numpy as np
 from sklearn.gaussian_process.kernels import Kernel
 
@@ -7,13 +16,30 @@ from .params import Parameter
 
 
 class SklearnKernelGPDiscrepancyModel(ParametricLikelihoodModel):
-    """
-    GP discrepancy via an externally-defined sklearn Kernel object.
+    """Parametric likelihood with a GP discrepancy covariance term.
 
-    We infer the kernel's free hyperparameters by sampling kernel.theta
-    (which sklearn stores in log-space for positive parameters).
+    Adds a kernel-based GP discrepancy covariance to the observation covariance:
 
-    covariance = observation.covariance(ym) + K_disc(x,x; kernel.theta) + jitter*I
+    .. math::
+
+        \\Sigma = \\Sigma_{\\mathrm{obs}}(y_m) + K_{\\mathrm{disc}}(x, x;\\,\\theta) + \\epsilon I
+
+    The free hyperparameters of the sklearn kernel (those not marked ``fixed``)
+    become likelihood parameters that are sampled alongside the physical-model
+    parameters.  sklearn stores hyperparameters in log space via ``kernel.theta``,
+    so the sampled values are also in log space.
+
+    Parameters
+    ----------
+    kernel : sklearn.gaussian_process.kernels.Kernel
+        Frozen sklearn kernel.  Free hyperparameters (``hp.fixed == False``)
+        are registered as likelihood parameters.
+    jitter : float, optional
+        Small diagonal regularisation added to the GP covariance matrix for
+        numerical stability.  Defaults to ``1e-10``.
+    param_prefix : str, optional
+        Prefix applied to each hyperparameter name when building the
+        :class:`~rxmc.params.Parameter` list.  Defaults to ``"discrepancy_"``.
     """
 
     def __init__(
@@ -26,18 +52,13 @@ class SklearnKernelGPDiscrepancyModel(ParametricLikelihoodModel):
         self.jitter = float(jitter)
         self.param_prefix = param_prefix
 
-        # Build Parameter list from sklearn kernel hyperparameters
-        # We only include non-fixed hypers (those that appear in theta).
-        # sklearn: kernel.theta is an array of the free hyperparameters (log-space).
         likelihood_params = []
         for hp in kernel.hyperparameters:
             if hp.fixed:
                 continue
-            # These correspond (in order) to entries in kernel.theta
-            # We'll store them as log-values to match sklearn's convention.
             likelihood_params.append(
                 Parameter(
-                    f"{param_prefix}_{hp.name}",  # e.g. disc_k1__constant_value
+                    f"{param_prefix}_{hp.name}",
                     float,
                     latex_name=hp.name,
                 )
@@ -48,21 +69,56 @@ class SklearnKernelGPDiscrepancyModel(ParametricLikelihoodModel):
     def _kernel_matrix(
         self, observation: Observation, theta_vec: np.ndarray
     ) -> np.ndarray:
+        """Evaluate the GP kernel matrix for the observation input grid.
+
+        Parameters
+        ----------
+        observation : Observation
+            Observation whose ``x`` attribute provides the input locations.
+        theta_vec : np.ndarray
+            Kernel hyperparameters in sklearn's log space.
+
+        Returns
+        -------
+        np.ndarray, shape (n, n)
+            Kernel matrix evaluated at ``observation.x``.
+        """
         X = np.asarray(observation.x)
         if X.ndim == 1:
             X = X[:, None]
-        # clone kernel with the provided theta (log-space)
         k = self.kernel.clone_with_theta(np.asarray(theta_vec, dtype=float))
-        return k(X)  # (N,N)
+        return k(X)
 
     def covariance(self, observation: Observation, ym: np.ndarray, *kernel_theta):
+        """Total covariance: observation covariance plus GP discrepancy.
+
+        Parameters
+        ----------
+        observation : Observation
+            Observation object.
+        ym : np.ndarray
+            Model prediction for the observation.
+        *kernel_theta : float
+            Kernel hyperparameter values in sklearn's log space, one per free
+            hyperparameter of the kernel.
+
+        Returns
+        -------
+        np.ndarray, shape (n, n)
+            Combined covariance matrix.
+
+        Raises
+        ------
+        ValueError
+            If the number of *kernel_theta* values does not match
+            ``self.n_params``.
+        """
         if len(kernel_theta) != self.n_params:
             raise ValueError(
                 f"Expected {self.n_params} kernel hyperparameters, got {len(kernel_theta)}"
             )
 
         sigma_obs = observation.covariance(ym)
-
         K_disc = self._kernel_matrix(observation, np.array(kernel_theta, dtype=float))
 
         cov = sigma_obs + K_disc

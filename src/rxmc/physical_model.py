@@ -1,3 +1,14 @@
+"""
+Abstract physical model and a concrete polynomial model.
+
+A :class:`PhysicalModel` maps a parameter vector to predicted observable values
+for a given :class:`~rxmc.observation.Observation`.  Subclasses implement
+:meth:`~PhysicalModel.evaluate`; the base class makes the object callable so it
+can be used directly as ``model(obs, *params)``.
+
+:class:`Polynomial` is a ready-to-use implementation for polynomial regression.
+"""
+
 import numpy as np
 
 from .observation import Observation
@@ -5,34 +16,45 @@ from .params import Parameter
 
 
 class PhysicalModel:
-    """
-    Represents an arbitrary parameteric model $y_{model}(x;params)$, for
-    comparison to some experimental measurement $\{x_i, y(x_i)\}$ contained
-    in an Observation object
+    """Abstract base class for parametric physical models.
+
+    Represents an arbitrary parametric model
+    $y_{\\mathrm{model}}(x;\\,\\alpha)$ for comparison to an experimental
+    measurement $\\{x_i,\\, y(x_i)\\}$ encapsulated in an
+    :class:`~rxmc.observation.Observation`.
+
+    Parameters
+    ----------
+    params : list of Parameter
+        Parameters that define the model.  Each entry should carry a name
+        and a data type.
     """
 
     def __init__(self, params: list[Parameter]):
-        """
-        Initialize the PhysicalModel with a list of parameters.
-        Parameters:
-        ----------
-        params: list[Parameter]
-            A list of Parameter objects that define the model's parameters.
-            Each Parameter should have a name and a dtype.
-        """
         self.params = params
         self.n_params = len(self.params)
 
     def evaluate(self, observation: Observation, *params) -> np.ndarray:
-        """
-        Evaluate the model at the given parameter values.
-        Should be overridden by subclasses.
+        """Evaluate the model at the given parameter values.
 
-        Parameters:
+        Must be overridden by subclasses.
+
+        Parameters
         ----------
-        observation: Observation object containing x and y data.
-        params: Parameters for the model, should match the model's parameters.
+        observation : Observation
+            Observation containing the independent-variable grid.
+        *params : float
+            Model parameter values.
 
+        Returns
+        -------
+        np.ndarray
+            Predicted observable values on the observation grid.
+
+        Raises
+        ------
+        NotImplementedError
+            Always — subclasses must implement this method.
         """
         raise NotImplementedError("Subclasses must implement the evaluate method.")
 
@@ -41,12 +63,18 @@ class PhysicalModel:
 
 
 class Polynomial(PhysicalModel):
-    """
-    Polynomial model for fitting, of the form:
-    \[
-        y_{model}(x; params) = \sum_{i=0}^{n} a_i x^i
-    \]
-    where $params = [a_0, a_1, ..., a_n]$.
+    r"""Polynomial model of fixed order.
+
+    Predicts observable values as
+
+    .. math::
+
+        y_{\mathrm{model}}(x;\,a_0,\dots,a_n) = \sum_{i=0}^{n} a_i\, x^i
+
+    Parameters
+    ----------
+    order : int
+        Polynomial order $n$.  The model has $n+1$ free coefficients.
     """
 
     def __init__(self, order: int):
@@ -57,33 +85,31 @@ class Polynomial(PhysicalModel):
         super().__init__(params)
 
     def evaluate(self, observation: Observation, *params) -> np.ndarray:
-        """
-        Evaluate the polynomial model at the given parameter values.
+        """Evaluate the polynomial at the observation grid.
 
-        Parameters:
+        Parameters
         ----------
-            observation: Observation
-                Observation object containing x and y data.
-            params: tuple
-                coefficients for the polynomial
+        observation : Observation
+            Observation whose ``x`` attribute provides the evaluation grid.
+        *params : float
+            Polynomial coefficients ``a0, a1, ..., an`` (lowest order first).
 
-        Returns:
-            numpy.ndarray: Evaluated polynomial values at observation.x.
+        Returns
+        -------
+        np.ndarray
+            Polynomial values at ``observation.x``.
 
-        Raises:
-            ValueError: If the number of parameters does not match the model order.
+        Raises
+        ------
+        ValueError
+            If the number of supplied coefficients does not match
+            ``self.order + 1``.
         """
         if len(params) != self.order + 1:
             raise ValueError(
                 f"Expected {len(self.params)} parameters, got {len(params)}"
             )
 
-        # Create an exponent matrix for the x values
-        # alternatively, one could implement a derived class of
-        # Observation that precomputes the Vander matrix
         x_powers = np.vander(observation.x, self.order + 1, increasing=True)
-
-        # Compute the dot product to get the result
         y = np.dot(x_powers, np.asarray(params))
-
         return y

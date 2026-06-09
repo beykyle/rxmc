@@ -1,23 +1,54 @@
+"""
+Evidence: aggregate of independent constraints for Bayesian calibration.
+
+An :class:`Evidence` object collects multiple :class:`~rxmc.constraint.Constraint`
+objects that share the same physical-model parameters.  It computes a joint log
+likelihood by summing the individual constraint log likelihoods (optionally
+weighted), supporting both fixed and parametric likelihood models via a
+Gibbs-style decomposition.
+"""
+
 import numpy as np
 
 from .constraint import Constraint
 
 
 class Evidence:
-    """
-    A collection of independent `Constraint`s that can be used together to
-    constrain a common physical model.
+    """A collection of independent constraints sharing a common physical model.
 
-    Each `Constraint` represents a set of `Observation`s and a `LikelihoodModel`.
-    Each `Constraint` must share the same `PhysicalModel` parameters, but may
-    have different `LikelihoodModel` parameters.
+    Each :class:`~rxmc.constraint.Constraint` represents a set of observations
+    paired with a likelihood model.  All constraints must share the same
+    physical-model parameters, but may have different likelihood-model parameters.
 
-    This class is designed to aggregate multiple constraints, so that, for a
-    given set of physical model parameters (and, optionally, likelihood model
-    parameters), a log likelihood can be computed.
+    Optional per-constraint weights scale the contribution of each constraint to
+    the total log likelihood.
 
-    Optionally, weights can be assigned to each constraint, which will
-    scale the contribution of each constraint to the total log likelihood.
+    Parameters
+    ----------
+    constraints : list of Constraint, optional
+        Constraints whose likelihood models have no free parameters.
+    parametric_constraints : list of Constraint, optional
+        Constraints whose likelihood models have free parameters.
+    weights : np.ndarray, optional
+        1-D array of weights for *constraints*.  Defaults to all ones.
+    weights_parametric : np.ndarray, optional
+        1-D array of weights for *parametric_constraints*.  Defaults to all ones.
+
+    Raises
+    ------
+    ValueError
+        If both *constraints* and *parametric_constraints* are empty.
+    ValueError
+        If any constraint uses different physical-model parameters than the first.
+    ValueError
+        If a non-parametric constraint appears in *parametric_constraints*, or
+        vice versa.
+    ValueError
+        If the number of data points is less than the number of free parameters
+        (under-constrained model).
+    ValueError
+        If *weights* or *weights_parametric* do not match the corresponding list
+        length.
     """
 
     def __init__(
@@ -27,39 +58,6 @@ class Evidence:
         weights: np.ndarray = None,
         weights_parametric: np.ndarray = None,
     ):
-        """
-        Initialize the Evidence with a list of constraints and parametric constraints.
-
-        Parameters
-        ----------
-        constraints : list[Constraint]
-            A list of `Constraint` objects that do not have parametric likelihoods.
-        parametric_constraints : list[Constraint]
-            A list of `Constraint` objects that have parametric likelihoods.
-        weights : np.ndarray, optional
-            A 1D array of weights for the regular constraints, which will scale
-            the contribution of each constraint to the total log likelihood.
-        weights_parametric : np.ndarray, optional
-            A 1D array of weights for the parametric constraints, which will scale
-            the contribution of each constraint to the total log likelihood.
-            Defaults to None, meaning all parametric constraints are equally weighted.
-
-        Raises
-        -------
-        ValueError
-            If the constraints or parametric_constraints are empty,
-            or if the physical model parameters do not match across constraints,
-            or if the likelihood models are incorrectly assigned to the lists.
-        ValueError
-            If the number of data points is less than the number of parameters,
-            indicating an under-constrained model.
-        ValueError
-            If the weights do not match the number of constraints
-        ValueError
-            If the constraints and parametric_constraints do not share the same
-            physical model parameters, or if there are mismatches in the likelihood
-            models assigned to the constraints.
-        """
         constraints = constraints or []
         parametric_constraints = parametric_constraints or []
 
@@ -76,7 +74,6 @@ class Evidence:
         self.parametric_constraints = parametric_constraints
         self.n_likelihood_params = 0
 
-        # check the regular constraints
         for constraint in self.constraints:
             if constraint.physical_model.params != self.model_params:
                 raise ValueError(
@@ -89,7 +86,6 @@ class Evidence:
                     "in the `parametric_constraints` list"
                 )
 
-        # check the parametric constraints
         for constraint in self.parametric_constraints:
             if constraint.physical_model.params != self.model_params:
                 raise ValueError(
@@ -136,24 +132,24 @@ class Evidence:
     def log_likelihood(
         self, model_params, likelihood_params: list[tuple] | None = None
     ):
-        """
-        Calculate the log likelihood
+        """Weighted sum of log likelihoods over all constraints.
 
         Parameters
         ----------
         model_params : tuple
-            The parameters of the physical model.
-        likelihood_params : list[tuple], optional
-            Parameters for the likelihood model.
+            Parameters of the physical model.
+        likelihood_params : list of tuple, optional
+            One tuple of likelihood parameters per entry in
+            *parametric_constraints*.  Defaults to an empty list.
+
         Returns
         -------
         float
-            The total log likelihood.
+            Total weighted log likelihood.
         """
         likelihood_params = likelihood_params or []
         assert len(likelihood_params) == len(self.parametric_constraints)
 
-        # Serial computation if no executor is provided
         ll = sum(
             c.log_likelihood(model_params) * w
             for w, c in zip(self.weights, self.constraints)

@@ -1,3 +1,11 @@
+"""
+Adaptive Metropolis MCMC sampler with sliding-window covariance adaptation.
+
+The :func:`adaptive_metropolis` function implements the AM algorithm of Haario,
+Saksman & Tamminen (2001), extended with a sliding window so that old samples
+do not dominate the estimated proposal covariance.
+"""
+
 from typing import Callable, Tuple
 
 import numpy as np
@@ -14,31 +22,48 @@ def adaptive_metropolis(
     epsilon_fraction: float = 1e-6,
     previous_chain: np.ndarray = None,
 ) -> Tuple[np.ndarray, np.ndarray, int]:
-    """
-    Adaptive Metropolis algorithm with a sliding window covariance adaptation.
-        Parameters:
-        ---------
-        x0 : np.ndarray
-            Initial point in the parameter space.
-        bounds : np.ndarray
-            Bounds for the parameters, shape (n_params, 2).
-        n_steps : int
-            Number of MCMC steps to perform.
-        log_posterior : Callable[[np.ndarray], float]
-            Function to compute the log posterior probability.
-        rng : np.random.Generator
-            Random number generator for reproducibility.
-        adapt_start : int
-            Step at which adaptation starts.
-        window_size : int
-            Size of the sliding window for covariance estimation.
-        epsilon_fraction : float
-            Fraction of the mean diagonal element to add to the covariance matrix for stability.
-        previous_chain : np.ndarray, optional
-            Previous chain to continue from, if any. Defaults to None. If provided, the new
-            chain will be appended to it, and adapt_start will be ignored.
-    """
+    """Adaptive Metropolis algorithm with sliding-window covariance adaptation.
 
+    Before *adapt_start* steps the proposal is a diagonal Gaussian scaled to
+    1 % of ``|x0|``.  After *adapt_start* steps the proposal covariance is
+    estimated from the last *window_size* samples and scaled by
+    ``2.38² / ndim`` (the Gelman–Roberts–Gilks optimal scale).
+
+    Parameters
+    ----------
+    x0 : np.ndarray, shape (ndim,)
+        Initial parameter vector.
+    bounds : np.ndarray, shape (ndim, 2)
+        Parameter bounds; each row is ``[lower, upper]``.  Proposals outside
+        these bounds are rejected outright.
+    n_steps : int
+        Number of MCMC steps to generate.
+    log_posterior : callable
+        Function ``f(x) -> float`` returning the log posterior at ``x``.
+    rng : np.random.Generator
+        Random number generator for reproducibility.
+    adapt_start : int, optional
+        Step index at which covariance adaptation begins.  Ignored when
+        *previous_chain* is supplied.  Defaults to ``1000``.
+    window_size : int, optional
+        Number of past samples used for covariance estimation.
+        Defaults to ``1000``.
+    epsilon_fraction : float, optional
+        Fraction of the mean diagonal element added to the covariance for
+        numerical stability.  Defaults to ``1e-6``.
+    previous_chain : np.ndarray, shape (m, ndim), optional
+        Chain from a prior run to continue from.  When provided the new
+        samples are appended and adaptation uses all available history.
+
+    Returns
+    -------
+    chain : np.ndarray, shape (n_steps, ndim)
+        Newly generated samples (does not include *previous_chain*).
+    logp_chain : np.ndarray, shape (n_steps,)
+        Log posterior values for the new samples.
+    accepted : int
+        Number of accepted proposals in this run.
+    """
     dim = x0.size
     if previous_chain is not None and previous_chain.shape[0] > 0:
         start = previous_chain.shape[0]
@@ -59,16 +84,12 @@ def adaptive_metropolis(
             proposal_scale = np.maximum(np.abs(x0), 1.0) * 0.01
             proposal_cov = np.diag(proposal_scale**2)
         else:
-            # Determine the index range for the sliding window
             start_idx = max(0, i - window_size)
             history_subset = chain[start_idx:i, ...]
-
-            # Use the window of samples to compute the covariance
             cov = np.atleast_2d(np.cov(history_subset.T))
             cov += epsilon_fraction * np.diag(np.mean(history_subset, axis=0) ** 2)
             proposal_cov = scale * cov
 
-        # Propose new point
         x_new = rng.multivariate_normal(x, proposal_cov)
         if np.any(x_new < bounds[:, 0]) or np.any(x_new > bounds[:, 1]):
             chain[i, :] = x
@@ -76,7 +97,6 @@ def adaptive_metropolis(
             continue
         logp_new = log_posterior(x_new)
 
-        # Acceptance probability
         log_ratio = min(0, logp_new - logp)
         if np.log(rng.random()) < log_ratio:
             x = x_new

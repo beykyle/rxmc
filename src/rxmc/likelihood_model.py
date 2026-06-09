@@ -1,3 +1,25 @@
+"""
+Likelihood models for comparing physical-model predictions to observations.
+
+All classes derive from :class:`LikelihoodModel`.  The base class uses a
+covariance matrix built from the observation's statistical and systematic errors.
+Subclasses extend this with unknown noise, normalization, model-error, and
+Student-t variants.  Parametric likelihood models expose free parameters that
+can be sampled alongside the physical-model parameters.
+
+Helper functions
+----------------
+:func:`mahalanobis_distance_sqr_cholesky`
+    Squared Mahalanobis distance and log-determinant via Cholesky decomposition.
+:func:`log_likelihood`
+    Multivariate-normal log likelihood from pre-computed distance and
+    log-determinant.
+:func:`statistical_covariance`
+    Diagonal covariance matrix from a vector of statistical errors.
+:func:`uncorrelated_model_covariance`
+    Diagonal model-error covariance scaled by a fractional error.
+"""
+
 import numpy as np
 import scipy as sc
 
@@ -101,14 +123,12 @@ class LikelihoodModel:
         return observation.covariance(ym)
 
     def residual(self, observation: Observation, ym: np.ndarray):
-        r"""
-        Returns the residual between the model prediction ym and
-        observation.y
+        r"""Return the residual ``observation.y - ym``.
 
-        Parameters:
+        Parameters
         ----------
         observation : Observation
-            The observation object containing the observed data.
+            Observation containing the measured data.
         ym : np.ndarray
             Model prediction for the observation.
 
@@ -725,11 +745,12 @@ class UnknownModelError(ParametricLikelihoodModel):
         Initializes the UnknownModelError instance.
 
         Parameters
-        averaging : bool
-            If True, the model error is calculated using the average of
-            observation.y and ym, i.e., 0.5 * (observation.y + ym).
-            This can help stabilize the optimization when ym is very small
-            or zero. If False, the model error is calculated using ym only.
+        Parameters
+        ----------
+        averaging : bool, optional
+            If ``True``, the model error term uses ``0.5 * (observation.y + ym)``
+            instead of ``ym`` alone, which improves stability when ``ym`` is
+            near zero.  Defaults to ``True``.
         """
         likelihood_params = [
             Parameter(
@@ -845,17 +866,23 @@ def scale_covariance(
 
 
 def mahalanobis_distance_sqr_cholesky(y, ym, cov):
-    r"""
-    Calculate the square of the Mahalanobis distance between
-    y and ym, and the log determinant of the covariance matrix.
+    r"""Squared Mahalanobis distance and log-determinant via Cholesky factorisation.
 
-    Parameters:
-    y (array-like): The observation vector.
-    ym (array-like): The model prediction vector.
-    cov (array-like): The covariance matrix.
+    Parameters
+    ----------
+    y : array-like, shape (n,)
+        Observation vector.
+    ym : array-like, shape (n,)
+        Model prediction vector.
+    cov : array-like, shape (n, n)
+        Positive-definite covariance matrix.
 
-    Returns:
-    tuple: Mahalanobis distance and log determinant of the covariance matrix.
+    Returns
+    -------
+    mahalanobis_sqr : float
+        $(y - y_m)^T \Sigma^{-1} (y - y_m)$.
+    log_det : float
+        $\log \det \Sigma$.
     """
     L = sc.linalg.cholesky(cov, lower=True)
     z = sc.linalg.solve_triangular(L, y - ym, lower=True)
@@ -866,16 +893,21 @@ def mahalanobis_distance_sqr_cholesky(y, ym, cov):
 
 
 def log_likelihood(mahalanobis_sqr: float, log_det: float, n: int):
-    r"""
-    Calculate the log likelihood of a multivariate normal distribution.
+    r"""Multivariate-normal log likelihood from pre-computed statistics.
 
-    Parameters:
-    mahalanobis_sqr (float): The Mahalanobis distance.
-    log_det (float): The log determinant of the covariance matrix.
-    n (int): The dimension of the data.
+    Parameters
+    ----------
+    mahalanobis_sqr : float
+        Squared Mahalanobis distance $(y - y_m)^T \Sigma^{-1} (y - y_m)$.
+    log_det : float
+        $\log \det \Sigma$.
+    n : int
+        Number of data points.
 
-    Returns:
-    float: The log likelihood value.
+    Returns
+    -------
+    float
+        Log likelihood value.
     """
     return -0.5 * (mahalanobis_sqr + log_det + n * np.log(2 * np.pi))
 

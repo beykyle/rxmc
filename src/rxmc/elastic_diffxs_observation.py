@@ -1,3 +1,12 @@
+"""
+Observation class for elastic differential cross sections.
+
+:class:`ElasticDifferentialXSObservation` wraps a ``jitr``
+:class:`jitr.xs.elastic.DifferentialWorkspace` to pre-compute boundary
+conditions and Rutherford cross sections, then delegates covariance and
+residual computation to a chosen :class:`~rxmc.observation.Observation` subclass.
+"""
+
 from typing import Type
 
 import jitr
@@ -62,51 +71,52 @@ class ElasticDifferentialXSObservation:
         compound_correction: np.ndarray = None,
     ):
         """
-        Initialize a ReactionObservation instance.
-
-        Parameters:
+        Parameters
         ----------
         x : np.ndarray
             Measured angle grid in degrees.
         y : np.ndarray
             Measured observable values.
         Elab : float
-            Laboratory energy of the measurement in MeV.
-        quantity: str
-            The type of quantity to be calculated (e.g., "dXS/dA",
-            "dXS/dRuth", "Ay").
-        measurement_quantity: str
-            The quantity represented by the supplied `y` values.
-        y_units: str
-            Units of the supplied `y` values.
+            Laboratory energy in MeV.
+        reaction : jitr.reactions.Reaction
+            Reaction system definition.
+        quantity : str
+            Observable to compute: ``"dXS/dA"``, ``"dXS/dRuth"``, or ``"Ay"``.
+        measurement_quantity : str
+            Observable represented by the supplied *y* values.
+        y_units : str
+            Units of the supplied *y* values (e.g. ``"mb/sr"``).
         y_stat_err : np.ndarray, optional
-            Statistical errors associated with `y`.
+            Statistical errors associated with *y*.
         y_sys_err_normalization : float or array-like, optional
-            Systematic normalization error(s) associated with `y`.
+            Systematic normalization error(s) associated with *y*.
         y_sys_err_offset : float or array-like, optional
-            Systematic offset error(s) associated with `y`.
+            Systematic offset error(s) associated with *y*.
         dataset_label : str, optional
             Human-readable dataset identifier used in error messages.
-        lmax: int
-            Maximum angular momentum, defaults to 20.
-        wavelengths_beyond_range: float
-            Number of wavelengths beyond the interaction range to set the channel radius.
-        zeros_per_node: int
-            Number of zeros of the basis functions per node in the R-matrix solver.
-        angles_vis: np.ndarray
-            Array of angles in degrees for visualization.
-        ObservationClass: Type[Observation]
-            The base class Type that this instance will inherit from;
-            must be a subclass of `Observation`. Defaults to the base
-            class `Observation`, but the user can supply any other subclass.
-            For example, if one wants the covariance to be precomputed one
-            can supply `FixedCovarianceObservation` instead here.
-        error_kwargs: dict
-            Additional keyword arguments for error handling.
-        compound_correction: np.ndarray
-            Optional array of the compound contribution to the differential
-            cross section in mb/sr to be added to the calculated cross section
-            before comparing to data.
+        lmax : int, optional
+            Maximum angular momentum.  Defaults to ``20``.
+        wavelengths_beyond_range : float, optional
+            Number of wavelengths beyond the interaction range used to set
+            the channel radius.  Defaults to ``2.0``.
+        zeros_per_node : int, optional
+            Number of basis-function zeros per node in the R-matrix solver.
+            Defaults to ``5``.
+        angles_vis : np.ndarray, optional
+            Angle grid in degrees for visualisation.  Defaults to
+            ``np.linspace(0.01, 180, 100)``.
+        ObservationClass : type, optional
+            :class:`~rxmc.observation.Observation` subclass to use for
+            covariance and residual computations.  Supply
+            :class:`~rxmc.observation.FixedCovarianceObservation` to
+            pre-compute the inverse covariance.  Defaults to
+            :class:`~rxmc.observation.Observation`.
+        error_kwargs : dict, optional
+            Extra keyword arguments forwarded to *ObservationClass*.
+        compound_correction : np.ndarray, optional
+            Compound-nuclear contribution to dXS/dΩ in mb/sr, added to the
+            calculated cross section before comparing to data.
         """
         if not issubclass(ObservationClass, Observation):
             raise ValueError("ObservationClass must be a subclass of Observation")
@@ -279,30 +289,35 @@ def set_up_solver(
     zeros_per_node: int = 5,
 ):
     """
-    Set up the solver for the reaction.
+    Set up ``jitr`` workspaces for a reaction at a given energy.
 
     Parameters
     ----------
-    reaction :
-        Reaction information.
+    reaction : jitr.reactions.Reaction
+        Reaction system definition.
     Elab : float
-        Laboratory energy.
-    angle_rad_constraint : np.array
-        Angles to compare to experiment (rad).
-    angle_rad_vis : np.array
-        Angles to visualize on (rad)
+        Laboratory energy in MeV.
+    angle_rad_constraint : np.ndarray
+        Angles in radians for comparison to experiment.
+    angle_rad_vis : np.ndarray
+        Angles in radians for visualisation.
     lmax : int
         Maximum angular momentum.
-    wavelengths_beyond_range : float
-        Number of wavelengths beyond the interaction
-        range to set the channel radius.
-    zeros_per_node : int
-        Number of zeros of the basis functions per
-        node in the R-matrix solver.
+    wavelengths_beyond_range : float, optional
+        Number of wavelengths beyond the interaction range used to set the
+        channel radius.  Defaults to ``2.0``.
+    zeros_per_node : int, optional
+        Number of basis-function zeros per node in the R-matrix solver.
+        Defaults to ``5``.
+
     Returns
     -------
-    tuple
-        constraint and visualization workspaces.
+    constraint_ws : jitr.xs.elastic.DifferentialWorkspace
+        Workspace on the constraint angle grid.
+    visualization_ws : jitr.xs.elastic.DifferentialWorkspace
+        Workspace on the visualisation angle grid.
+    kinematics : jitr.reactions.Kinematics
+        Kinematic quantities for the reaction.
     """
     kinematics = reaction.kinematics(Elab)
     k = kinematics.k

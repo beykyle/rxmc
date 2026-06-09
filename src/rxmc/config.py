@@ -1,180 +1,249 @@
 """
 Configuration helpers for calibration workflows.
 
-`CalibrationConfig` is the main integration surface for external samplers such
-as black-box-bayes. It exposes a flat parameterization of an `Evidence`
-instance along with the minimal sampler-facing methods needed to evaluate the
-posterior and generate starting locations.
+``CalibrationConfig`` is the main integration surface for external samplers
+such as black-box-bayes.  It exposes a flat parameterization of an
+``Evidence`` instance together with the sampler-facing methods needed to
+evaluate the posterior and generate starting locations.
+
+Prior protocol
+--------------
+Both ``ParameterConfig`` and ``CalibrationConfig`` accept any prior object
+that implements:
+
+* ``logpdf(x: ndarray) -> float`` — log-density at a parameter vector of
+  shape ``(ndim,)``.
+* ``rvs(n: int) -> ndarray`` — draw ``n`` samples; returned array must have
+  shape ``(n, ndim)`` or ``(n,)`` for scalar parameters.
+
+This covers ``scipy.stats`` frozen distributions (both univariate and
+multivariate), the built-in :class:`~rxmc.priors.TruncatedNormalPrior`, and
+any user-supplied class that satisfies the same interface.
+
+Alternatively, a **list** of univariate ``scipy.stats`` frozen distributions
+(one per parameter) may be passed.  This form and any prior class that
+implements ``prior_transform(u)`` both support the Dynesty-compatible
+:meth:`CalibrationConfig.prior_transform`.
 """
 
-from typing import List, Optional, Union
+from typing import List, Optional
 
 import numpy as np
-from scipy.stats import _multivariate, rv_continuous
 
 from rxmc.evidence import Evidence
 from rxmc.params import Parameter
 
-multivariate_distributions = (_multivariate.multivariate_normal_frozen,)
-MultivariateDistribution = Union[multivariate_distributions]
-
 
 class ParameterConfig:
-    """Configuration for a set of parameters, including their prior and initial
-    proposal distribution.
+    """Configuration for a single sector of parameters.
+
+    Bundles a list of :class:`~rxmc.params.Parameter` objects with a prior
+    distribution and an initial-proposal distribution.  Instances are passed
+    to :class:`CalibrationConfig` to describe the model-parameter sector and
+    each likelihood-parameter sector.
+
+    Parameters
+    ----------
+    params : list of Parameter
+        Ordered list of parameters in this sector.
+    prior : prior object or list of rv_continuous
+        Prior distribution.  May be any object that exposes ``logpdf`` and
+        ``rvs`` (e.g. a frozen ``scipy.stats`` multivariate distribution,
+        :class:`~rxmc.priors.TruncatedNormalPrior`, or any user-defined class
+        with the same interface), **or** a list of frozen univariate
+        ``scipy.stats`` distributions — one per parameter.
+    initial_proposal_distribution : prior object or list of rv_continuous
+        Starting-location proposal distribution.  Accepts the same forms as
+        ``prior``.
+
+    Raises
+    ------
+    ValueError
+        If ``params`` is empty.
+    ValueError
+        If the dimensionality implied by ``prior`` or
+        ``initial_proposal_distribution`` does not match ``len(params)``.
     """
 
     def __init__(
         self,
         params: List[Parameter],
-        prior: Union[MultivariateDistribution, List[rv_continuous]],
-        initial_proposal_distribution: Union[
-            MultivariateDistribution, List[rv_continuous]
-        ],
+        prior,
+        initial_proposal_distribution,
     ):
-        """
-        Initialize the ParameterConfig with parameters, prior, and initial
-        proposal distribution.
-
-        Parameters
-        ----------
-        params : list[Parameter]
-            List of Parameter objects defining the parameters.
-        prior : MultivariateDistribution or list of scipy.stats distributions
-            Prior distribution for the parameters.
-        initial_proposal_distribution : MultivariateDistribution or list of scipy.stats distributions
-            Initial proposal distribution for the parameters.
-
-        Raises
-        ------
-        ValueError
-            If params is empty.
-        ValueError
-            If the dimensions of the prior or initial proposal distribution do
-            not match the number of parameters.
-        """
         self.params = params
         self.ndim = len(params)
         self.prior = prior
         self.initial_proposal_distribution = initial_proposal_distribution
+
         if self.ndim == 0:
             raise ValueError("Parameter list cannot be empty")
 
-        # Check dimensions assuming suitable attributes (like .dim, etc.) exist
-        if isinstance(self.prior, multivariate_distributions):
-            if getattr(self.prior, "dim", len(self.prior.mean)) != self.ndim:
+        self._validate_prior_dim(self.prior, "prior")
+        self._validate_prior_dim(
+            self.initial_proposal_distribution, "initial_proposal_distribution"
+        )
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _infer_dim(dist) -> Optional[int]:
+        """Return the dimensionality of a prior object, or None if unknown."""
+        if hasattr(dist, "dim") and isinstance(dist.dim, int):
+            return dist.dim
+        if hasattr(dist, "mean"):
+            return int(np.size(dist.mean))
+        return None
+
+    def _validate_prior_dim(self, dist, name: str) -> None:
+        if isinstance(dist, list):
+            if len(dist) != self.ndim:
                 raise ValueError(
-                    "Prior distribution dimensions do not match number of parameters"
+                    f"{name} list length ({len(dist)}) does not match "
+                    f"number of parameters ({self.ndim})"
                 )
-        elif isinstance(self.prior, list):
-            if len(self.prior) != self.ndim:
+        else:
+            dim = self._infer_dim(dist)
+            if dim is not None and dim != self.ndim:
                 raise ValueError(
-                    "Prior distribution dimensions do not match number of parameters"
+                    f"{name} dimensionality ({dim}) does not match "
+                    f"number of parameters ({self.ndim})"
                 )
 
-        if isinstance(self.initial_proposal_distribution, multivariate_distributions):
-            if (
-                getattr(
-                    self.initial_proposal_distribution,
-                    "dim",
-                    len(self.initial_proposal_distribution.mean),
-                )
-                != self.ndim
-            ):
-                raise ValueError(
-                    "Initial proposal distribution dimensions do not match number of parameters"
-                )
-        elif isinstance(self.initial_proposal_distribution, list):
-            if len(self.initial_proposal_distribution) != self.ndim:
-                raise ValueError(
-                    "Initial proposal distribution dimensions do not match number of parameters"
-                )
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     def x0(self, nwalkers: int) -> np.ndarray:
-        """
-        Generate initial positions for walkers.
+        """Draw initial walker positions from the proposal distribution.
 
         Parameters
         ----------
         nwalkers : int
-            Number of walkers to generate initial positions for.
+            Number of walkers (rows) to generate.
+
+        Returns
+        -------
+        ndarray, shape (nwalkers, ndim)
+            One initial position per walker.
         """
-        if isinstance(self.initial_proposal_distribution, list):
-            samples = [
-                dist.rvs(nwalkers) for dist in self.initial_proposal_distribution
-            ]
+        dist = self.initial_proposal_distribution
+        if isinstance(dist, list):
+            samples = [d.rvs(nwalkers) for d in dist]
             return np.column_stack(samples)
-        samples = np.atleast_1d(self.initial_proposal_distribution.rvs(nwalkers))
+        samples = np.atleast_1d(dist.rvs(nwalkers))
         return samples.reshape(nwalkers, -1)
 
     def prior_logpdf(self, x: np.ndarray) -> float:
-        """
-        Compute the log prior probability of a parameter vector.
+        """Evaluate the log prior density at a parameter vector.
 
         Parameters
         ----------
-        x : np.ndarray
-            Parameter vector of shape (ndim,)
+        x : ndarray, shape (ndim,)
+            Parameter vector for this sector.
 
         Returns
         -------
         float
-            Log prior probability of the parameter vector(s).
+            Log prior probability at ``x``.
         """
         x = np.atleast_1d(x)
         if isinstance(self.prior, list):
             logpdfs = [dist.logpdf(x[i]) for i, dist in enumerate(self.prior)]
-            return np.sum(logpdfs)
-        return self.prior.logpdf(x)
+            return float(np.sum(logpdfs))
+        return float(self.prior.logpdf(x))
+
+    def prior_transform(self, u: np.ndarray) -> np.ndarray:
+        """Map unit-cube coordinates to physical parameters for this sector.
+
+        Supports two forms:
+
+        * **List prior** — each element must expose a ``ppf`` method (all
+          frozen ``scipy.stats`` univariate distributions do).
+        * **Joint prior with ``prior_transform``** — the prior object must
+          implement ``prior_transform(u) -> ndarray`` itself (e.g.
+          :class:`~rxmc.priors.TruncatedNormalPrior`).
+
+        Parameters
+        ----------
+        u : ndarray, shape (ndim,)
+            Unit-cube coordinates, each in ``[0, 1)``.
+
+        Returns
+        -------
+        ndarray, shape (ndim,)
+            Physical parameter vector for this sector.
+
+        Raises
+        ------
+        NotImplementedError
+            If the prior is neither a list nor exposes ``prior_transform``.
+        """
+        if isinstance(self.prior, list):
+            return np.array([dist.ppf(u[i]) for i, dist in enumerate(self.prior)])
+        if hasattr(self.prior, "prior_transform"):
+            return self.prior.prior_transform(u)
+        raise NotImplementedError(
+            "Prior transform requires either a list of distributions with ppf "
+            "or a prior object that implements prior_transform(u)."
+        )
 
 
 class CalibrationConfig:
-    """Configuration for calibration, including evidence, model parameters,
-    and likelihood parameters.
-    Attributes
+    """End-to-end configuration for Bayesian calibration.
+
+    Combines an :class:`~rxmc.evidence.Evidence` object with
+    :class:`ParameterConfig` instances for the physical-model parameters and
+    any parametric likelihood parameters.  The result is a flat
+    parameterization suitable for black-box samplers (emcee, Dynesty,
+    black-box-bayes, etc.).
+
+    Parameters
     ----------
     evidence : Evidence
-        Evidence object containing experimental constraints
+        Aggregated experimental constraints.
     model_config : ParameterConfig
-        Configuration for the model parameters.
-    likelihood_configs : list[ParameterConfig]
-        List of configurations for each likelihood's parameters.
+        Prior and proposal for the physical-model parameters.
+    likelihood_configs : list of ParameterConfig, optional
+        One :class:`ParameterConfig` per parametric constraint in
+        ``evidence.parametric_constraints``.  Omit or pass ``None`` when
+        there are no parametric likelihood models.
+    likelihood_scaling : float, optional
+        Multiplicative scale applied to the total log-likelihood before
+        adding the log-prior.  Useful for tempering or importance
+        re-weighting.  Defaults to ``1.0``.
+
+    Raises
+    ------
+    ValueError
+        If ``evidence`` contains no constraints.
+    ValueError
+        If the model parameters in ``model_config`` do not match those in
+        the evidence constraints.
+    ValueError
+        If the number or parameter lists of ``likelihood_configs`` do not
+        match ``evidence.parametric_constraints``.
+
+    Attributes
+    ----------
     ndim : int
-        Total number of parameters (model + likelihoods).
-    dimensions : np.ndarray
-        Array of dimensions for model and likelihood parameters.
-    indices : np.ndarray
-        Cumulative indices for splitting parameter vectors.
+        Total number of free parameters (model + all likelihood sectors).
+    dimensions : ndarray
+        Array of sector sizes ``[model_ndim, lc0_ndim, lc1_ndim, ...]``.
+    indices : ndarray
+        Cumulative split indices derived from ``dimensions``; used by
+        :meth:`split_parameters`.
     """
 
     def __init__(
         self,
         evidence: Evidence,
         model_config: ParameterConfig,
-        likelihood_configs: Optional[list[ParameterConfig]] = None,
+        likelihood_configs: Optional[list] = None,
         likelihood_scaling: Optional[float] = None,
     ):
-        """
-        Initialize the CalibrationConfig with evidence, model configuration,
-        and likelihood configurations.
-        Parameters
-        ----------
-        evidence : Evidence
-            Evidence object containing experimental constraints
-        model_config : ParameterConfig
-            Configuration for the model parameters.
-        likelihood_configs : list[ParameterConfig]
-            List of configurations for each likelihood's parameters.
-        Raises
-        ------
-        ValueError
-            If the evidence has no constraints.
-        ValueError
-            If the model parameters do not match those in the evidence constraints.
-        ValueError
-            If the likelihood configurations do not match the likelihood models
-            in the evidence constraints.
-        """
         self.evidence = evidence
         self.model_config = model_config
         self.likelihood_configs = likelihood_configs or []
@@ -212,59 +281,108 @@ class CalibrationConfig:
         self.dimensions = np.array(
             [self.model_config.ndim] + [lc.ndim for lc in self.likelihood_configs]
         )
-
-        # indices used to un-flatten parameter vector into sub-vectors
-        # corresponding to model and likelihood parameters
         self.indices = np.cumsum(self.dimensions)
 
-    def split_parameters(self, x) -> tuple[np.ndarray, list[np.ndarray]]:
+    # ------------------------------------------------------------------
+    # Structural properties
+    # ------------------------------------------------------------------
+
+    @property
+    def parameter_configs(self) -> list:
+        """All parameter sectors in flat sampler order: model first, then likelihoods."""
+        return [self.model_config] + self.likelihood_configs
+
+    @property
+    def parameters(self) -> List[Parameter]:
+        """All :class:`~rxmc.params.Parameter` objects in flat sampler order.
+
+        The order matches the flat parameter vector consumed by
+        :meth:`log_posterior`, :meth:`log_likelihood`, and
+        :meth:`starting_location`.
         """
-        Split a flat parameter vector into model and likelihood parameter vectors.
+        return [param for pc in self.parameter_configs for param in pc.params]
+
+    @property
+    def parameter_names(self) -> List[str]:
+        """Flat parameter names in sampler order.
+
+        Convenience accessor equivalent to
+        ``[p.name for p in self.parameters]``.  Provided for compatibility
+        with external drivers such as black-box-bayes that export inference
+        results keyed by name.
+        """
+        return [p.name for p in self.parameters]
+
+    @property
+    def prior(self) -> list:
+        """Prior distribution objects in parameter-sector order.
+
+        Returns one entry per sector: the model prior first, followed by one
+        entry per likelihood sector.  Each entry is whatever was passed as
+        ``prior`` to the corresponding :class:`ParameterConfig` — a list of
+        univariate distributions, a multivariate distribution, or a custom
+        prior object.
+        """
+        return [pc.prior for pc in self.parameter_configs]
+
+    # ------------------------------------------------------------------
+    # Parameter manipulation
+    # ------------------------------------------------------------------
+
+    def split_parameters(self, x) -> tuple:
+        """Split a flat parameter vector into model and likelihood sub-vectors.
 
         Parameters
         ----------
-        x : np.ndarray
-            Flat parameter vector of shape (ndim,).
+        x : ndarray, shape (ndim,)
+            Flat parameter vector in sampler order.
+
         Returns
         -------
-        tuple[np.ndarray, list[np.ndarray]]
-            Tuple containing the model parameter vector and a list of likelihood
-            parameter vectors.
+        xmodel : ndarray
+            Model parameter sub-vector of shape ``(model_config.ndim,)``.
+        xlikelihoods : list of ndarray
+            One sub-vector per likelihood sector.
         """
         parts = np.split(x, self.indices[:-1])
         return parts[0], parts[1:]
 
+    # ------------------------------------------------------------------
+    # Posterior evaluation
+    # ------------------------------------------------------------------
+
     def log_prior(self, x) -> float:
-        """
-        Compute the log prior probability of a flat parameter vector.
+        """Evaluate the joint log prior at a flat parameter vector.
+
         Parameters
         ----------
-        x : np.ndarray
-            Flat parameter vector of shape (ndim,).
+        x : ndarray, shape (ndim,)
+            Flat parameter vector in sampler order.
+
         Returns
         -------
         float
-            Log prior probability of the parameter vector.
+            Sum of log prior densities across all sectors.
         """
         xmodel, xlikelihoods = self.split_parameters(x)
         lprior = self.model_config.prior_logpdf(xmodel)
         lprior += sum(
-            lc.prior_logpdf(xlikelihood)
-            for lc, xlikelihood in zip(self.likelihood_configs, xlikelihoods)
+            lc.prior_logpdf(xl) for lc, xl in zip(self.likelihood_configs, xlikelihoods)
         )
         return lprior
 
     def log_likelihood(self, x) -> float:
-        """
-        Compute the log likelihood of a flat parameter vector.
+        """Evaluate the scaled log likelihood at a flat parameter vector.
+
         Parameters
         ----------
-        x : np.ndarray
-            Flat parameter vector of shape (ndim,).
+        x : ndarray, shape (ndim,)
+            Flat parameter vector in sampler order.
+
         Returns
         -------
         float
-            Log likelihood of the parameter vector.
+            ``likelihood_scaling * evidence.log_likelihood(xmodel, xlikelihoods)``.
         """
         xmodel, xlikelihoods = self.split_parameters(x)
         return self.likelihood_scaling * self.evidence.log_likelihood(
@@ -272,16 +390,21 @@ class CalibrationConfig:
         )
 
     def log_posterior(self, x) -> float:
-        """
-        Compute the log posterior probability of a flat parameter vector.
+        """Evaluate the log posterior at a flat parameter vector.
+
+        Returns ``-inf`` immediately if either the prior or likelihood is
+        non-finite, avoiding unnecessary model evaluations.
+
         Parameters
         ----------
-        x : np.ndarray
-            Flat parameter vector of shape (ndim,).
+        x : ndarray, shape (ndim,)
+            Flat parameter vector in sampler order.
+
         Returns
         -------
         float
-            Log posterior probability of the parameter vector.
+            ``log_prior(x) + log_likelihood(x)``, or ``-inf`` if either term
+            is non-finite.
         """
         lp = self.log_prior(x)
         if not np.isfinite(lp):
@@ -291,30 +414,27 @@ class CalibrationConfig:
             return -np.inf
         return lp + ll
 
-    @property
-    def parameter_names(self) -> list[str]:
-        """
-        Flat parameter names in the same order as sampler-facing vectors.
-
-        This property is provided for compatibility with external drivers such
-        as black-box-bayes, which can use the names when exporting inference
-        results.
-        """
-        return [param.name for pc in self.parameter_configs for param in pc.params]
-
-    @property
-    def parameter_configs(self) -> list[ParameterConfig]:
-        """
-        All parameter sectors in flattened order.
-        """
-        return [self.model_config] + self.likelihood_configs
-
     def log_posterior_batch(self, thetas: np.ndarray) -> np.ndarray:
-        """
-        Evaluate the log posterior for a batch of parameter vectors.
+        """Evaluate the log posterior for a batch of parameter vectors.
 
-        This is primarily a convenience for external orchestration layers. The
-        current implementation is serial but preserves the advertised interface.
+        Convenience wrapper for external orchestration layers (e.g.
+        black-box-bayes).  The current implementation is serial but
+        preserves the advertised interface for future parallelisation.
+
+        Parameters
+        ----------
+        thetas : ndarray, shape (..., ndim)
+            Batch of parameter vectors.
+
+        Returns
+        -------
+        ndarray, shape (n,)
+            Log posterior value for each row of ``thetas``.
+
+        Raises
+        ------
+        ValueError
+            If the trailing dimension of ``thetas`` is not ``ndim``.
         """
         thetas = np.atleast_2d(np.asarray(thetas, dtype=float))
         if thetas.shape[-1] != self.ndim:
@@ -324,108 +444,115 @@ class CalibrationConfig:
             )
         return np.array([self.log_posterior(theta) for theta in thetas], dtype=float)
 
-    def predict(self, xmodel) -> list[np.ndarray]:
-        """
-        Generate predictions for each constraint given model parameters.
+    # ------------------------------------------------------------------
+    # Sampling helpers
+    # ------------------------------------------------------------------
+
+    def starting_location(self, nwalkers: int) -> np.ndarray:
+        """Generate initial walker positions across all parameter sectors.
+
         Parameters
         ----------
-        xmodel : np.ndarray
-            Model parameter vector of shape (model_config.ndim,).
-        Returns
-        -------
-        list[np.ndarray]
-            List of predictions for each constraint.
-        """
-        constraints = self.evidence.constraints + self.evidence.parametric_constraints
-        return [constraint.predict(*xmodel) for constraint in constraints]
-
-    def conditional_posterior(self, x_lm, lm_index, ym) -> float:
-        """
-        Compute the log posterior for the parameters of a specific likelihood
-        model, conditional upon the the observaed data for the corresponding constraints
-        Parameters
-        ----------
-        x_lm : np.ndarray
-            Parameter vector for the likelihood model of shape
-            (likelihood_configs[lm_index].ndim,).
-        lm_index : int
-            Index of the likelihood model sector.
-        ym : np.ndarray
-            Observed data for the corresponding constraint.
-        Returns
-        -------
-        float
-            Log posterior probability for the likelihood model sector.
-        """
-        return self.evidence.parametric_constraints[lm_index].marginal_log_likelihood(
-            ym, *x_lm
-        ) + self.likelihood_configs[lm_index].prior_logpdf(x_lm)
-
-    def starting_location(self, nwalkers) -> np.ndarray:
-        """
-        Generate initial positions for walkers in the full parameter space.
-        Parameters
         nwalkers : int
-            Number of walkers to generate initial positions for.
+            Number of walkers.
+
         Returns
         -------
-        np.ndarray
-            Initial positions for walkers of shape (nwalkers, ndim).
+        ndarray, shape (nwalkers, ndim)
+            Concatenated initial positions from each sector's proposal
+            distribution.
         """
         x0_model = self.model_config.x0(nwalkers)
         x0_likelihoods = [
             lc.x0(nwalkers).reshape(nwalkers, lc.ndim) for lc in self.likelihood_configs
         ]
-        x0 = np.hstack([x0_model] + x0_likelihoods)
-        return x0
+        return np.hstack([x0_model] + x0_likelihoods)
 
-    def prior_transform(self, u):
-        """
-        Dynesty prior transform.
+    def prior_transform(self, u) -> np.ndarray:
+        """Map unit-cube coordinates to physical parameters (Dynesty interface).
+
+        Delegates to :meth:`ParameterConfig.prior_transform` for each sector,
+        which in turn either calls ``ppf`` on each element of a list prior or
+        calls ``prior_transform`` directly on a joint prior object.
 
         Parameters
         ----------
         u : array-like, shape (ndim,)
-            Unit-cube coordinates, each in [0, 1).
+            Unit-cube coordinates, each in ``[0, 1)``.
 
         Returns
         -------
         theta : ndarray, shape (ndim,)
             Physical parameter vector.
+
+        Raises
+        ------
+        NotImplementedError
+            If any sector's prior does not support a transform (see
+            :meth:`ParameterConfig.prior_transform`).
+        ValueError
+            If ``u`` does not have length ``ndim``.
         """
-        if not isinstance(self.model_config.prior, list):
-            raise NotImplementedError(
-                "Prior transform only implemented for list of distributions"
-            )
-        for lc in self.likelihood_configs:
-            if not isinstance(lc.prior, list):
-                raise NotImplementedError(
-                    "Prior transform only implemented for list of distributions"
-                )
-
-        u = np.asarray(u)
-
+        u = np.asarray(u, dtype=float)
         if u.shape[-1] != self.ndim:
             raise ValueError(f"Expected u with length {self.ndim}, got shape {u.shape}")
 
-        # Avoid exact 0 or 1 causing infinities for some distributions.
-        # For truncnorm this is usually okay, but clipping is harmless and safer.
         eps = np.finfo(float).eps
         u = np.clip(u, eps, 1.0 - eps)
 
-        theta = np.empty(u.shape, dtype=float)
-
-        # model params
-        for i, param in enumerate(self.model_config.params):
-            dist = self.model_config.prior[i]
-            theta[i] = dist.ppf(u[i])
-
-        # nuisance params
-        offset = self.model_config.ndim
-        for j, lc in enumerate(self.likelihood_configs):
-            for k, param in enumerate(lc.params):
-                dist = lc.prior[k]
-                theta[offset + k] = dist.ppf(u[offset + k])
-            offset += lc.ndim
+        theta = np.empty_like(u)
+        offset = 0
+        for pc in self.parameter_configs:
+            sector = u[offset : offset + pc.ndim]
+            theta[offset : offset + pc.ndim] = pc.prior_transform(sector)
+            offset += pc.ndim
 
         return theta
+
+    # ------------------------------------------------------------------
+    # Prediction and conditional posterior
+    # ------------------------------------------------------------------
+
+    def predict(self, xmodel) -> list:
+        """Generate model predictions for every constraint.
+
+        Parameters
+        ----------
+        xmodel : ndarray, shape (model_config.ndim,)
+            Physical model parameter vector.
+
+        Returns
+        -------
+        list of ndarray
+            Predicted observable for each constraint, in the order
+            ``evidence.constraints + evidence.parametric_constraints``.
+        """
+        constraints = self.evidence.constraints + self.evidence.parametric_constraints
+        return [c.predict(*xmodel) for c in constraints]
+
+    def conditional_posterior(self, x_lm, lm_index: int, ym) -> float:
+        """Log posterior for one likelihood sector, conditioned on observed data.
+
+        Evaluates ``marginal_log_likelihood(ym, *x_lm) + prior_logpdf(x_lm)``
+        for the likelihood sector at ``lm_index``.  Useful for Gibbs-style
+        updates where the likelihood parameters are sampled separately from
+        the physical model parameters.
+
+        Parameters
+        ----------
+        x_lm : ndarray, shape (likelihood_configs[lm_index].ndim,)
+            Parameter vector for the target likelihood sector.
+        lm_index : int
+            Index into ``likelihood_configs`` (and
+            ``evidence.parametric_constraints``).
+        ym : ndarray
+            Predicted observable used as the conditioning data.
+
+        Returns
+        -------
+        float
+            Log posterior for this likelihood sector.
+        """
+        return self.evidence.parametric_constraints[lm_index].marginal_log_likelihood(
+            ym, *x_lm
+        ) + self.likelihood_configs[lm_index].prior_logpdf(x_lm)

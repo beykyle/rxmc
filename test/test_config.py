@@ -10,6 +10,7 @@ from rxmc.likelihood_model import LikelihoodModel, UnknownModelError
 from rxmc.observation import Observation
 from rxmc.params import Parameter
 from rxmc.physical_model import Polynomial
+from rxmc.priors import TruncatedNormalPrior
 
 
 class TestParameterConfig(unittest.TestCase):
@@ -51,6 +52,67 @@ class TestParameterConfig(unittest.TestCase):
         x0 = config.x0(4)
         self.assertEqual(x0.shape, (4, 1))
 
+    def test_generic_prior_class(self):
+        """TruncatedNormalPrior satisfies the generic prior protocol."""
+        prior = TruncatedNormalPrior(
+            mu=[0.0, 1.0],
+            sigma=[1.0, 1.0],
+            lower=[-5.0, -5.0],
+            upper=[5.0, 5.0],
+        )
+        config = ParameterConfig(
+            params=[self.param1, self.param2],
+            prior=prior,
+            initial_proposal_distribution=prior,
+        )
+        self.assertEqual(config.ndim, 2)
+
+        x0 = config.x0(3)
+        self.assertEqual(x0.shape, (3, 2))
+
+        lp = config.prior_logpdf(np.array([0.0, 1.0]))
+        self.assertTrue(np.isfinite(lp))
+
+    def test_prior_transform_list(self):
+        """List-of-distributions prior_transform uses ppf on each element."""
+        prior_list = [scipy.stats.norm(0, 1), scipy.stats.norm(0, 1)]
+        config = ParameterConfig(
+            params=[self.param1, self.param2],
+            prior=prior_list,
+            initial_proposal_distribution=prior_list,
+        )
+        u = np.array([0.5, 0.5])
+        theta = config.prior_transform(u)
+        np.testing.assert_allclose(theta, [0.0, 0.0], atol=1e-10)
+
+    def test_prior_transform_generic(self):
+        """Generic prior with prior_transform method is called directly."""
+        # Use symmetric bounds so the median (u=0.5) maps exactly to mu.
+        prior = TruncatedNormalPrior(
+            mu=[0.0, 1.0],
+            sigma=[1.0, 1.0],
+            lower=[-5.0, -4.0],
+            upper=[5.0, 6.0],
+        )
+        config = ParameterConfig(
+            params=[self.param1, self.param2],
+            prior=prior,
+            initial_proposal_distribution=prior,
+        )
+        u = np.array([0.5, 0.5])
+        theta = config.prior_transform(u)
+        np.testing.assert_allclose(theta, [0.0, 1.0], atol=1e-6)
+
+    def test_prior_transform_unsupported_raises(self):
+        """Non-list prior without prior_transform raises NotImplementedError."""
+        config = ParameterConfig(
+            params=[self.param1, self.param2],
+            prior=self.prior,
+            initial_proposal_distribution=self.initial_proposal_dist,
+        )
+        with self.assertRaises(NotImplementedError):
+            config.prior_transform(np.array([0.5, 0.5]))
+
 
 class TestCalibrationConfig(unittest.TestCase):
     def setUp(self):
@@ -88,28 +150,20 @@ class TestCalibrationConfig(unittest.TestCase):
         # Model Config
         model_prior = scipy.stats.multivariate_normal(
             mean=[0, 1],
-            cov=[
-                [
-                    1,
-                    0,
-                ],
-                [0, 1],
-            ],
+            cov=[[1, 0], [0, 1]],
         )
-        initial_proposal = model_prior
         self.model_config = ParameterConfig(
             params=self.model.params,
             prior=model_prior,
-            initial_proposal_distribution=initial_proposal,
+            initial_proposal_distribution=model_prior,
         )
 
         # Likelihood Config
         likelihood_prior = scipy.stats.multivariate_normal(mean=[0], cov=[[1]])
-        initial_proposal = likelihood_prior
         self.likelihood_config = ParameterConfig(
             params=self.evidence.parametric_constraints[0].likelihood.params,
             prior=likelihood_prior,
-            initial_proposal_distribution=initial_proposal,
+            initial_proposal_distribution=likelihood_prior,
         )
 
     def test_initialization(self):
@@ -132,6 +186,31 @@ class TestCalibrationConfig(unittest.TestCase):
         model_params, likelihood_params = config.split_parameters(x)
         np.testing.assert_array_equal(model_params, [1.0, 2.0])
         np.testing.assert_array_equal(likelihood_params[0], [0.0])
+
+    def test_parameters_property(self):
+        """parameters returns all Parameter objects in flat sampler order."""
+        config = CalibrationConfig(
+            evidence=self.evidence,
+            model_config=self.model_config,
+            likelihood_configs=[self.likelihood_config],
+        )
+        params = config.parameters
+        self.assertEqual(len(params), 3)
+        self.assertEqual(params[0].name, "a0")
+        self.assertEqual(params[1].name, "a1")
+        self.assertEqual(params[2].name, "log fractional err")
+
+    def test_prior_property(self):
+        """prior returns one prior object per parameter sector."""
+        config = CalibrationConfig(
+            evidence=self.evidence,
+            model_config=self.model_config,
+            likelihood_configs=[self.likelihood_config],
+        )
+        priors = config.prior
+        self.assertEqual(len(priors), 2)
+        self.assertIs(priors[0], self.model_config.prior)
+        self.assertIs(priors[1], self.likelihood_config.prior)
 
     def test_black_box_bayes_interface(self):
         config = CalibrationConfig(
@@ -211,6 +290,51 @@ class TestCalibrationConfig(unittest.TestCase):
 
         x0 = config.starting_location(5)
         self.assertEqual(x0.shape, (5, 2))
+
+    def test_prior_transform_via_generic_prior(self):
+        """prior_transform works end-to-end with TruncatedNormalPrior sectors."""
+        model = Polynomial(1)
+        likelihood = UnknownModelError()
+        evidence = Evidence(
+            parametric_constraints=[
+                Constraint(
+                    observations=[
+                        Observation(
+                            x=np.array([1.0, 2.0, 3.0, 4.0]),
+                            y=np.array([1.0, 2.0, 3.0, 4.0]),
+                            y_stat_err=np.array([0.1, 0.1, 0.1, 0.1]),
+                        )
+                    ],
+                    physical_model=model,
+                    likelihood_model=likelihood,
+                )
+            ]
+        )
+        model_prior = TruncatedNormalPrior(
+            mu=[0.0, 1.0], sigma=[1.0, 1.0], lower=[-5.0, -5.0], upper=[5.0, 5.0]
+        )
+        lm_prior = TruncatedNormalPrior(
+            mu=[0.0], sigma=[1.0], lower=[-5.0], upper=[5.0]
+        )
+        config = CalibrationConfig(
+            evidence=evidence,
+            model_config=ParameterConfig(
+                params=model.params,
+                prior=model_prior,
+                initial_proposal_distribution=model_prior,
+            ),
+            likelihood_configs=[
+                ParameterConfig(
+                    params=likelihood.params,
+                    prior=lm_prior,
+                    initial_proposal_distribution=lm_prior,
+                )
+            ],
+        )
+        u = np.full(config.ndim, 0.5)
+        theta = config.prior_transform(u)
+        self.assertEqual(theta.shape, (config.ndim,))
+        self.assertTrue(np.all(np.isfinite(theta)))
 
 
 if __name__ == "__main__":

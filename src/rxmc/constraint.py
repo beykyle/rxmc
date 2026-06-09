@@ -1,3 +1,12 @@
+"""
+Constraint: the composition of observations, a physical model, and a likelihood.
+
+A :class:`Constraint` pairs one or more :class:`~rxmc.observation.Observation`
+objects with a :class:`~rxmc.physical_model.PhysicalModel` and a
+:class:`~rxmc.likelihood_model.LikelihoodModel`.  Given model parameters it
+computes the log likelihood, chi-squared statistic, and coverage statistics.
+"""
+
 import numpy as np
 
 from .likelihood_model import LikelihoodModel
@@ -6,17 +15,23 @@ from .physical_model import PhysicalModel
 
 
 class Constraint:
-    """
-    A `Constraint` is the composition of one or more `Observation`s with
-    a `PhysicalModel` that is able to make predictions of the observed data,
-    along with a `LikelihoodModel` which defines the likelihood of the
-    observation given the model predictions.
+    """Pair observations with a physical model and a likelihood model.
 
-    This class is meant to be a box that takes in model params and spits out
-    the log likelihood or other statistics. In this way, the observations
-    it contains, along with the likelihood model for comparing those
-    observations to the predictions of the physical model, act as constraints
-    to the parameters of the physical model.
+    A ``Constraint`` is the composition of one or more :class:`~rxmc.observation.Observation`
+    objects with a :class:`~rxmc.physical_model.PhysicalModel` and a
+    :class:`~rxmc.likelihood_model.LikelihoodModel`.  It acts as a box that
+    accepts model parameters and returns the log likelihood or other statistics,
+    acting as a constraint on those parameters.
+
+    Parameters
+    ----------
+    observations : list of Observation
+        The observed data that the model will attempt to reproduce.
+    physical_model : PhysicalModel
+        Model that predicts the observed data.
+    likelihood_model : LikelihoodModel
+        Model that defines the likelihood of the observations given the
+        physical-model predictions.
     """
 
     def __init__(
@@ -25,53 +40,40 @@ class Constraint:
         physical_model: PhysicalModel,
         likelihood_model: LikelihoodModel,
     ):
-        """
-        Initialize the Constraint with some Observations, a PhysicalModel, and
-
-        Parameters:
-        ----------
-        observations: list[Observation]
-            The observed data that the model will attempt to reproduce.
-        physical_model : PhysicalModel
-            The model that predicts the observed data
-        likelihood_model : LikelihoodModel
-            The model that defines the likelihood of the observation given the
-            physical model prediction.
-        """
         self.observations = observations
         self.physical_model = physical_model
         self.likelihood = likelihood_model
         self.n_data_pts = sum(obs.n_data_pts for obs in self.observations)
 
     def model(self, model_params):
-        """
-        Compute the model output for each observation, given model_params.
+        """Compute the physical model output for each observation.
 
-        Parameters:
+        Parameters
         ----------
         model_params : tuple
-            The parameters of the physical model
+            Parameters of the physical model.
+
+        Returns
+        -------
+        list of np.ndarray
+            Model predictions, one array per observation.
         """
         return [self.physical_model(obs, *model_params) for obs in self.observations]
 
     def log_likelihood(self, model_params, likelihood_params=()):
-        """
-        Calculate the log probability density function that the
-        model predictions, given the parameters, reproduce the observed data.
+        """Total log likelihood over all observations.
 
-        Parameters:
+        Parameters
         ----------
         model_params : tuple
-            The parameters of the physical model
+            Parameters of the physical model.
         likelihood_params : tuple, optional
-            Additional parameters for the likelihood model, if any.
+            Additional parameters for the likelihood model.
 
-
-        Returns:
+        Returns
         -------
         float
-            The log probability density of the observation given the
-            parameters.
+            Sum of log likelihoods across all observations.
         """
         return sum(
             self.likelihood.log_likelihood(
@@ -81,24 +83,19 @@ class Constraint:
         )
 
     def marginal_log_likelihood(self, ym: list, *likelihood_params):
-        """
-        Returns the log likelihood that the model predictions ym, for the
-        likelihood_params provided, reproduces the observations in the
-        constraints.
+        """Log likelihood given pre-computed model predictions.
 
-        Parameters:
+        Parameters
         ----------
-        ym : list
-            The model predictions for the observed data.
-        likelihood_params : tuple, optional
-            Additional parameters for the likelihood model, if any.
+        ym : list of np.ndarray
+            Pre-computed model predictions for each observation.
+        *likelihood_params : float
+            Additional parameters for the likelihood model.
 
-
-        Returns:
+        Returns
         -------
         float
-            The log probability density of the observation given the
-            parameters.
+            Sum of log likelihoods across all observations.
         """
         return sum(
             self.likelihood.log_likelihood(obs, y, *likelihood_params)
@@ -106,21 +103,19 @@ class Constraint:
         )
 
     def chi2(self, model_params, likelihood_params=()):
-        """
-        Calculate the chi-squared statistic (or Mahalanobis distance) between
-        the model prediction, given the parameters, and the observed data.
+        """Generalised chi-squared (Mahalanobis distance) summed over observations.
 
-        Parameters:
+        Parameters
         ----------
         model_params : tuple
-            The parameters of the physical model
+            Parameters of the physical model.
         likelihood_params : tuple, optional
-            Additional parameters for the likelihood model, if any.
+            Additional parameters for the likelihood model.
 
-        Returns:
+        Returns
         -------
         float
-            The chi-squared statistic.
+            Total chi-squared statistic.
         """
         return sum(
             self.likelihood.chi2(
@@ -130,43 +125,38 @@ class Constraint:
         )
 
     def predict(self, *model_params):
-        """
-        Generate predictions for each observation using the physical model
-        with the provided parameters.
+        """Generate predictions for each observation.
 
-        Parameters:
+        Parameters
         ----------
-        *model_params : tuple
-            The parameters of the physical model.
+        *model_params : float
+            Parameters of the physical model.
 
-        Returns:
+        Returns
         -------
-        list[np.ndarray]
-            The predicted values for each observation.
+        list of np.ndarray
+            Predicted values for each observation.
         """
         return [self.physical_model(obs, *model_params) for obs in self.observations]
 
     def num_pts_within_interval(
         self, ylow: list[np.ndarray], yhigh: list[np.ndarray], xlim=None
     ):
-        """
-        Count the number of points within the specified interval for each
-        observation.
+        """Count data points that fall within a predictive interval.
 
-        Parameters:
+        Parameters
         ----------
-        ylow : list[np.ndarray]
-            Lower bounds of the intervals for each observation.
-        yhigh : list[np.ndarray]
-            Upper bounds of the intervals for each observation.
+        ylow : list of np.ndarray
+            Lower bounds of the interval for each observation.
+        yhigh : list of np.ndarray
+            Upper bounds of the interval for each observation.
         xlim : tuple, optional
-            Limits for the x-axis, if applicable.
+            ``(x_min, x_max)`` range to restrict the count.
 
-        Returns:
+        Returns
         -------
         int
-            The total number of points within the specified intervals across
-            all observations.
+            Total number of points within the interval across all observations.
         """
         return sum(
             obs.num_pts_within_interval(ylow[i], yhigh[i], xlim)
@@ -176,23 +166,20 @@ class Constraint:
     def empirical_coverage(
         self, ylow: list[np.ndarray], yhigh: list[np.ndarray], xlim=None
     ):
-        """
-        Calculate the empirical coverage of the model predictions within the
-        specified intervals for each observation, as a fraction of the total
-        number of data points.
+        """Fraction of data points within a predictive interval.
 
-        Parameters:
+        Parameters
         ----------
-        ylow : list[np.ndarray]
-            Lower bounds of the intervals for each observation.
-        yhigh : list[np.ndarray]
-            Upper bounds of the intervals for each observation.
+        ylow : list of np.ndarray
+            Lower bounds of the interval for each observation.
+        yhigh : list of np.ndarray
+            Upper bounds of the interval for each observation.
         xlim : tuple, optional
-            Limits for the x-axis, if applicable.
+            ``(x_min, x_max)`` range to restrict the count.
 
-        Returns:
+        Returns
         -------
         float
-            The empirical coverage across all observations.
+            Empirical coverage fraction in ``[0, 1]``.
         """
         return self.num_pts_within_interval(ylow, yhigh, xlim) / self.n_data_pts
