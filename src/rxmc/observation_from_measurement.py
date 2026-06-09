@@ -51,8 +51,7 @@ def set_up_observation(
         Whether to include systematic offset errors, by default True.
     include_statistical_err : bool, optional
         Whether to include statistical errors, by default True.
-    x : np.ndarray, optional
-        Custom x-values to use instead of the measurement's x-values.
+
     Returns
     -------
         args: tuple

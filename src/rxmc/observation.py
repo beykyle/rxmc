@@ -163,7 +163,10 @@ class Observation:
         )
 
     def residual(self, ym: np.ndarray):
-        assert ym.shape == self.y.shape
+        if ym.shape != self.y.shape:
+            raise ValueError(
+                f"Shape mismatch: ym has shape {ym.shape}, expected {self.y.shape}"
+            )
         return self.y - ym
 
     def num_pts_within_interval(

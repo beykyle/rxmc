@@ -87,7 +87,7 @@ def adaptive_metropolis(
             start_idx = max(0, i - window_size)
             history_subset = chain[start_idx:i, ...]
             cov = np.atleast_2d(np.cov(history_subset.T))
-            cov += epsilon_fraction * np.diag(np.mean(history_subset, axis=0) ** 2)
+            cov += epsilon_fraction * np.mean(np.diag(cov)) * np.eye(dim)
             proposal_cov = scale * cov
 
         x_new = rng.multivariate_normal(x, proposal_cov)

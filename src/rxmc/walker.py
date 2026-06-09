@@ -77,7 +77,7 @@ class Walker:
             constraint = self.evidence.parametric_constraints[i]
             if constraint.likelihood.params != conf.params:
                 raise ValueError(
-                    "Inconsistent likelihood model parameters"
+                    "Inconsistent likelihood model parameters "
                     f"between 'likelihood_samplers[{i}]' and "
                     f"'evidence.parametric_constraints[{i}]'"
                 )

@@ -269,7 +269,7 @@ class CalibrationConfig:
             )
         if len(self.likelihood_configs) != len(self.evidence.parametric_constraints):
             raise ValueError(
-                "Likelihood configurations do not match the likelihood models"
+                "Likelihood configurations do not match the likelihood models "
                 "in the evidence constraints"
             )
         for lc, c in zip(self.likelihood_configs, self.evidence.parametric_constraints):

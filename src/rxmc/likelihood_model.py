@@ -326,7 +326,10 @@ class ParametricLikelihoodModel(LikelihoodModel):
         float
             Chi-squared statistic.
         """
-        assert len(likelihood_params) == self.n_params
+        if len(likelihood_params) != self.n_params:
+            raise ValueError(
+                f"Expected {self.n_params} likelihood parameters, got {len(likelihood_params)}"
+            )
         cov = self.covariance(observation, ym, *likelihood_params)
         mahalanobis_sqr, _ = mahalanobis_distance_sqr_cholesky(observation.y, ym, cov)
         return mahalanobis_sqr
@@ -350,7 +353,10 @@ class ParametricLikelihoodModel(LikelihoodModel):
         -------
         float
         """
-        assert len(likelihood_params) == self.n_params
+        if len(likelihood_params) != self.n_params:
+            raise ValueError(
+                f"Expected {self.n_params} likelihood parameters, got {len(likelihood_params)}"
+            )
         cov = self.covariance(observation, ym, *likelihood_params)
         mahalanobis_sqr, log_det = mahalanobis_distance_sqr_cholesky(
             observation.y, ym, cov

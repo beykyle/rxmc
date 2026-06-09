@@ -93,7 +93,7 @@ class Evidence:
                 )
             if constraint.likelihood.n_params == 0:
                 raise ValueError(
-                    "Constraint with out parametric likelihood "
+                    "Constraint without parametric likelihood "
                     "model found in the `parametric_constraints` "
                     "list; should be in the `constraints` list"
                 )
@@ -148,7 +148,11 @@ class Evidence:
             Total weighted log likelihood.
         """
         likelihood_params = likelihood_params or []
-        assert len(likelihood_params) == len(self.parametric_constraints)
+        if len(likelihood_params) != len(self.parametric_constraints):
+            raise ValueError(
+                f"Expected {len(self.parametric_constraints)} likelihood parameter "
+                f"tuples, got {len(likelihood_params)}"
+            )
 
         ll = sum(
             c.log_likelihood(model_params) * w
