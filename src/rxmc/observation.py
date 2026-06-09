@@ -10,7 +10,7 @@ class Observation:
     and offset of all or some of the data points of the the dependent
     variable y.
 
-    Attributes:
+    Attributes
     ----------
     x : np.ndarray
         The independent variable data.

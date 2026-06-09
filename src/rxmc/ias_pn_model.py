@@ -29,8 +29,8 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
     Each potential takes in an arbitrary tuple of params, which are
     calculated from the model parameters via the `calculate_params` function.
 
-    The `calculate_params` function should have the signature:
-    (ws: jitr.xs.quasielastic_pn.Workspace, *params: tuple) -> tuple
+    The ``calculate_params`` function should have the signature:
+    ``(ws: jitr.xs.quasielastic_pn.Workspace, *params: tuple) -> tuple``
     and return a tuple of five elements, each being a tuple of parameters
     to be passed to the corresponding potential function in the order listed above.
     """
