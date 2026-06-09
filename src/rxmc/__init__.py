@@ -15,6 +15,7 @@ from . import observation as observation
 from . import param_sampling as param_sampling
 from . import params as params
 from . import physical_model as physical_model
+from . import priors as priors
 from . import walker as walker
 from .__version__ import __version__ as __version__
 
@@ -35,5 +36,6 @@ __all__ = [
     "param_sampling",
     "params",
     "physical_model",
+    "priors",
     "walker",
 ]

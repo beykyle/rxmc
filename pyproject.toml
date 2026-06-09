@@ -30,8 +30,16 @@ Repository = "https://github.com/beykyle/rxmc"
 Issues = "https://github.com/beykyle/rxmc/issues"
 
 [project.optional-dependencies]
+docs = [
+  "sphinx>=7.0",
+  "pydata-sphinx-theme>=0.15",
+  "myst-nb>=1.0",
+  "sphinx-copybutton>=0.5",
+]
 examples = [
   "corner>=2.2",
+  "dynesty>=2.1",
+  "emcee>=3.1",
   "ipykernel>=6.0",
   "jupyter>=1.0",
   "matplotlib>=3.8",
@@ -41,6 +49,8 @@ validation = [
   "black>=24.0",
   "build>=1.2",
   "corner>=2.2",
+  "dynesty>=2.1",
+  "emcee>=3.1",
   "ipykernel>=6.0",
   "isort>=5.13",
   "jupyter>=1.0",
@@ -76,6 +86,9 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["F", "I"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["rxmc"]
 
 [tool.pytest.ini_options]
 addopts = "--nbmake --nbmake-timeout=1200"

@@ -1,3 +1,11 @@
+"""
+Physical model for elastic differential cross sections.
+
+:class:`ElasticDifferentialXSModel` wraps a ``jitr`` optical-model solver to
+predict elastic differential cross sections (dXS/dΩ, dXS/dRuth, or analysing
+power Ay) given a parametric central and spin-orbit interaction.
+"""
+
 from typing import Callable
 
 import jitr
@@ -24,32 +32,22 @@ class ElasticDifferentialXSModel(PhysicalModel):
         model_name: str = None,
     ):
         """
-        Initialize the ElasticDifferentialXSModel with the interactions and
-        a function to calculate the subparameters.
-        Parameters:
+        Parameters
         ----------
         quantity : str
-            The type of quantity to be calculated (e.g., "dXS/dA",
-            "dXS/dRuth", "Ay").
-        interaction_central : Callable
-            Function that returns the central interaction potential for a given
-            energy and parameters.
-        interaction_spin_orbit : Callable
-            Function that returns the spin-orbit interaction potential for a
-            given energy and parameters.
-        calculate_interaction_from_params : Callable
-            Function that takes in a workspace, and the model parameters, and
-            returns the parameters needed for the central and spin-orbit
-            interactions. Should return a tuple of size two, the first element
-            being the tuple of parameters taken in by `interaction_central` and
-            the second element being the tuple of parameters taken in by
-            `interaction_spin_orbit`.
-        params: list[Parameter] = []
-            A list of Parameter objects that define the model's parameters.
-            Each Parameter should have a name and a dtype.
+            Observable to compute: ``"dXS/dA"``, ``"dXS/dRuth"``, or ``"Ay"``.
+        interaction_central : callable
+            ``f(r, args) -> complex`` returning the central interaction potential.
+        interaction_spin_orbit : callable
+            ``f(r, args) -> complex`` returning the spin-orbit potential.
+        calculate_interaction_from_params : callable
+            ``f(workspace, *params) -> (central_args, spin_orbit_args)``
+            mapping model parameters to the argument tuples expected by the
+            interaction callables.
+        params : list of Parameter, optional
+            Parameters of the model.  Defaults to ``[]``.
         model_name : str, optional
-            Name of the model, used for identification purposes.
-            Defaults to None.
+            Human-readable model name.  Defaults to ``"ElasticDifferentialXSModel"``.
         """
         self.model_name = model_name or "ElasticDifferentialXSModel"
 
@@ -73,21 +71,19 @@ class ElasticDifferentialXSModel(PhysicalModel):
         *params: tuple,
     ) -> np.ndarray:
         """
-        Evaluate the model at the given parameters.
+        Evaluate the model on the constraint angular grid.
 
-        Parameters:
+        Parameters
         ----------
         observation : ElasticDifferentialXSObservation
-            The observation containing the reaction data and workspace.
-        params : tuple
-            The parameters of the physical model.
+            Observation containing the reaction data and pre-built workspace.
+        *params : float
+            Physical-model parameter values.
 
-        Returns:
+        Returns
         -------
         np.ndarray
-            An array, containing the evaluated differential data on the
-            angular grid corresponding to the
-            `observation.constraint_workspace`.
+            Predicted observable on ``observation.constraint_workspace.angles``.
         """
         if observation.quantity != self.quantity:
             raise ValueError(
@@ -119,21 +115,19 @@ class ElasticDifferentialXSModel(PhysicalModel):
         *params: tuple,
     ) -> np.ndarray:
         """
-        Visualize the model at the given parameters.
+        Evaluate the model on the visualisation angular grid.
 
-        Parameters:
+        Parameters
         ----------
         observation : ElasticDifferentialXSObservation
-            The observation containing the reaction data and workspace.
-        params : tuple
-            The parameters of the physical model.
+            Observation containing the reaction data and pre-built workspace.
+        *params : float
+            Physical-model parameter values.
 
-        Returns:
+        Returns
         -------
         np.ndarray
-            An array, containing the evaluated differential data on the
-            angular grid corresponding to the
-            `observation.visualization_workspace`.
+            Predicted observable on ``observation.visualization_workspace.angles``.
         """
         if observation.quantity != self.quantity:
             raise ValueError(

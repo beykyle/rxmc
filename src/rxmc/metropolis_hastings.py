@@ -1,3 +1,10 @@
+"""
+Plain Metropolis-Hastings MCMC sampler.
+
+The :func:`metropolis_hastings` function implements a single-chain MH kernel
+with hard parameter bounds and a user-supplied proposal distribution.
+"""
+
 from typing import Callable, Tuple
 
 import numpy as np
@@ -11,30 +18,35 @@ def metropolis_hastings(
     rng: np.random.Generator,
     propose: Callable[[np.ndarray, np.random.Generator], np.ndarray],
 ) -> Tuple[np.ndarray, np.ndarray, int]:
-    """
-    Performs Metropolis-Hastings MCMC sampling.
+    """Metropolis-Hastings MCMC sampling.
 
-    Parameters:
-        x0 : np.ndarray
-            Initial parameter values for the chain.
-        bounds : np.ndarray
-            Bounds for the parameters, shape (n_params, 2) where each row is
-            [lower, upper].
-        n_steps : int
-            Number of steps/samples to generate.
-        log_posterior : Callable[[np.ndarray], float]
-            Function to compute the log posterior probability of
-            the parameters.
-        rng : np.random.Generator
-            Random number generator for reproducibility.
-        propose : Callable[[np.ndarray, np.random.Generator], np.ndarray]
-            Function to propose new parameter values.
-    Returns:
-        tuple:
-            - numpy.ndarray: The chain of samples generated.
-            - numpy.ndarray: Log posteriors corresponding to the samples.
-            - int: The number of accepted proposals.
+    Proposals that fall outside *bounds* are rejected outright; otherwise the
+    standard MH acceptance criterion is applied.
 
+    Parameters
+    ----------
+    x0 : np.ndarray, shape (ndim,)
+        Initial parameter vector.
+    bounds : np.ndarray, shape (ndim, 2)
+        Parameter bounds; each row is ``[lower, upper]``.
+    n_steps : int
+        Number of MCMC steps to generate.
+    log_posterior : callable
+        Function ``f(x) -> float`` returning the log posterior at ``x``.
+    rng : np.random.Generator
+        Random number generator for reproducibility.
+    propose : callable
+        Function ``g(x, rng) -> x_new`` that draws a candidate from the
+        proposal distribution centred at ``x``.
+
+    Returns
+    -------
+    chain : np.ndarray, shape (n_steps, ndim)
+        Sampled parameter vectors.
+    logp_chain : np.ndarray, shape (n_steps,)
+        Log posterior values corresponding to each sample.
+    accepted : int
+        Number of accepted proposals.
     """
     chain = np.zeros((n_steps, x0.size))
     logp_chain = np.zeros((n_steps,))
@@ -44,13 +56,10 @@ def metropolis_hastings(
     for i in range(n_steps):
         x_new = propose(x, rng)
         if np.any(x_new < bounds[:, 0]) or np.any(x_new > bounds[:, 1]):
-            # reject if out of bounds
             chain[i, ...] = x
             logp_chain[i] = logp
             continue
         logp_new = log_posterior(x_new)
-        # use sum log exp trick
-        # https://gregorygundersen.com/blog/2020/02/09/log-sum-exp/
         log_ratio = min(0, logp_new - logp)
         xi = np.log(rng.random())
         if xi < log_ratio:

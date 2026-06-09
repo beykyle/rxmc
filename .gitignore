@@ -1,6 +1,9 @@
 # 
 examples/*.pdf
 
+# docs
+docs/_build/
+
 #slurm
 *.out
 

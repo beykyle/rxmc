@@ -18,7 +18,7 @@ python -m black --check src test
 python -m ruff check src test
 python -m nbqa isort --check examples/*.ipynb
 python -m black --check --ipynb examples/*.ipynb
-python -m nbqa ruff examples/*.ipynb
+python -m ruff check examples/*.ipynb
 python -m pytest
 ```
 

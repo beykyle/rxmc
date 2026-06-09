@@ -1,3 +1,12 @@
+"""
+Physical model for isobaric-analog-state (p,n) differential cross sections.
+
+:class:`IsobaricAnalogPNXSModel` wraps a ``jitr`` quasielastic-pn solver to
+predict (p,n) IAS differential cross sections given five parametric interaction
+potentials (proton Coulomb, proton central, proton spin-orbit, neutron central,
+neutron spin-orbit).
+"""
+
 from typing import Callable
 
 import jitr
@@ -38,28 +47,27 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
         model_name: str = None,
     ):
         """
-        Parameters:
+        Parameters
         ----------
-        U_p_coulomb : Callable
-            Function to calculate the proton Coulomb potential.
-            Signature: (r: float, args: tuple) -> complex
-        U_p_central : Callable
-            Function to calculate the proton central potential.
-            Signature: (r: float, args: tuple) -> complex
-        U_p_spin_orbit : Callable
-            Function to calculate the proton spin-orbit potential.
-            Signature: (r: float, args: tuple) -> complex
-        U_n_central : Callable
-            Function to calculate the neutron central potential.
-            Signature: (r: float, args: tuple) -> complex
-        U_n_spin_orbit : Callable
-            Function to calculate the neutron spin-orbit potential.
-            Signature: (r: float, args: tuple) -> complex
-        calculate_interaction_from_params : Callable
-        params: list[Parameter] = []
+        U_p_coulomb : callable
+            ``f(r, args) -> complex`` — proton Coulomb potential.
+        U_p_central : callable
+            ``f(r, args) -> complex`` — proton central potential.
+        U_p_spin_orbit : callable
+            ``f(r, args) -> complex`` — proton spin-orbit potential.
+        U_n_central : callable
+            ``f(r, args) -> complex`` — neutron central potential.
+        U_n_spin_orbit : callable
+            ``f(r, args) -> complex`` — neutron spin-orbit potential.
+        calculate_params : callable
+            ``f(workspace, *params) -> (args_p_coulomb, args_p_central,
+            args_p_spin_orbit, args_n_central, args_n_spin_orbit)``
+            mapping model parameters to the argument tuples expected by each
+            potential callable.
+        params : list of Parameter, optional
+            Parameters of the model.  Defaults to ``[]``.
         model_name : str, optional
-            Name of the model, used for identification purposes.
-            Defaults to None.
+            Human-readable model name.  Defaults to ``"IsobaricAnalogPNXSModel"``.
         """
         self.model_name = model_name or "IsobaricAnalogPNXSModel"
         self.U_p_coulomb = U_p_coulomb
@@ -77,22 +85,20 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
         *params: tuple,
     ) -> np.ndarray:
         """
-        Evaluate the model at the given parameters.
+        Evaluate the model on the constraint angular grid.
 
-        Parameters:
+        Parameters
         ----------
         observation : IsobaricAnalogPNObservation
-            The observation containing the workspace and data.
-        params : tuple
-            The parameters to evaluate the model at, in the order defined
-            by the `calculate_params` function.
+            Observation containing the pre-built workspace.
+        *params : float
+            Physical-model parameter values, consumed by *calculate_params*.
 
-        Returns:
+        Returns
         -------
         np.ndarray
-            An array, containing the evaluated differential data on the
-            angular grid corresponding to the
-            `observation.constraint_workspace`, in units of b/sr.
+            Predicted (p,n) IAS differential cross section in b/sr on
+            ``observation.constraint_workspace.angles``.
         """
         ws = observation.constraint_workspace
         (
@@ -125,22 +131,20 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
         *params: tuple,
     ) -> np.ndarray:
         """
-        Visualize the model at the given parameters.
+        Evaluate the model on the visualisation angular grid.
 
-        Parameters:
+        Parameters
         ----------
         observation : IsobaricAnalogPNObservation
-            The observation containing the workspace and data.
-        params : tuple
-            The parameters to evaluate the model at, in the order defined
-            by the `calculate_params` function.
+            Observation containing the pre-built workspace.
+        *params : float
+            Physical-model parameter values, consumed by *calculate_params*.
 
-        Returns:
+        Returns
         -------
         np.ndarray
-            An array, containing the evaluated differential data on the
-            angular grid corresponding to the
-            `observation.visualization_workspace`, in units of b/sr.
+            Predicted (p,n) IAS differential cross section in b/sr on
+            ``observation.visualization_workspace.angles``.
         """
         ws = observation.visualization_workspace
         (
