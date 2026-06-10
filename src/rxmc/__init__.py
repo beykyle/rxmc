@@ -1,4 +1,6 @@
 from . import adaptive_metropolis as adaptive_metropolis
+from . import bfrescox_model as bfrescox_model
+from . import bfrescox_observation as bfrescox_observation
 from . import config as config
 from . import constraint as constraint
 from . import (
@@ -38,4 +40,6 @@ __all__ = [
     "physical_model",
     "priors",
     "walker",
+    "bfrescox_model",
+    "bfrescox_observation",
 ]

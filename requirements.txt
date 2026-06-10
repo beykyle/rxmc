@@ -5,3 +5,4 @@ scipy>=1.15
 pint>=0.2
 jitr>=2.6
 exfor-tools>=0.4
+bfrescox
