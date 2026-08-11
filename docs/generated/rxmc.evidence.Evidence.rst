@@ -15,6 +15,7 @@
    
       ~Evidence.__init__
       ~Evidence.log_likelihood
+      ~Evidence.weighted_marginal_log_likelihood
    
    
 

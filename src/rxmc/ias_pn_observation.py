@@ -1,12 +1,10 @@
-from typing import Type
-
 import jitr
 import numpy as np
 from exfor_tools.distribution import Distribution
 from pint import UnitRegistry
 
 from .observation import Observation
-from .observation_from_measurement import check_angle_grid, set_up_observation
+from .observation_from_measurement import check_angle_grid, normalized_error_kwargs
 
 # Create a unit registry
 ureg = UnitRegistry()
@@ -14,16 +12,14 @@ ureg = UnitRegistry()
 DEFAULT_LMAX = 20
 
 
-class IsobaricAnalogPNObservation:
+class IsobaricAnalogPNObservation(Observation):
     """
     Observation for (p,n) isobaric analog state (IAS) reactions.
 
-    This class dynamically inherits from `Observation` or any other
-    derived class of `Observation` based on the `ObservationClass`
-    parameter in the initializer. The default behavior is to inherit
-    from `Observation`, but users can specify a different subclass, such as
-    `FixedCovarianceObservation`, to precompute the covariance matrix inverse
-    in cases where the covariance is fixed.
+    This is an :class:`~rxmc.observation.Observation` (statistical error only): it
+    inherits ``statistical_term`` and ``num_pts_within_interval``.  Any correlated
+    systematic is composed explicitly as an ``extra_terms`` entry in the
+    :class:`~rxmc.constraint.Constraint`.
 
     It is designed to handle (p,n) IAS reaction measurements in differential cross
     section form.
@@ -47,8 +43,6 @@ class IsobaricAnalogPNObservation:
         dataset_label: str | None = None,
         lmax: int = DEFAULT_LMAX,
         angles_vis: np.ndarray = np.linspace(0.01, 180, 100),
-        ObservationClass: Type[Observation] = Observation,
-        error_kwargs: dict = None,
         wavelengths_beyond_range: float = 2.0,
         zeros_per_node: int = 5,
     ):
@@ -71,31 +65,26 @@ class IsobaricAnalogPNObservation:
             Units of the supplied `y` values.
         y_stat_err : np.ndarray, optional
             Statistical errors associated with `y`.
-        y_sys_err_normalization : float or array-like, optional
-            Systematic normalization error(s) associated with `y`.
-        y_sys_err_offset : float or array-like, optional
-            Systematic offset error(s) associated with `y`.
+        y_sys_err_normalization : float or np.ndarray, optional
+            Reported *fractional* (dimensionless) normalisation uncertainty.
+            Retained as inert metadata (see
+            :meth:`rxmc.observation.Observation.systematic_terms`); not divided
+            by the unit normalisation.
+        y_sys_err_offset : float or np.ndarray, optional
+            Reported *absolute* offset uncertainty in the same units as `y`.
+            Retained as inert metadata, converted to internal units (divided by
+            the unit normalisation).
         dataset_label : str, optional
             Human-readable dataset identifier used in error messages.
         lmax: int
             Maximum angular momentum
         angles_vis: np.ndarray
             Array of angles in degrees for visualization.
-        ObservationClass: Type[Observation]
-            The base class Type that this instance will inherit from;
-            must be a subclass of `Observation`. Defaults to the base
-            class `Observation`, but the user can supply any other subclass.
-            For example, if one wants the covariance to be precomputed one
-            can supply `FixedCovarianceObservation` instead here.
-        error_kwargs: dict
-            Additional keyword arguments for error handling.
         wavelengths_beyond_range: float
             Number of wavelengths beyond the interaction range to set the channel radius.
         zeros_per_node: int
             Number of zeros of the basis functions per node in the R-matrix solver.
         """
-        if not issubclass(ObservationClass, Observation):
-            raise ValueError("ObservationClass must be a subclass of Observation")
         self.reaction = reaction
         self.lmax = lmax
         self.subentry = dataset_label
@@ -135,36 +124,17 @@ class IsobaricAnalogPNObservation:
             )
 
         norm = 1.0 / measurement_unit.to(self.y_units).magnitude
+        # retained for provenance / manual term recomposition
+        self.norm = norm
 
-        # initialize the observation instance
-        args, kwargs, y_stat_err = set_up_observation(
-            ObservationClass,
-            x=angles_rad_constraint,
-            y=y,
-            y_stat_err=y_stat_err,
-            y_sys_err_normalization=y_sys_err_normalization,
-            y_sys_err_offset=y_sys_err_offset,
-            dataset_label=dataset_label,
-            normalization=norm,
-            **error_kwargs if error_kwargs is not None else {},
+        super().__init__(
+            angles_rad_constraint,
+            np.asarray(y) / norm,
+            label=dataset_label,
+            **normalized_error_kwargs(
+                norm, y_stat_err, y_sys_err_normalization, y_sys_err_offset
+            ),
         )
-
-        # Create an instance of the chosen ObservationClass
-        self._obs = ObservationClass(*args, **kwargs)
-
-        self.x = self._obs.x
-        self.y = self._obs.y
-        self.y_stat_err = y_stat_err
-        self.n_data_pts = self._obs.n_data_pts
-
-    def covariance(self, y):
-        return self._obs.covariance(y)
-
-    def residual(self, ym):
-        return self._obs.residual(ym)
-
-    def num_pts_within_interval(self, interval):
-        return self._obs.num_pts_within_interval(interval)
 
     @classmethod
     def from_measurement(
@@ -174,8 +144,6 @@ class IsobaricAnalogPNObservation:
         ExIAS: float,
         lmax: int = DEFAULT_LMAX,
         angles_vis: np.ndarray = np.linspace(0.01, 180, 100),
-        ObservationClass: Type[Observation] = Observation,
-        error_kwargs: dict = None,
         wavelengths_beyond_range: float = 2.0,
         zeros_per_node: int = 5,
     ):
@@ -192,8 +160,6 @@ class IsobaricAnalogPNObservation:
             dataset_label=getattr(measurement, "subentry", None),
             lmax=lmax,
             angles_vis=angles_vis,
-            ObservationClass=ObservationClass,
-            error_kwargs=error_kwargs,
             wavelengths_beyond_range=wavelengths_beyond_range,
             zeros_per_node=zeros_per_node,
         )

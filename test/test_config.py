@@ -5,12 +5,29 @@ import scipy.stats
 
 from rxmc.config import CalibrationConfig, ParameterConfig
 from rxmc.constraint import Constraint
+from rxmc.covariance import model_error_term
 from rxmc.evidence import Evidence
-from rxmc.likelihood_model import LikelihoodModel, UnknownModelError
 from rxmc.observation import Observation
 from rxmc.params import Parameter
 from rxmc.physical_model import Polynomial
 from rxmc.priors import TruncatedNormalPrior
+
+
+def gamma_parameter():
+    """The UnknownModelError gamma, as a covariance parameter."""
+    return Parameter(
+        "log fractional err", float, latex_name=r"\gamma", unit="dimensionless"
+    )
+
+
+def model_error_constraint(observation, model, gamma):
+    """A constraint with an UnknownModelError (averaging) covariance term."""
+    support = np.arange(observation.n_data_pts)
+    return Constraint(
+        observations=[observation],
+        physical_model=model,
+        extra_terms=[model_error_term(support, gamma, averaging=True)],
+    )
 
 
 class TestParameterConfig(unittest.TestCase):
@@ -118,6 +135,7 @@ class TestCalibrationConfig(unittest.TestCase):
     def setUp(self):
         # Evidence with one regular and one parametric constraint
         self.model = Polynomial(1)
+        self.gamma = gamma_parameter()
         self.evidence = Evidence(
             constraints=[
                 Constraint(
@@ -129,20 +147,15 @@ class TestCalibrationConfig(unittest.TestCase):
                         )
                     ],
                     physical_model=self.model,
-                    likelihood_model=LikelihoodModel(),
-                )
-            ],
-            parametric_constraints=[
-                Constraint(
-                    observations=[
-                        Observation(
-                            x=np.array([6.0, 7.0, 8.0]),
-                            y=np.array([6.3, 8.1, 9.6]),
-                            y_stat_err=np.array([0.1, 0.1, 0.1]),
-                        )
-                    ],
-                    physical_model=self.model,
-                    likelihood_model=UnknownModelError(),
+                ),
+                model_error_constraint(
+                    Observation(
+                        x=np.array([6.0, 7.0, 8.0]),
+                        y=np.array([6.3, 8.1, 9.6]),
+                        y_stat_err=np.array([0.1, 0.1, 0.1]),
+                    ),
+                    self.model,
+                    self.gamma,
                 ),
             ],
         )
@@ -161,7 +174,7 @@ class TestCalibrationConfig(unittest.TestCase):
         # Likelihood Config
         likelihood_prior = scipy.stats.multivariate_normal(mean=[0], cov=[[1]])
         self.likelihood_config = ParameterConfig(
-            params=self.evidence.parametric_constraints[0].likelihood.params,
+            params=list(self.evidence.parametric_constraints[0].params),
             prior=likelihood_prior,
             initial_proposal_distribution=likelihood_prior,
         )
@@ -251,23 +264,65 @@ class TestCalibrationConfig(unittest.TestCase):
         ) + self.likelihood_config.prior_logpdf(x_lm)
         self.assertAlmostEqual(config.conditional_posterior(x_lm, 0, ym), expected)
 
+    def test_parametric_indices_map(self):
+        # the parametric constraint is second in evidence.constraints
+        self.assertEqual(self.evidence.parametric_indices, [1])
+
+    def test_conditional_posterior_tempering(self):
+        # the Gibbs conditional must apply likelihood_scaling and the
+        # constraint's Evidence weight, matching log_posterior's tempering
+        scaling = 0.5
+        weights = np.array([1.0, 3.0])  # parametric constraint has weight 3
+        evidence = Evidence(constraints=self.evidence.constraints, weights=weights)
+        config = CalibrationConfig(
+            evidence=evidence,
+            model_config=self.model_config,
+            likelihood_configs=[self.likelihood_config],
+            likelihood_scaling=scaling,
+        )
+
+        xmodel = np.array([1.0, 1.0])
+        ym = evidence.parametric_constraints[0].predict(*xmodel)
+        x_lm = np.array([0.0])
+
+        lp = self.likelihood_config.prior_logpdf(x_lm)
+        ll = evidence.parametric_constraints[0].marginal_log_likelihood(ym, *x_lm)
+        self.assertAlmostEqual(
+            config.conditional_posterior(x_lm, 0, ym), lp + scaling * 3.0 * ll
+        )
+
+    def test_predict_parametric_aligns_with_conditional_posterior(self):
+        # mixed evidence: constraints[0] is non-parametric, constraints[1] is the
+        # parametric one. predict() is in constraints order (len 2) while
+        # predict_parametric() is in parametric order (len 1) -> aligned with lm_index.
+        config = CalibrationConfig(
+            evidence=self.evidence,
+            model_config=self.model_config,
+            likelihood_configs=[self.likelihood_config],
+        )
+        xmodel = np.array([1.0, 1.0])
+
+        all_preds = config.predict(xmodel)
+        param_preds = config.predict_parametric(xmodel)
+        self.assertEqual(len(all_preds), 2)
+        self.assertEqual(len(param_preds), 1)
+        # predict_parametric()[0] is the parametric constraint's prediction (== all_preds[1])
+        np.testing.assert_allclose(param_preds[0][0], all_preds[1][0])
+        np.testing.assert_allclose(
+            param_preds[0][0],
+            self.evidence.parametric_constraints[0].predict(*xmodel)[0],
+        )
+
     def test_starting_location_with_single_parameter_sectors(self):
         model = Polynomial(0)
-        likelihood = UnknownModelError()
+        gamma = gamma_parameter()
         observation = Observation(
             x=np.array([1.0, 2.0]),
             y=np.array([1.0, 1.1]),
             y_stat_err=np.array([0.1, 0.1]),
         )
-        evidence = Evidence(
-            parametric_constraints=[
-                Constraint(
-                    observations=[observation],
-                    physical_model=model,
-                    likelihood_model=likelihood,
-                )
-            ]
-        )
+        constraint = model_error_constraint(observation, model, gamma)
+        evidence = Evidence(constraints=[constraint])
         model_config = ParameterConfig(
             params=model.params,
             prior=scipy.stats.multivariate_normal(mean=[0], cov=[[1]]),
@@ -276,7 +331,7 @@ class TestCalibrationConfig(unittest.TestCase):
             ),
         )
         likelihood_config = ParameterConfig(
-            params=likelihood.params,
+            params=list(constraint.params),
             prior=scipy.stats.multivariate_normal(mean=[0], cov=[[1]]),
             initial_proposal_distribution=scipy.stats.multivariate_normal(
                 mean=[0], cov=[[1]]
@@ -294,22 +349,17 @@ class TestCalibrationConfig(unittest.TestCase):
     def test_prior_transform_via_generic_prior(self):
         """prior_transform works end-to-end with TruncatedNormalPrior sectors."""
         model = Polynomial(1)
-        likelihood = UnknownModelError()
-        evidence = Evidence(
-            parametric_constraints=[
-                Constraint(
-                    observations=[
-                        Observation(
-                            x=np.array([1.0, 2.0, 3.0, 4.0]),
-                            y=np.array([1.0, 2.0, 3.0, 4.0]),
-                            y_stat_err=np.array([0.1, 0.1, 0.1, 0.1]),
-                        )
-                    ],
-                    physical_model=model,
-                    likelihood_model=likelihood,
-                )
-            ]
+        gamma = gamma_parameter()
+        constraint = model_error_constraint(
+            Observation(
+                x=np.array([1.0, 2.0, 3.0, 4.0]),
+                y=np.array([1.0, 2.0, 3.0, 4.0]),
+                y_stat_err=np.array([0.1, 0.1, 0.1, 0.1]),
+            ),
+            model,
+            gamma,
         )
+        evidence = Evidence(constraints=[constraint])
         model_prior = TruncatedNormalPrior(
             mu=[0.0, 1.0], sigma=[1.0, 1.0], lower=[-5.0, -5.0], upper=[5.0, 5.0]
         )
@@ -325,7 +375,7 @@ class TestCalibrationConfig(unittest.TestCase):
             ),
             likelihood_configs=[
                 ParameterConfig(
-                    params=likelihood.params,
+                    params=list(constraint.params),
                     prior=lm_prior,
                     initial_proposal_distribution=lm_prior,
                 )

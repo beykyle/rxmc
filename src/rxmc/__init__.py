@@ -1,9 +1,7 @@
 from . import adaptive_metropolis as adaptive_metropolis
 from . import config as config
 from . import constraint as constraint
-from . import (
-    correlated_discrepancy_likelihood_model as correlated_discrepancy_likelihood_model,
-)
+from . import covariance as covariance
 from . import elastic_diffxs_model as elastic_diffxs_model
 from . import elastic_diffxs_observation as elastic_diffxs_observation
 from . import evidence as evidence
@@ -15,6 +13,7 @@ from . import observation as observation
 from . import param_sampling as param_sampling
 from . import params as params
 from . import physical_model as physical_model
+from . import predictive as predictive
 from . import priors as priors
 from . import walker as walker
 from .__version__ import __version__ as __version__
@@ -24,7 +23,7 @@ __all__ = [
     "adaptive_metropolis",
     "config",
     "constraint",
-    "correlated_discrepancy_likelihood_model",
+    "covariance",
     "elastic_diffxs_model",
     "elastic_diffxs_observation",
     "evidence",
@@ -36,6 +35,7 @@ __all__ = [
     "param_sampling",
     "params",
     "physical_model",
+    "predictive",
     "priors",
     "walker",
 ]

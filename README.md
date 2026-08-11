@@ -1,7 +1,7 @@
 # rxmc
 
 `rxmc` is an orchestration layer for Bayesian calibration of reaction models to
-large data sets with flexible likelihood modeling.
+large data sets with flexible, composable covariance modeling.
 
 It is built around two complementary workflows:
 
@@ -15,9 +15,54 @@ The package composes:
 
 - curated experimental data as `Observation` objects,
 - model predictions via `PhysicalModel`,
-- statistical assumptions via `LikelihoodModel`,
-- independent data-model pairings via `Constraint`,
+- uncertainty declared as additive covariance `Term`s (statistical,
+  systematic, unknown-noise, and Gaussian-process discrepancy modes) via
+  `rxmc.covariance`,
+- maximal blocks of mutually-correlated data via `Constraint`,
 - and full calibration problems via `Evidence`.
+
+## Quickstart
+
+```python
+import numpy as np
+from scipy import stats
+import rxmc
+
+# measured data: pure data plus (optional) reported systematics as metadata
+obs = rxmc.observation.Observation(
+    x=x, y=y, y_stat_err=y_err, y_sys_err_normalization=0.04
+)
+
+# a constraint owns one multivariate likelihood over its stacked observations;
+# every correlated mode is an explicit covariance term - nothing is folded in
+# silently
+(support,) = rxmc.covariance.stacked_supports([obs])
+constraint = rxmc.constraint.Constraint(
+    [obs], model, extra_terms=obs.systematic_terms(support)
+)
+evidence = rxmc.evidence.Evidence([constraint])
+
+# calibrate with the in-package Gibbs walker (or wrap in CalibrationConfig
+# for emcee / dynesty)
+prior = stats.multivariate_normal(mean=prior_mean, cov=prior_cov)
+walker = rxmc.walker.Walker(
+    rxmc.param_sampling.BatchedAdaptiveMetropolisSampler(
+        params=model.params,
+        starting_location=prior.mean,
+        prior=prior,
+        initial_proposal_cov=prior.cov / 100,
+    ),
+    evidence,
+    rng=np.random.default_rng(1),
+)
+walker.walk(n_steps=10_000, burnin=1_000, batch_size=1_000)
+```
+
+> **Note — behavior change from pre-0.1 versions:** an `Observation`'s
+> reported systematic errors are never folded into the covariance
+> automatically. The default constraint covariance is the statistical diagonal
+> only; systematics enter explicitly, e.g. via
+> `obs.systematic_terms(support)` passed to `Constraint(extra_terms=...)`.
 
 
 ## Installation
@@ -31,20 +76,6 @@ pip install -ve .
 ```
 
 It is strongly recommended to use an isolated environment.
-
-### `conda` / `mamba`
-
-```bash
-conda env create -f environment.yml
-conda activate rxmc
-pip install -ve . --no-deps
-```
-
-```bash
-mamba env create -f environment.yml
-mamba activate rxmc
-pip install -ve . --no-deps
-```
 
 ### `venv`
 
@@ -95,7 +126,8 @@ Typical flow:
 
 1. Build `Observation` objects from your measurements.
 2. Define a `PhysicalModel`.
-3. Choose a `LikelihoodModel`.
+3. Declare correlated uncertainty as covariance `Term`s (and pick a
+   likelihood functional: Gaussian, Student-t, or chi-squared).
 4. Combine them into `Constraint` objects and then `Evidence`.
 5. Wrap the problem in `ParameterConfig` and `CalibrationConfig`.
 6. Hand the resulting object to an external sampler.
@@ -121,31 +153,45 @@ for:
 
 ### `Observation`
 
-Represents measured data and its covariance structure, including:
-
-- statistical errors,
-- systematic normalization errors,
-- systematic offset errors,
-- or fixed covariance matrices.
+Pure measured data — `x`, `y`, and the statistical error on `y` — plus the
+measurement's reported systematic magnitudes retained as inert metadata
+(`y_sys_err_normalization`, `y_sys_err_offset`). It contributes only its
+statistical diagonal by default; `obs.systematic_terms(support)` turns the
+metadata into explicit covariance terms when you ask.
 
 ### `PhysicalModel`
 
 Maps model parameters to predicted observables for a given `Observation`.
+`ScaledModel` / `PerObservationScaledModel` wrap any model with latent
+normalization parameters (Kennedy–O'Hagan style).
 
-### `LikelihoodModel`
+### Covariance `Term`s (`rxmc.covariance`)
 
-Encodes how predictions are compared to observations. Built-in options include:
+Every uncertainty beyond the statistical diagonal is an explicit additive
+contribution to the constraint's stacked covariance. Factory helpers cover the
+common modes:
 
-- Gaussian covariance-based likelihoods,
-- unknown noise models,
-- unknown normalization / normalization-error models,
-- unknown model-error terms,
-- Student-t likelihoods,
-- and a Gaussian-process discrepancy model using sklearn kernels.
+- `normalization_term` / `offset_term` — correlated systematics, fixed
+  magnitude or free nuisance,
+- `noise_term` / `noise_fraction_term` — unknown statistical noise,
+- `model_error_term` — uncorrelated model error,
+- `discrepancy_term` — Gaussian-process model discrepancy using sklearn
+  kernels.
+
+A term whose support spans several observations *couples* them (correlated
+datasets); referencing the same `Parameter` object in two terms *shares* one
+sampled value between them.
+
+### Likelihood functionals
+
+`GaussianLikelihood` (default), `StudentT` (heavy-tailed, with a
+degrees-of-freedom parameter), and `Chi2` are thin functionals over the same
+stacked covariance.
 
 ### `Constraint`
 
-Pairs observations, a physical model, and a likelihood model.
+The maximal block of mutually-correlated data: observations, a physical model,
+a covariance assembled from terms, and a likelihood functional.
 
 ### `Evidence`
 
@@ -158,10 +204,16 @@ The `examples/` directory contains richer notebooks and demos. The most useful
 entry points are:
 
 - `examples/linear_calibration_demo.ipynb` for the basic workflow,
-- `examples/systematic_err_demo.ipynb` for likelihood comparisons and
+- `examples/systematic_err_demo.ipynb` for the error-model catalog and
   systematic-error handling,
+- `examples/measurement_to_calibration.ipynb` for the EXFOR-measurement →
+  calibration path (units, retained systematics, guardrails),
 - `examples/30s_optical_potential_calibration.ipynb` for a realistic optical
   potential calibration example,
+- `examples/correlated_observations.ipynb` for correlated datasets and shared
+  systematics (including across cross-section experiments),
+- `examples/gp_discrepancy.ipynb` for Gaussian-process model discrepancy,
+- `examples/robust_likelihoods.ipynb` for Student-t vs Gaussian likelihoods,
 - `examples/normalization_inference.ipynb` for normalization-focused modeling,
 - `examples/sampling_algos.ipynb` for sampling comparisons.
 

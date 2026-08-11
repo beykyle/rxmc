@@ -88,8 +88,11 @@ target-version = "py310"
 select = ["F", "I"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["rxmc"]
+# match isort's src_paths = ["src", "test"]: the shared test helpers module is
+# first-party too, so the two sorters agree
+known-first-party = ["rxmc", "helpers"]
 
 [tool.pytest.ini_options]
-addopts = "--nbmake --nbmake-timeout=1200"
-testpaths = ["test", "examples"]
+# bare `pytest` runs the unit suite only; the notebooks are executed in CI via
+# `pytest -n 4 --nbmake --nbmake-timeout=1200 examples`
+testpaths = ["test"]
