@@ -75,7 +75,7 @@ class Walker:
             )
         for i, conf in enumerate(self.likelihood_samplers):
             constraint = self.evidence.parametric_constraints[i]
-            if constraint.likelihood.params != conf.params:
+            if list(constraint.params) != list(conf.params):
                 raise ValueError(
                     "Inconsistent likelihood model parameters "
                     f"between 'likelihood_samplers[{i}]' and "
@@ -122,15 +122,13 @@ class Walker:
         burn : bool, optional
             If ``True``, treat as burn-in (samples are not recorded).
         """
+        wmll = self.evidence.weighted_marginal_log_likelihood
         for i, sampler in enumerate(self.likelihood_samplers):
             constraint = self.evidence.parametric_constraints[i]
-
             ym = constraint.predict(*model_params)
 
-            def log_posterior_lm(x):
-                lp = sampler.prior.logpdf(x) + constraint.marginal_log_likelihood(
-                    ym, *np.atleast_1d(x)
-                )
+            def log_posterior_lm(x, sampler=sampler, i=i, ym=ym):
+                lp = sampler.prior.logpdf(x) + wmll(i, ym, *np.atleast_1d(x))
                 return float(np.squeeze(lp))
 
             x0 = starting_locations[i]

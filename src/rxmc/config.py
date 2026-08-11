@@ -252,16 +252,12 @@ class CalibrationConfig:
             1.0 if likelihood_scaling is None else likelihood_scaling
         )
 
-        if (
-            len(self.evidence.constraints) == 0
-            and len(self.evidence.parametric_constraints) == 0
-        ):
+        if len(self.evidence.constraints) == 0:
             raise ValueError("Evidence must have at least one constraint")
         if np.any(
             [
                 c.physical_model.params != self.model_config.params
                 for c in self.evidence.constraints
-                + self.evidence.parametric_constraints
             ]
         ):
             raise ValueError(
@@ -273,7 +269,7 @@ class CalibrationConfig:
                 "in the evidence constraints"
             )
         for lc, c in zip(self.likelihood_configs, self.evidence.parametric_constraints):
-            if lc.params != c.likelihood.params:
+            if list(lc.params) != list(c.params):
                 raise ValueError(
                     "Likelihood parameters do not match those in the evidence constraints"
                 )
@@ -523,20 +519,45 @@ class CalibrationConfig:
 
         Returns
         -------
-        list of ndarray
-            Predicted observable for each constraint, in the order
-            ``evidence.constraints + evidence.parametric_constraints``.
+        list
+            One entry per constraint, in ``evidence.constraints`` order; each entry
+            is itself a list of per-observation prediction arrays.  For the
+            conditioning data of a likelihood sector use :meth:`predict_parametric`,
+            whose order matches :meth:`conditional_posterior`'s ``lm_index``.
         """
-        constraints = self.evidence.constraints + self.evidence.parametric_constraints
-        return [c.predict(*xmodel) for c in constraints]
+        return [c.predict(*xmodel) for c in self.evidence.constraints]
+
+    def predict_parametric(self, xmodel) -> list:
+        """Predictions for the *parametric* constraints only.
+
+        Indexed in ``evidence.parametric_constraints`` order, so
+        ``predict_parametric(xmodel)[lm_index]`` is the correct ``ym`` to feed
+        :meth:`conditional_posterior` at ``lm_index`` (unlike :meth:`predict`,
+        which is indexed over *all* constraints and therefore misaligns whenever a
+        non-parametric constraint precedes a parametric one).
+
+        Parameters
+        ----------
+        xmodel : ndarray, shape (model_config.ndim,)
+            Physical model parameter vector.
+
+        Returns
+        -------
+        list
+            One prediction per parametric constraint.
+        """
+        return [c.predict(*xmodel) for c in self.evidence.parametric_constraints]
 
     def conditional_posterior(self, x_lm, lm_index: int, ym) -> float:
         """Log posterior for one likelihood sector, conditioned on observed data.
 
-        Evaluates ``marginal_log_likelihood(ym, *x_lm) + prior_logpdf(x_lm)``
-        for the likelihood sector at ``lm_index``.  Useful for Gibbs-style
-        updates where the likelihood parameters are sampled separately from
-        the physical model parameters.
+        Evaluates
+        ``prior_logpdf(x_lm) + likelihood_scaling * w * marginal_log_likelihood(ym, *x_lm)``
+        for the likelihood sector at ``lm_index``, where ``w`` is the
+        constraint's :attr:`Evidence.weights` entry.  The likelihood is tempered
+        exactly as in :meth:`log_posterior` (prior untouched), so Gibbs-style
+        updates that alternate this conditional with the model block target the
+        same joint distribution.
 
         Parameters
         ----------
@@ -546,13 +567,17 @@ class CalibrationConfig:
             Index into ``likelihood_configs`` (and
             ``evidence.parametric_constraints``).
         ym : ndarray
-            Predicted observable used as the conditioning data.
+            Predicted observable used as the conditioning data — use
+            ``predict_parametric(xmodel)[lm_index]`` to obtain it with matching
+            index order.
 
         Returns
         -------
         float
             Log posterior for this likelihood sector.
         """
-        return self.evidence.parametric_constraints[lm_index].marginal_log_likelihood(
-            ym, *x_lm
-        ) + self.likelihood_configs[lm_index].prior_logpdf(x_lm)
+        lp = self.likelihood_configs[lm_index].prior_logpdf(x_lm)
+        if not np.isfinite(lp):
+            return -np.inf
+        ll = self.evidence.weighted_marginal_log_likelihood(lm_index, ym, *x_lm)
+        return lp + self.likelihood_scaling * ll

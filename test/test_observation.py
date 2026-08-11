@@ -2,8 +2,9 @@ import unittest
 
 import numpy as np
 
-from rxmc.observation import FixedCovarianceObservation, Observation
-from rxmc.observation_from_measurement import set_up_observation
+from helpers import make_ctx
+from rxmc.covariance import ConstraintCovariance, RankOneTerm
+from rxmc.observation import Observation
 
 
 class TestObservation(unittest.TestCase):
@@ -15,6 +16,7 @@ class TestObservation(unittest.TestCase):
         self.assertEqual(observation.n_data_pts, 3)
         np.testing.assert_array_equal(observation.x, x)
         np.testing.assert_array_equal(observation.y, y)
+        np.testing.assert_array_equal(observation.y_stat_err, np.zeros_like(y))
 
     def test_invalid_initialization(self):
         x = np.array([1, 2, 3])
@@ -22,144 +24,123 @@ class TestObservation(unittest.TestCase):
         with self.assertRaises(ValueError):
             Observation(x, y)
 
-    def test_statistical_covariance(self):
-        x = np.array([1, 2])
-        y = np.array([2, 4])
+    def test_stat_err_shape_validation(self):
+        x = np.array([1, 2, 3])
+        y = np.array([4, 5, 6])
+        with self.assertRaises(ValueError):
+            Observation(x, y, y_stat_err=np.array([0.1, 0.2]))
+
+    def test_statistical_term_is_diagonal_variance(self):
+        x = np.array([1.0, 2.0])
+        y = np.array([2.0, 4.0])
         y_stat_err = np.array([0.1, 0.2])
         observation = Observation(x, y, y_stat_err=y_stat_err)
-        expected_covariance = np.diag(y_stat_err**2)
-        np.testing.assert_array_almost_equal(
-            observation.statistical_covariance, expected_covariance
-        )
+        support = np.arange(2)
+        term = observation.statistical_term(support)
+        Sigma = np.zeros((2, 2))
+        term.add_to(Sigma, None, np.array([]))
+        np.testing.assert_array_almost_equal(Sigma, np.diag(y_stat_err**2))
 
-    def test_systematic_covariance(self):
-        x = np.array([1, 2])
-        y = np.array([2, 4])
-        y_stat_err = np.array([0.1, 0.2])
-        y_sys_err_norm = 0.3
-        y_sys_err_offset = 0.001
+    def test_statistical_term_writes_into_support_block(self):
+        # an observation occupying the second block of a length-4 stack
+        x = np.array([1.0, 2.0])
+        y = np.array([2.0, 4.0])
+        y_stat_err = np.array([0.3, 0.4])
+        observation = Observation(x, y, y_stat_err=y_stat_err)
+        support = np.array([2, 3])
+        cov = ConstraintCovariance([observation.statistical_term(support)], N=4)
+        Sigma = cov.matrix(None)
+        expected = np.zeros((4, 4))
+        expected[2, 2] = 0.3**2
+        expected[3, 3] = 0.4**2
+        np.testing.assert_array_almost_equal(Sigma, expected)
+
+    def test_default_statistical_term_is_constant(self):
         observation = Observation(
-            x,
-            y,
-            y_stat_err=y_stat_err,
-            y_sys_err_normalization=y_sys_err_norm,
-            y_sys_err_offset=y_sys_err_offset,
+            np.array([1.0, 2.0]), np.array([2.0, 4.0]), y_stat_err=np.array([0.1, 0.2])
         )
-        np.testing.assert_array_almost_equal(
-            observation.systematic_offset_covariance,
-            np.outer(np.ones_like(y), np.ones_like(y)) * y_sys_err_offset**2,
-        )
-        np.testing.assert_array_almost_equal(
-            observation.systematic_normalization_covariance,
-            np.outer(np.ones_like(y), np.ones_like(y)) * y_sys_err_norm**2,
-        )
+        cov = ConstraintCovariance([observation.statistical_term(np.arange(2))], N=2)
+        self.assertTrue(cov.is_constant)
+        self.assertTrue(cov.block_diagonal)
+        self.assertEqual(cov.n_params, 0)
 
-    def test_full_covariance(self):
-        x = np.array([1, 2])
-        y = np.array([2, 4])
-        y_stat_err = np.array([0.1, 0.2])
-        y_sys_err_norm = 0.3
-        y_sys_err_offset = 0.001
-        observation = Observation(
-            x,
-            y,
-            y_stat_err=y_stat_err,
-            y_sys_err_normalization=y_sys_err_norm,
-            y_sys_err_offset=y_sys_err_offset,
-        )
-        expected_covariance = (
-            np.diag(y_stat_err**2)
-            + np.outer(y, y) * y_sys_err_norm**2
-            + np.outer(np.ones_like(y), np.ones_like(y)) * y_sys_err_offset**2
-        )
-        np.testing.assert_array_almost_equal(
-            observation.covariance(y), expected_covariance
-        )
+    def test_systematics_default_none_and_no_terms(self):
+        obs = Observation(np.array([1.0, 2.0]), np.array([2.0, 4.0]))
+        self.assertIsNone(obs.y_sys_err_normalization)
+        self.assertIsNone(obs.y_sys_err_offset)
+        self.assertEqual(obs.systematic_terms(np.arange(2)), [])
 
-    def test_full_covariance_with_masks_offset_only(self):
-        x = np.array([1, 2, 3, 4])
-        y = x**2
-        y_stat_err = 0.119 * y
-        # first and last points have a shared err in offset of 1,
-        # no systematic error in offset for the other points
-        y_sys_err_offset = [0.331]
-        y_sys_err_offset_mask = [
-            np.array([True, False, False, True]),
-        ]
-        # create the observation with the masks
-        observation = Observation(
-            x,
-            y,
-            y_stat_err=y_stat_err,
-            y_sys_err_offset=y_sys_err_offset,
-            y_sys_err_offset_mask=y_sys_err_offset_mask,
+    def test_systematics_storage(self):
+        obs = Observation(
+            np.array([1.0, 2.0]),
+            np.array([2.0, 4.0]),
+            y_sys_err_normalization=0.03,
+            y_sys_err_offset=np.array([0.1, 0.2]),
         )
-        expected_covariance = (
-            # statistical error
-            np.diag(y_stat_err**2)
-            # systematic error in offset for first and last points
-            + np.outer(np.array([1, 0, 0, 1]), np.array([1, 0, 0, 1])) * 0.331**2
+        self.assertEqual(obs.y_sys_err_normalization, 0.03)
+        np.testing.assert_allclose(obs.y_sys_err_offset, [0.1, 0.2])
+        # 0-d ndarrays count as scalars
+        obs2 = Observation(
+            np.array([1.0, 2.0]),
+            np.array([2.0, 4.0]),
+            y_sys_err_normalization=np.array(0.03),
         )
+        self.assertEqual(obs2.y_sys_err_normalization, 0.03)
 
-        np.testing.assert_array_almost_equal(
-            observation.covariance(y), expected_covariance
-        )
-
-    def test_full_covariance_with_masks(self):
-        x = np.array([1, 2, 3, 4])
-        y = x**2
-        y_stat_err = 0.119 * y
-        # first two points have a shared 5% systematic error in normalization
-        # all points have a shared 10% systematic error in normalization
-        y_sys_err_norm = [0.05, 0.1]
-        y_sys_err_normalization_mask = [
-            np.array([True, True, False, False]),
-            np.ones_like(y),
-        ]
-        # first and last points have a shared err in offset of 1,
-        # no systematic error in offset for the other points
-        y_sys_err_offset = [0.331]
-        y_sys_err_offset_mask = [
-            np.array([True, False, False, True]),
-        ]
-        # create the observation with the masks
-        observation = Observation(
-            x,
-            y,
-            y_stat_err=y_stat_err,
-            y_sys_err_normalization=y_sys_err_norm,
-            y_sys_err_normalization_mask=y_sys_err_normalization_mask,
-            y_sys_err_offset=y_sys_err_offset,
-            y_sys_err_offset_mask=y_sys_err_offset_mask,
-        )
-        expected_covariance = (
-            # statistical error
-            np.diag(y_stat_err**2)
-            # systematic error in normalization
-            + np.outer(y, y)
-            * (
-                # for all points
-                0.1**2
-                # plus for first two points
-                + np.outer(np.array([1, 1, 0, 0]), np.array([1, 1, 0, 0])) * 0.05**2
+    def test_systematics_bad_shape_raises(self):
+        with self.assertRaises(ValueError):
+            Observation(
+                np.array([1.0, 2.0, 3.0]),
+                np.array([2.0, 4.0, 6.0]),
+                y_sys_err_offset=np.array([0.1, 0.2]),
             )
-            # systematic error in offset for first and last points
-            + np.outer(np.array([1, 0, 0, 1]), np.array([1, 0, 0, 1])) * 0.331**2
-        )
 
-        np.testing.assert_array_almost_equal(
-            observation.covariance(y), expected_covariance
+    def test_systematics_zero_magnitudes_skipped(self):
+        obs = Observation(
+            np.array([1.0, 2.0]),
+            np.array([2.0, 4.0]),
+            y_sys_err_normalization=0.0,
+            y_sys_err_offset=0,
         )
+        self.assertEqual(obs.systematic_terms(np.arange(2)), [])
 
-    def test_residual(self):
-        x = np.array([1, 2])
-        y = np.array([2, 4])
-        ym = np.array([1.5, 3.5])
-        observation = Observation(x, y)
-        expected_residual = y - ym
-        np.testing.assert_array_almost_equal(
-            observation.residual(ym), expected_residual
+    def test_systematic_terms_offset_then_normalization(self):
+        obs = Observation(
+            np.array([1.0, 2.0]),
+            np.array([2.0, 4.0]),
+            y_sys_err_normalization=0.05,
+            y_sys_err_offset=0.2,
         )
+        terms = obs.systematic_terms(np.arange(2))
+        self.assertEqual(len(terms), 2)
+        self.assertTrue(all(isinstance(t, RankOneTerm) for t in terms))
+
+    def test_systematic_terms_recover_old_covariance(self):
+        # statistical_term + systematic_terms matches the old auto-folded
+        # Observation.covariance(ym)
+        y = np.array([1.0, 2.0, 4.0])
+        ym = np.array([1.2, 2.1, 3.5])
+        stat = np.array([0.1, 0.2, 0.3])
+        norm_frac = 0.05
+        offset = 0.2
+        obs = Observation(
+            np.arange(3.0),
+            y,
+            y_stat_err=stat,
+            y_sys_err_normalization=norm_frac,
+            y_sys_err_offset=offset,
+        )
+        support = np.arange(3)
+        cov = ConstraintCovariance(
+            [obs.statistical_term(support), *obs.systematic_terms(support)], N=3
+        )
+        S = cov.matrix(make_ctx(np.arange(3.0), y, ym, [support]))
+        old = (
+            np.diag(stat**2)
+            + np.outer(offset * np.ones(3), offset * np.ones(3))
+            + norm_frac**2 * np.outer(ym, ym)
+        )
+        np.testing.assert_allclose(S, old)
 
     def test_num_pts_within_interval(self):
         x = np.array([1, 2, 3, 4])
@@ -178,68 +159,6 @@ class TestObservation(unittest.TestCase):
         observation = Observation(x, y)
         num_pts = observation.num_pts_within_interval(ylow, yhigh)
         self.assertEqual(num_pts, 2)
-
-
-class TestFixedCovarianceObservation(unittest.TestCase):
-
-    def test_fixed_covariance_initialization(self):
-        x = np.array([1, 2, 3])
-        y = np.array([4, 5, 6])
-        covariance = np.array([0.1, 0.2, 0.3])
-        obs = FixedCovarianceObservation(x, y, covariance)
-        expected_covariance = np.diag(covariance)
-        np.testing.assert_array_almost_equal(obs.cov, expected_covariance)
-
-    def test_fixed_covariance_initialization_general(self):
-        x = np.array([1, 2, 3])
-        y = np.array([4, 5, 6])
-        covariance = np.diag([1, 1, 1])
-        obs = FixedCovarianceObservation(x, y, covariance)
-        np.testing.assert_array_almost_equal(obs.cov, covariance)
-
-    def test_invalid_fixed_covariance(self):
-        x = np.array([1, 2])
-        y = np.array([3, 4])
-        covariance = np.array([0.1, 0.2, 0.3])
-        with self.assertRaises(ValueError):
-            FixedCovarianceObservation(x, y, covariance)
-
-    def test_covariance_method(self):
-        x = np.array([1, 2])
-        y = np.array([3, 4])
-        covariance = np.array([0.1, 0.2])
-        obs = FixedCovarianceObservation(x, y, covariance)
-        np.testing.assert_array_almost_equal(obs.covariance(y), np.diag(covariance))
-
-
-class TestSetUpObservation(unittest.TestCase):
-
-    def test_scalar_like_offset_error_supported(self):
-        x = np.array([1.0, 2.0])
-        y = np.array([3.0, 4.0])
-        normalization = np.ones_like(y)
-        args, kwargs, _ = set_up_observation(
-            Observation,
-            y=y,
-            normalization=normalization,
-            x=x,
-            y_sys_err_offset=np.array(0.1),
-        )
-        np.testing.assert_array_equal(args[0], x)
-        self.assertEqual(kwargs["y_sys_err_offset"], 0.1)
-
-    def test_scalar_like_normalization_error_supported(self):
-        x = np.array([1.0, 2.0])
-        y = np.array([3.0, 4.0])
-        normalization = np.ones_like(y)
-        _, kwargs, _ = set_up_observation(
-            Observation,
-            y=y,
-            normalization=normalization,
-            x=x,
-            y_sys_err_normalization=np.array(0.05),
-        )
-        self.assertEqual(kwargs["y_sys_err_normalization"], 0.05)
 
 
 if __name__ == "__main__":
