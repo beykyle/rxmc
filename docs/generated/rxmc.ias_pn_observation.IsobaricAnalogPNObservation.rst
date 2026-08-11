@@ -14,10 +14,10 @@
    .. autosummary::
    
       ~IsobaricAnalogPNObservation.__init__
-      ~IsobaricAnalogPNObservation.covariance
       ~IsobaricAnalogPNObservation.from_measurement
       ~IsobaricAnalogPNObservation.num_pts_within_interval
-      ~IsobaricAnalogPNObservation.residual
+      ~IsobaricAnalogPNObservation.statistical_term
+      ~IsobaricAnalogPNObservation.systematic_terms
    
    
 

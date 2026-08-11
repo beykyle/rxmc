@@ -15,10 +15,10 @@
    
       ~ElasticDifferentialXSObservation.__init__
       ~ElasticDifferentialXSObservation.calculate_normalization
-      ~ElasticDifferentialXSObservation.covariance
       ~ElasticDifferentialXSObservation.from_measurement
       ~ElasticDifferentialXSObservation.num_pts_within_interval
-      ~ElasticDifferentialXSObservation.residual
+      ~ElasticDifferentialXSObservation.statistical_term
+      ~ElasticDifferentialXSObservation.systematic_terms
    
    
 

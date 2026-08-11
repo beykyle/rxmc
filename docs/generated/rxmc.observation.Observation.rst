@@ -14,9 +14,9 @@
    .. autosummary::
    
       ~Observation.__init__
-      ~Observation.covariance
       ~Observation.num_pts_within_interval
-      ~Observation.residual
+      ~Observation.statistical_term
+      ~Observation.systematic_terms
    
    
 

@@ -18,15 +18,6 @@ Development / local use
 
 It is strongly recommended to use an isolated environment.
 
-``conda`` / ``mamba``
----------------------
-
-.. code-block:: bash
-
-   conda env create -f environment.yml
-   conda activate rxmc
-   pip install -ve . --no-deps
-
 ``venv``
 --------
 

@@ -20,6 +20,7 @@
       ~CalibrationConfig.log_posterior_batch
       ~CalibrationConfig.log_prior
       ~CalibrationConfig.predict
+      ~CalibrationConfig.predict_parametric
       ~CalibrationConfig.prior_transform
       ~CalibrationConfig.split_parameters
       ~CalibrationConfig.starting_location

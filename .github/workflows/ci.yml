@@ -46,7 +46,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.12"]
+        python-version: ["3.10", "3.11", "3.12"]
 
     steps:
       - uses: actions/checkout@v4
@@ -66,7 +66,7 @@ jobs:
 
   notebooks:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
@@ -79,10 +79,10 @@ jobs:
       - name: Install validation dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          python -m pip install -e '.[validation]'
+          python -m pip install -e '.[validation]' pytest-xdist
 
       - name: Run notebooks with pytest
-        run: python -m pytest examples
+        run: python -m pytest -n 4 --nbmake --nbmake-timeout=1200 examples
 
   docs:
     runs-on: ubuntu-latest
