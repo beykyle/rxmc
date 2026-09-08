@@ -33,7 +33,15 @@ def _train_noise_matrix(train_noise_var, n) -> np.ndarray:
     if v.ndim == 0:
         return float(v) * np.eye(n)
     if v.ndim == 1:
+        if v.shape != (n,):
+            raise ValueError(
+                f"train_noise_var vector must have shape ({n},), got {v.shape}"
+            )
         return np.diag(v)
+    if v.shape != (n, n):
+        raise ValueError(
+            f"train_noise_var matrix must have shape ({n}, {n}), got {v.shape}"
+        )
     return v
 
 

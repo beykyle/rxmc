@@ -90,7 +90,7 @@ class Evidence:
         """Reject cross-constraint parameter sharing and duplicate names.
 
         Covariance/likelihood parameters are constraint-scoped (see
-        ``covariance_refactor.md`` §8): the same ``Parameter`` object in two
+        ``docs/design.md``): the same ``Parameter`` object in two
         constraints would silently be sampled as two independent values.
         Names must also be unique across the whole Evidence — they label
         sampler columns, priors, and corner-plot axes.

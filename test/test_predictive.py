@@ -76,6 +76,28 @@ class TestGPPosteriorPredictive(unittest.TestCase):
         self.assertEqual(mean.shape, (5,))
         self.assertEqual(cov.shape, (5, 5))
 
+    def test_raises_on_train_noise_vector_shape_mismatch(self):
+        with self.assertRaisesRegex(ValueError, r"shape \(12,\)"):
+            gp_posterior_predictive(
+                self.kernel,
+                self.theta,
+                self.X_train,
+                self.residuals,
+                self.X_pred,
+                train_noise_var=np.ones(11),
+            )
+
+    def test_raises_on_train_noise_matrix_shape_mismatch(self):
+        with self.assertRaisesRegex(ValueError, r"shape \(12, 12\)"):
+            gp_posterior_predictive(
+                self.kernel,
+                self.theta,
+                self.X_train,
+                self.residuals,
+                self.X_pred,
+                train_noise_var=np.eye(11),
+            )
+
 
 class TestPredictiveBand(unittest.TestCase):
     def test_percentiles(self):

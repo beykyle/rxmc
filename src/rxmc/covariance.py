@@ -7,7 +7,7 @@ built additively from :class:`Term` objects, each of which writes its
 contribution into a sub-block of the stacked covariance matrix selected by an
 index array ``support``.
 
-Two mechanisms are expressed here (see ``covariance_refactor.md``):
+Two mechanisms are expressed here (see ``docs/design.md``):
 
 * **Correlating observations (A)** — a term whose ``support`` spans more than one
   observation block writes off-diagonal blocks, coupling the data.  A
