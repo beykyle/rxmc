@@ -45,6 +45,7 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
         calculate_params: Callable[[jitr.xs.quasielastic_pn.Workspace, tuple], tuple],
         params: list = [],
         model_name: str = None,
+        transform=None,
     ):
         """
         Parameters
@@ -68,6 +69,9 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
             Parameters of the model.  Defaults to ``[]``.
         model_name : str, optional
             Human-readable model name.  Defaults to ``"IsobaricAnalogPNXSModel"``.
+        transform : Transform or callable, optional
+            Parametric model-side transform applied to the prediction; see
+            :class:`~rxmc.physical_model.PhysicalModel`.
         """
         self.model_name = model_name or "IsobaricAnalogPNXSModel"
         self.U_p_coulomb = U_p_coulomb
@@ -77,7 +81,7 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
         self.U_n_spin_orbit = U_n_spin_orbit
         self.calculate_params = calculate_params
 
-        super().__init__(params)
+        super().__init__(params, transform=transform)
 
     def _xs(self, ws, params) -> np.ndarray:
         """Evaluate the five potentials on ``ws.radial_grid()`` and solve (b/sr)."""
@@ -144,4 +148,6 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
             Predicted (p,n) IAS differential cross section in b/sr on
             ``observation.visualization_workspace.angles``.
         """
-        return self._xs(observation.visualization_workspace, params)
+        base, values = self.split_params(params)
+        xs = self._xs(observation.visualization_workspace, base)
+        return self.apply_transform(observation, xs, values)

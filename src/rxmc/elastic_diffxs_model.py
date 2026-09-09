@@ -31,6 +31,7 @@ class ElasticDifferentialXSModel(PhysicalModel):
         params: list = [],
         model_name: str = None,
         interaction_coulomb: Callable[..., np.ndarray] | None = None,
+        transform=None,
     ):
         """
         Parameters
@@ -56,6 +57,9 @@ class ElasticDifferentialXSModel(PhysicalModel):
             ``f(r, *args) -> np.ndarray`` returning the Coulomb potential on
             ``r``.  When ``None`` the Coulomb interaction inside the channel
             radius must be folded into ``interaction_central``.
+        transform : Transform or callable, optional
+            Parametric model-side transform applied to the prediction; see
+            :class:`~rxmc.physical_model.PhysicalModel`.
         """
         self.model_name = model_name or "ElasticDifferentialXSModel"
 
@@ -77,7 +81,7 @@ class ElasticDifferentialXSModel(PhysicalModel):
                 "or 'Ay'."
             )
 
-        super().__init__(params)
+        super().__init__(params, transform=transform)
 
     def _xs(self, ws, params):
         """Evaluate the potentials on ``ws.radial_grid()`` and solve."""
@@ -154,7 +158,8 @@ class ElasticDifferentialXSModel(PhysicalModel):
         observation : ElasticDifferentialXSObservation
             Observation containing the reaction data and pre-built workspace.
         *params : float
-            Physical-model parameter values.
+            Full model parameter values (physical parameters followed by any
+            transform parameters).
 
         Returns
         -------
@@ -166,8 +171,9 @@ class ElasticDifferentialXSModel(PhysicalModel):
                 f"Observation quantity {observation.quantity} does not match "
                 f"model quantity {self.quantity}."
             )
+        base, values = self.split_params(params)
         ws = observation.visualization_workspace
-        xs = self._xs(ws, params)
+        xs = self._xs(ws, base)
         if observation.compound_correction is not None:
             cn = np.interp(
                 ws.angles,
@@ -180,7 +186,7 @@ class ElasticDifferentialXSModel(PhysicalModel):
                 )
             xs.dsdo += cn
             xs.t += 2 * np.pi * np.trapz(cn, ws.angles)
-        return self.extractor(xs, ws)
+        return self.apply_transform(observation, self.extractor(xs, ws), values)
 
 
 def extract_dXS_dA(

@@ -18,8 +18,8 @@ from rxmc.evidence import Evidence
 from rxmc.likelihood_model import GaussianLikelihood, StudentT
 from rxmc.observation import Observation
 from rxmc.params import Parameter
-from rxmc.physical_model import PerObservationScaledModel, Polynomial
-from rxmc.transforms import log
+from rxmc.physical_model import Polynomial
+from rxmc.transforms import log, per_observation_scaling, scale
 
 
 class TestStackedConstraint(unittest.TestCase):
@@ -122,11 +122,10 @@ class TestStackedConstraint(unittest.TestCase):
         self.assertNotAlmostEqual(ll_coupled, ll_indep)
 
 
-class TestPerDatasetScaledModel(unittest.TestCase):
-    """Per-dataset latent rho expressed as identity-routed model parameters."""
+class TestPerObservationScaling(unittest.TestCase):
+    """Per-dataset latent rho as an identity-routed model transform."""
 
     def setUp(self):
-        self.base = Polynomial(order=1)
         self.obs1 = Observation(
             np.array([1.0, 2.0, 3.0]),
             np.array([2.0, 4.0, 6.0]),
@@ -138,16 +137,30 @@ class TestPerDatasetScaledModel(unittest.TestCase):
             y_stat_err=np.array([0.1, 0.1, 0.1]),
         )
 
+    def make_model(self, observations):
+        return Polynomial(order=1, transform=per_observation_scaling(observations))
+
     def test_routes_rho_by_identity(self):
-        model = PerObservationScaledModel(self.base, [self.obs1, self.obs2])
+        model = self.make_model([self.obs1, self.obs2])
         # params = [a0, a1, log_rho_0, log_rho_1]
         self.assertEqual(model.n_params, 4)
+        self.assertEqual(
+            [p.name for p in model.params], ["a0", "a1", "log_rho_0", "log_rho_1"]
+        )
         mp = (0.0, 2.0, np.log(1.0), np.log(2.0))
-        np.testing.assert_allclose(model.evaluate(self.obs1, *mp), [2.0, 4.0, 6.0])
-        np.testing.assert_allclose(model.evaluate(self.obs2, *mp), [4.0, 8.0, 12.0])
+        np.testing.assert_allclose(model(self.obs1, *mp), [2.0, 4.0, 6.0])
+        np.testing.assert_allclose(model(self.obs2, *mp), [4.0, 8.0, 12.0])
+
+    def test_linear_prefix(self):
+        t = per_observation_scaling([self.obs1, self.obs2], log=False)
+        self.assertEqual([p.name for p in t.params], ["rho_0", "rho_1"])
+        model = Polynomial(order=1, transform=t)
+        np.testing.assert_allclose(
+            model(self.obs2, 0.0, 2.0, 1.0, 3.0), [6.0, 12.0, 18.0]
+        )
 
     def test_shared_across_constraints_in_evidence(self):
-        model = PerObservationScaledModel(self.base, [self.obs1, self.obs2])
+        model = self.make_model([self.obs1, self.obs2])
         c1 = Constraint([self.obs1], model)
         c2 = Constraint([self.obs2], model)
         ev = Evidence([c1, c2])  # all constraints share one model instance
@@ -162,19 +175,18 @@ class TestPerDatasetScaledModel(unittest.TestCase):
         # garbage-collected observation's id can never be recycled
         import gc
 
-        model = PerObservationScaledModel(self.base, [self.obs1, self.obs2])
+        model = self.make_model([self.obs1, self.obs2])
         gc.collect()
-        self.assertIs(model.observations[0], self.obs1)
-        self.assertIs(model.observations[1], self.obs2)
+        self.assertIs(model.transform.observations[0], self.obs1)
         mp = (0.0, 2.0, np.log(1.0), np.log(2.0))
         np.testing.assert_allclose(
-            model.evaluate(model.observations[0], *mp), [2.0, 4.0, 6.0]
+            model(model.transform.observations[0], *mp), [2.0, 4.0, 6.0]
         )
 
     def test_unregistered_observation_raises(self):
-        model = PerObservationScaledModel(self.base, [self.obs1])
+        model = self.make_model([self.obs1])
         with self.assertRaises(KeyError):
-            model.evaluate(self.obs2, 0.0, 1.0, 0.0)
+            model(self.obs2, 0.0, 1.0, 0.0)
 
 
 class TestSharedParameterCaseB(unittest.TestCase):
@@ -421,34 +433,35 @@ class TestConstraintFixes(unittest.TestCase):
         np.testing.assert_allclose(S, cov)
 
 
-class TestScaledModel(unittest.TestCase):
-    def test_scale_applied_and_params_prepended(self):
-        from rxmc.physical_model import ScaledModel
-
+class TestScaleTransform(unittest.TestCase):
+    def test_scale_applied_and_params_appended(self):
         base = Polynomial(order=1)
         obs = Observation(
             np.array([1.0, 2.0, 3.0]),
             np.array([2.0, 4.0, 6.0]),
             y_stat_err=np.array([0.1, 0.1, 0.1]),
         )
-        model = ScaledModel(base)
+        model = Polynomial(order=1, transform=scale())
         self.assertEqual(model.n_params, 3)
-        self.assertEqual(model.params[0].name, "log normalization")
+        self.assertEqual(model.params[-1].name, "log_rho")
         np.testing.assert_allclose(
-            model.evaluate(obs, np.log(2.0), 0.0, 2.0),
-            2.0 * base.evaluate(obs, 0.0, 2.0),
+            model(obs, 0.0, 2.0, np.log(2.0)),
+            2.0 * base(obs, 0.0, 2.0),
         )
+        # evaluate() is physical space only
+        np.testing.assert_allclose(model.evaluate(obs, 0.0, 2.0), base(obs, 0.0, 2.0))
 
     def test_linear_scale(self):
-        from rxmc.params import Parameter
-        from rxmc.physical_model import ScaledModel
-
         base = Polynomial(order=0)
         obs = Observation(np.array([1.0, 2.0]), np.array([3.0, 3.0]))
-        model = ScaledModel(base, scale_parameter=Parameter("rho"), log=False)
-        np.testing.assert_allclose(
-            model.evaluate(obs, 1.5, 4.0), 1.5 * base.evaluate(obs, 4.0)
-        )
+        model = Polynomial(order=0, transform=scale(Parameter("rho"), log=False))
+        np.testing.assert_allclose(model(obs, 4.0, 1.5), 1.5 * base(obs, 4.0))
+
+    def test_wrong_param_count_raises(self):
+        model = Polynomial(order=0, transform=scale())
+        obs = Observation(np.array([1.0]), np.array([1.0]))
+        with self.assertRaises(ValueError):
+            model(obs, 1.0)
 
 
 class TestMask(unittest.TestCase):
@@ -640,6 +653,42 @@ class TestConstantTermsReadX(unittest.TestCase):
         S = c.covariance_matrix(self.mp)
         self.assertTrue(S.flags.writeable)
         np.testing.assert_allclose(S, cov)
+
+
+class TestMaskWithPerObservationScaling(unittest.TestCase):
+    """Masked views keep routing to their root observation's rho."""
+
+    def setUp(self):
+        self.x = np.array([1.0, 2.0, 3.0, 4.0])
+        self.err = np.full(4, 0.1)
+        self.obs1 = Observation(self.x, 2.0 * self.x, y_stat_err=self.err)
+        self.obs2 = Observation(self.x, 6.0 * self.x, y_stat_err=self.err)
+        self.pm = Polynomial(
+            order=1, transform=per_observation_scaling([self.obs1, self.obs2])
+        )
+        self.mp = (0.0, 2.0, 0.0, np.log(3.0))
+
+    def _reference(self, obs_list, keep):
+        # a constraint built directly on the same active points; masked views
+        # share their root's identity so the same transform routes them
+        return Constraint(obs_list, self.pm, mask=keep).log_likelihood(self.mp)
+
+    def test_masked_view_routes_to_root(self):
+        c = Constraint([self.obs1, self.obs2], self.pm)
+        held = c.masked(point_masks=[self.x < 2.5, None])
+        ref = self._reference([self.obs1.masked(self.x < 2.5), self.obs2], [True, True])
+        self.assertAlmostEqual(held.log_likelihood(self.mp), ref)
+
+    def test_complement_routes_to_root(self):
+        c = Constraint([self.obs1, self.obs2], self.pm, mask=[True, False])
+        comp = c.complement()
+        self.assertEqual(comp.n_data_pts, 4)
+        ref = self._reference([self.obs1, self.obs2], [False, True])
+        self.assertAlmostEqual(comp.log_likelihood(self.mp), ref)
+        self.assertAlmostEqual(
+            c.log_likelihood(self.mp) + comp.log_likelihood(self.mp),
+            Constraint([self.obs1, self.obs2], self.pm).log_likelihood(self.mp),
+        )
 
 
 if __name__ == "__main__":

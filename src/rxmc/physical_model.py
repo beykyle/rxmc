@@ -13,6 +13,7 @@ import numpy as np
 
 from .observation import Observation
 from .params import Parameter
+from .transforms import as_transform
 
 
 class PhysicalModel:
@@ -23,16 +24,47 @@ class PhysicalModel:
     measurement $\\{x_i,\\, y(x_i)\\}$ encapsulated in an
     :class:`~rxmc.observation.Observation`.
 
+    Subclasses implement :meth:`evaluate` in physical space.  An optional
+    *parametric* ``transform`` (see :mod:`rxmc.transforms`) is applied on top by
+    :meth:`__call__`; its parameters are appended to :attr:`params` so they flow
+    through the ordinary model-parameter machinery (priors, ``split_parameters``).
+    Typical uses are a latent normalisation :func:`rxmc.transforms.scale` or one
+    per dataset via :func:`rxmc.transforms.per_observation_scaling`.  Comparison-
+    space transforms (e.g. comparing in log space) are *not* the model's
+    business: declare them on the :class:`~rxmc.observation.Observation`.
+
     Parameters
     ----------
     params : list of Parameter
-        Parameters that define the model.  Each entry should carry a name
+        Physical parameters of the model.  Each entry should carry a name
         and a data type.
+    transform : Transform or callable, optional
+        Model-side transform ``y -> transform(y, *values)`` applied after
+        :meth:`evaluate`.  Its parameters (if any) are appended to ``params``.
     """
 
-    def __init__(self, params: list[Parameter]):
-        self.params = params
+    def __init__(self, params: list[Parameter], transform=None):
+        self.base_params = list(params)
+        self.transform = as_transform(transform)
+        self.params = self.base_params + list(self.transform.params)
+        self.n_base_params = len(self.base_params)
         self.n_params = len(self.params)
+
+    def split_params(self, params):
+        """Split a full parameter tuple into ``(base_params, transform_values)``."""
+        params = tuple(params)
+        if len(params) != self.n_params:
+            raise ValueError(
+                f"{type(self).__name__} expects {self.n_params} parameter(s), "
+                f"got {len(params)}"
+            )
+        return params[: self.n_base_params], params[self.n_base_params :]
+
+    def apply_transform(self, observation, y, transform_values=()):
+        """Apply the model-side transform to a physical-space prediction."""
+        if self.transform.is_identity:
+            return np.asarray(y, dtype=float)
+        return self.transform(y, *transform_values, context=observation)
 
     def evaluate(self, observation: Observation, *params) -> np.ndarray:
         """Evaluate the model at the given parameter values.
@@ -59,7 +91,11 @@ class PhysicalModel:
         raise NotImplementedError("Subclasses must implement the evaluate method.")
 
     def __call__(self, observation: Observation, *params) -> np.ndarray:
-        return self.evaluate(observation, *params)
+        """Physical-space :meth:`evaluate` followed by the model transform."""
+        base, values = self.split_params(params)
+        return self.apply_transform(
+            observation, self.evaluate(observation, *base), values
+        )
 
 
 class Polynomial(PhysicalModel):
@@ -75,14 +111,16 @@ class Polynomial(PhysicalModel):
     ----------
     order : int
         Polynomial order $n$.  The model has $n+1$ free coefficients.
+    transform : Transform or callable, optional
+        See :class:`PhysicalModel`.
     """
 
-    def __init__(self, order: int):
+    def __init__(self, order: int, transform=None):
         params = []
         for i in range(order + 1):
             params.append(Parameter(f"a{i}", latex_name=f"a_{i}", dtype=float))
         self.order = order
-        super().__init__(params)
+        super().__init__(params, transform=transform)
 
     def evaluate(self, observation: Observation, *params) -> np.ndarray:
         """Evaluate the polynomial at the observation grid.
@@ -113,128 +151,3 @@ class Polynomial(PhysicalModel):
         x_powers = np.vander(observation.x, self.order + 1, increasing=True)
         y = np.dot(x_powers, np.asarray(params))
         return y
-
-
-class ScaledModel(PhysicalModel):
-    r"""A physical model with a latent multiplicative normalisation.
-
-    Wraps a base :class:`PhysicalModel` and prepends a scale parameter
-    :math:`\rho`, returning
-
-    .. math::
-
-        y_{\mathrm{model}}(x;\, \rho, \alpha) = \rho \, y_{\mathrm{base}}(x;\, \alpha)
-
-    This is the Kennedy & O'Hagan latent forward-model scale that the old
-    ``UnknownNormalizationModel`` expressed on the likelihood side.  It changes the
-    *mean*, not the covariance, so it lives on the model and flows through the
-    ordinary model-parameter machinery (priors, ``split_parameters``).
-
-    Parameters
-    ----------
-    base_model : PhysicalModel
-        The model whose prediction is rescaled.
-    scale_parameter : Parameter, optional
-        The scale parameter.  Defaults to a log-scale ``log rho``; set
-        ``log=False`` for a linear scale.
-    log : bool, optional
-        If ``True`` (default), the sampled value is ``log(rho)`` and the model
-        scales by ``exp(value)``; otherwise it scales by ``value`` directly.
-    """
-
-    def __init__(
-        self, base_model: PhysicalModel, scale_parameter: Parameter = None, log=True
-    ):
-        self.base_model = base_model
-        self.log = log
-        if scale_parameter is None:
-            scale_parameter = Parameter(
-                "log normalization",
-                float,
-                unit="dimensionless",
-                latex_name=r"\log{\rho}" if log else r"\rho",
-            )
-        self.scale_parameter = scale_parameter
-        super().__init__([scale_parameter] + list(base_model.params))
-
-    def evaluate(self, observation: Observation, *params) -> np.ndarray:
-        if len(params) != self.n_params:
-            raise ValueError(f"Expected {self.n_params} parameters, got {len(params)}")
-        scale = np.exp(params[0]) if self.log else params[0]
-        return scale * self.base_model.evaluate(observation, *params[1:])
-
-
-class PerObservationScaledModel(PhysicalModel):
-    r"""A physical model with an independent latent normalisation per dataset.
-
-    Wraps a base :class:`PhysicalModel` and assigns one scale parameter
-    :math:`\rho_i` to each :class:`~rxmc.observation.Observation` in
-    ``observations``, routing **by identity**: when evaluated on observation
-    :math:`i` it returns :math:`\rho_i\, y_{\mathrm{base}}`.  The base parameters
-    come first, followed by the per-observation scales in ``observations`` order.
-
-    Because every constraint shares one such model instance, the per-dataset
-    scales are ordinary *model* parameters (sampled in the model block jointly
-    with the physics) rather than per-constraint covariance nuisances — this is
-    how the old per-dataset ``UnknownNormalizationModel`` is expressed in v2.  The
-    routing reuses the same gather-by-identity idea as
-    :class:`~rxmc.covariance.ConstraintCovariance`.
-
-    Parameters
-    ----------
-    base_model : PhysicalModel
-        The model whose prediction is rescaled.
-    observations : sequence of Observation
-        The datasets, each assigned its own scale parameter (matched by identity
-        when :meth:`evaluate` is called).
-    scale_parameters : sequence of Parameter, optional
-        One scale parameter per observation.  Defaults to ``log_rho_{i}``.
-    log : bool, optional
-        If ``True`` (default), the sampled value is ``log(rho_i)`` and the model
-        scales by ``exp(value)``; otherwise it scales by ``value`` directly.
-    prefix : str, optional
-        Name prefix for the default scale parameters.
-    """
-
-    def __init__(
-        self,
-        base_model: PhysicalModel,
-        observations,
-        scale_parameters=None,
-        log=True,
-        prefix="log_rho",
-    ):
-        self.base_model = base_model
-        self.log = log
-        self._n_base = len(base_model.params)
-        # hold references so id()-keyed routing can never see a recycled id
-        self.observations = list(observations)
-        self._index = {id(o): i for i, o in enumerate(self.observations)}
-        if len(self._index) != len(self.observations):
-            raise ValueError(
-                "observations must be distinct objects (routing by identity)"
-            )
-        if scale_parameters is None:
-            scale_parameters = [
-                Parameter(
-                    f"{prefix}_{i}",
-                    float,
-                    unit="dimensionless",
-                    latex_name=(rf"\log{{\rho_{{{i}}}}}" if log else rf"\rho_{{{i}}}"),
-                )
-                for i in range(len(self._index))
-            ]
-        self.scale_parameters = list(scale_parameters)
-        super().__init__(list(base_model.params) + self.scale_parameters)
-
-    def evaluate(self, observation: Observation, *params) -> np.ndarray:
-        if len(params) != self.n_params:
-            raise ValueError(f"Expected {self.n_params} parameters, got {len(params)}")
-        if id(observation) not in self._index:
-            raise KeyError(
-                "observation was not registered with this PerObservationScaledModel"
-            )
-        base_params = params[: self._n_base]
-        value = params[self._n_base + self._index[id(observation)]]
-        scale = np.exp(value) if self.log else value
-        return scale * self.base_model.evaluate(observation, *base_params)
