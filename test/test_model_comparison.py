@@ -1,20 +1,25 @@
 """Tests for the sampler-agnostic ``rxmc.model_comparison`` utilities."""
 
 import unittest
+from unittest.mock import patch
 
 import numpy as np
+from scipy import stats
 from scipy.special import logsumexp
+from sklearn.gaussian_process.kernels import RBF
 
 from helpers import manual_mvn_loglike
+from rxmc.config import CalibrationConfig, ParameterConfig
 from rxmc.constraint import Constraint
-from rxmc.covariance import Term, noise_term
+from rxmc.covariance import ConstraintCovariance, Term, kernel_term, noise_term
+from rxmc.evidence import Evidence
 from rxmc.model_comparison import (
     compare_logz,
     coverage_curve,
     coverage_error,
-    elpd,
     heldout_log_predictive,
     log_jacobian,
+    log_posterior_predictive,
     logz_summary,
     predictive_draws,
     sharpness,
@@ -23,6 +28,7 @@ from rxmc.model_comparison import (
 from rxmc.observation import Observation
 from rxmc.params import Parameter
 from rxmc.physical_model import Polynomial
+from rxmc.priors import IndependentPrior
 from rxmc.transforms import log
 
 
@@ -53,6 +59,38 @@ class TestPredictiveDraws(unittest.TestCase):
         d = predictive_draws(c, theta, model_only=True)
         np.testing.assert_allclose(d[0], self.y)
         np.testing.assert_allclose(d[1], self.x)
+
+    def test_model_only_skips_covariance_assembly(self):
+        kernel = RBF(length_scale=1.0)
+        c = Constraint(
+            [self.obs.masked([True, True, False, True, True])],
+            self.pm,
+            extra_terms=[kernel_term(kernel)],
+        )
+        ym, _ = c.predict_and_covariance((1.0, 2.0), (0.0,))
+        with patch.object(ConstraintCovariance, "matrix") as m:
+            d = predictive_draws(c, [1.0, 2.0], [0.0], model_only=True)
+        m.assert_not_called()
+        self.assertEqual(d.shape, (1, 4))
+        np.testing.assert_allclose(d[0], ym)
+
+    def test_one_dimensional_row_is_one_sample(self):
+        c = Constraint([self.obs], self.pm)
+        d = predictive_draws(c, [1.0, 2.0], n_rep=3, rng=np.random.default_rng(2))
+        self.assertEqual(d.shape, (3, 5))
+        eps = Parameter("log eps")
+        cp = Constraint([self.obs], self.pm, extra_terms=[noise_term(eps)])
+        with self.assertRaises(ValueError):
+            predictive_draws(cp, [[1.0, 2.0], [1.0, 2.0]], [[0.0]])
+
+    def test_tiny_variances_not_inflated(self):
+        obs = Observation(self.x, self.y, y_stat_err=np.full(5, 1e-4))
+        c = Constraint([obs], self.pm)
+        draws = predictive_draws(
+            c, [1.0, 2.0], n_rep=40000, rng=np.random.default_rng(3)
+        )
+        var = draws.var(axis=0)
+        np.testing.assert_allclose(var, 1e-8, rtol=0.03)
 
     def test_requires_cov_samples_when_parametric(self):
         c = Constraint([self.obs], self.pm, extra_terms=[noise_term(Parameter("e"))])
@@ -88,6 +126,8 @@ class TestCoverageSharpness(unittest.TestCase):
         np.testing.assert_allclose(w, 2 * 0.9945, atol=0.05)
         w_exp = sharpness(np.zeros((10, 2)), transform=np.exp)
         np.testing.assert_allclose(w_exp, 0.0)
+        w95 = sharpness(draws, percentiles=(2.5, 97.5))
+        np.testing.assert_allclose(w95, 2 * 1.96, atol=0.15)
 
 
 class TestHeldout(unittest.TestCase):
@@ -108,11 +148,13 @@ class TestHeldout(unittest.TestCase):
             cov = np.diag(err[2:] ** 2 + 0.01)
             self.assertAlmostEqual(lp[i], manual_mvn_loglike(y[2:], ym, cov))
 
-    def test_elpd(self):
+    def test_log_posterior_predictive(self):
         lp = np.array([-1.0, -2.0, -0.5])
-        self.assertAlmostEqual(elpd(lp), logsumexp(lp) - np.log(3))
+        self.assertAlmostEqual(log_posterior_predictive(lp), logsumexp(lp) - np.log(3))
         logw = np.array([0.0, -np.inf, 0.0])
-        self.assertAlmostEqual(elpd(lp, logw), logsumexp(lp[[0, 2]]) - np.log(2))
+        self.assertAlmostEqual(
+            log_posterior_predictive(lp, logw), logsumexp(lp[[0, 2]]) - np.log(2)
+        )
 
 
 class TestLogZ(unittest.TestCase):
@@ -143,12 +185,6 @@ class TestLogZ(unittest.TestCase):
 
 class TestSplitSamples(unittest.TestCase):
     def test_split_rows(self):
-        from scipy import stats
-
-        from rxmc.config import CalibrationConfig, ParameterConfig
-        from rxmc.evidence import Evidence
-        from rxmc.priors import IndependentPrior
-
         pm = Polynomial(order=1)
         obs = Observation(
             np.arange(4.0), 1.0 + 2.0 * np.arange(4.0), y_stat_err=np.full(4, 0.1)

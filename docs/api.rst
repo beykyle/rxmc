@@ -142,7 +142,7 @@ nested-sampling evidence bookkeeping.
    rxmc.model_comparison.coverage_error
    rxmc.model_comparison.sharpness
    rxmc.model_comparison.heldout_log_predictive
-   rxmc.model_comparison.elpd
+   rxmc.model_comparison.log_posterior_predictive
    rxmc.model_comparison.logz_summary
    rxmc.model_comparison.compare_logz
    rxmc.model_comparison.log_jacobian

@@ -10,8 +10,9 @@ covariance/likelihood parameters) and never touches a sampler:
   model-only predictive ``ym(theta)``).
 * :func:`coverage_curve`, :func:`coverage_error`, :func:`sharpness` — empirical
   calibration and width of those draws against the data.
-* :func:`heldout_log_predictive`, :func:`elpd` — out-of-sample scoring on a
-  held-out constraint (e.g. ``constraint.complement()``).
+* :func:`heldout_log_predictive`, :func:`log_posterior_predictive` —
+  out-of-sample scoring on a held-out constraint (e.g.
+  ``constraint.complement()``).
 * :func:`logz_summary`, :func:`compare_logz` — nested-sampling evidence
   bookkeeping with replicate-based errors and a conservative tie verdict.
 * :func:`log_jacobian` — the comparison-space Jacobian needed to compare
@@ -27,7 +28,6 @@ with the transform's inverse (``np.exp``) before comparing to raw data.
 from __future__ import annotations
 
 import numpy as np
-import scipy as sc
 from scipy.special import logsumexp
 
 __all__ = [
@@ -37,7 +37,7 @@ __all__ = [
     "coverage_error",
     "sharpness",
     "heldout_log_predictive",
-    "elpd",
+    "log_posterior_predictive",
     "logz_summary",
     "compare_logz",
     "split_samples",
@@ -54,20 +54,41 @@ def log_jacobian(constraint) -> float:
     return float(constraint.log_jacobian)
 
 
+_DEFAULT_LEVELS = np.linspace(0.02, 0.98, 49)
+
+
 def _psd_factor(Sigma, jitter=1e-10):
-    """Lower factor ``L`` with ``L L^T = Sigma`` (Cholesky, eigen fallback)."""
+    """A factor ``L`` with ``L L^T = Sigma``.
+
+    The lower Cholesky factor when ``Sigma`` is positive definite; otherwise
+    the Cholesky factor of ``Sigma`` plus a jitter *relative* to its mean
+    variance, and failing that a symmetric square root from the eigen
+    decomposition (negative eigenvalues clipped to zero).  No jitter is added
+    on the successful path, so draws are never inflated.
+    """
+    Sigma = np.asarray(Sigma, dtype=float)
     try:
-        return sc.linalg.cholesky(Sigma + jitter * np.eye(len(Sigma)), lower=True)
+        return np.linalg.cholesky(Sigma)
+    except np.linalg.LinAlgError:
+        pass
+    scale = max(float(np.mean(np.diag(Sigma))), np.finfo(float).tiny)
+    try:
+        return np.linalg.cholesky(Sigma + jitter * scale * np.eye(len(Sigma)))
     except np.linalg.LinAlgError:
         w, V = np.linalg.eigh(Sigma)
         return V * np.sqrt(np.clip(w, 0.0, None))
 
 
-def _rows(samples, n):
+def _rows(samples, n=None):
+    """Posterior samples as a 2-D ``(n_samples, n_params)`` array.
+
+    A 1-D input is one sample row (as in :func:`split_samples`).  When ``n`` is
+    given the number of rows must match it.
+    """
     samples = np.asarray(samples, dtype=float)
     if samples.ndim == 1:
-        samples = samples[:, None]
-    if samples.shape[0] != n:
+        samples = samples[None, :]
+    if n is not None and samples.shape[0] != n:
         raise ValueError(f"expected {n} sample rows, got {samples.shape[0]}")
     return samples
 
@@ -93,22 +114,28 @@ def predictive_draws(
     constraint : Constraint
         The constraint whose predictive is wanted (its active points).
     model_samples : array_like, shape (n, n_model_params)
-        Posterior samples of the physical-model parameters.
+        Posterior samples of the physical-model parameters (a 1-D array is
+        one sample).
     cov_samples : array_like, shape (n, constraint.n_params), optional
         Matching samples of the constraint's parameters (required when the
         constraint has any).
     n_rep : int, optional
         Draws per posterior row (ignored when ``model_only``).
     rng : numpy.random.Generator, optional
+        Source of the standard-normal draws; a fresh default generator when
+        omitted.
     model_only : bool, optional
+        Return the predictions ``ym_i`` themselves instead of draws around
+        them (no covariance is assembled).
 
     Returns
     -------
-    np.ndarray, shape (n * n_rep, n_data_pts)
-        Draws in the observations' comparison space.
+    np.ndarray
+        Draws in the observations' comparison space: shape
+        ``(n * n_rep, n_data_pts)``, or ``(n, n_data_pts)`` when ``model_only``.
     """
     rng = np.random.default_rng() if rng is None else rng
-    model_samples = _rows(model_samples, len(np.asarray(model_samples)))
+    model_samples = _rows(model_samples)
     n = model_samples.shape[0]
     if constraint.n_params:
         if cov_samples is None:
@@ -121,10 +148,8 @@ def predictive_draws(
     if model_only:
         out = np.empty((n, N))
         for i in range(n):
-            ym, _ = constraint.predict_and_covariance(
-                tuple(model_samples[i]), tuple(cov_samples[i])
-            )
-            out[i] = ym
+            ym = np.concatenate(constraint.predict(*model_samples[i]))
+            out[i] = ym[constraint.active]
         return out
 
     out = np.empty((n * n_rep, N))
@@ -147,8 +172,8 @@ def coverage_curve(draws, y, levels=None) -> np.ndarray:
     y : array_like, shape (n_pts,)
         The data the draws are checked against (same space as ``draws``).
     levels : array_like, optional
-        Nominal central-interval probabilities in (0, 1).  Defaults to
-        ``np.linspace(0.02, 0.98, 49)``.
+        Nominal central-interval probabilities in (0, 1).  Defaults to 49
+        levels from 0.02 to 0.98 (``_DEFAULT_LEVELS``).
 
     Returns
     -------
@@ -157,7 +182,7 @@ def coverage_curve(draws, y, levels=None) -> np.ndarray:
     """
     draws = np.asarray(draws, dtype=float)
     y = np.asarray(y, dtype=float)
-    levels = np.linspace(0.02, 0.98, 49) if levels is None else np.asarray(levels)
+    levels = _DEFAULT_LEVELS if levels is None else np.asarray(levels)
     out = np.empty(len(levels))
     for i, lv in enumerate(levels):
         lo, hi = np.percentile(draws, [50 * (1 - lv), 50 * (1 + lv)], axis=0)
@@ -167,18 +192,20 @@ def coverage_curve(draws, y, levels=None) -> np.ndarray:
 
 def coverage_error(draws, y, levels=None) -> float:
     """``max |coverage(level) - level|`` — a single calibration score."""
-    levels = np.linspace(0.02, 0.98, 49) if levels is None else np.asarray(levels)
+    levels = _DEFAULT_LEVELS if levels is None else np.asarray(levels)
     return float(np.max(np.abs(coverage_curve(draws, y, levels) - levels)))
 
 
-def sharpness(draws, levels=(16, 84), transform=None) -> np.ndarray:
-    """Per-point width of the central predictive interval.
+def sharpness(draws, percentiles=(16, 84), transform=None) -> np.ndarray:
+    """Per-point width of a central predictive interval.
 
     Parameters
     ----------
     draws : array_like, shape (n_draws, n_pts)
-    levels : (float, float), optional
-        Percentiles of the interval; default the central 68 %.
+    percentiles : (float, float), optional
+        Lower and upper percentiles (in 0-100) bounding the interval; the
+        default is the central 68 %.  Note :func:`coverage_curve` takes
+        interval *probabilities* in (0, 1) instead.
     transform : callable, optional
         Applied to the draws first (e.g. ``np.exp`` to report widths in raw
         space for a log comparison space, or ``np.log10``).
@@ -186,7 +213,7 @@ def sharpness(draws, levels=(16, 84), transform=None) -> np.ndarray:
     draws = np.asarray(draws, dtype=float)
     if transform is not None:
         draws = transform(draws)
-    lo, hi = np.percentile(draws, levels, axis=0)
+    lo, hi = np.percentile(draws, percentiles, axis=0)
     return hi - lo
 
 
@@ -195,14 +222,14 @@ def heldout_log_predictive(heldout_constraint, model_samples, cov_samples=None):
 
     ``heldout_constraint`` is typically ``fit_constraint.complement()``: the same
     observations, terms and parameters, with the held-out points active.  The
-    score is the constraint's own (marginal-block) log likelihood at each
-    sample.
+    score is that constraint's log likelihood at each sample (a 1-D
+    ``model_samples`` is one sample).
 
     Returns
     -------
     np.ndarray, shape (n,)
     """
-    model_samples = _rows(model_samples, len(np.asarray(model_samples)))
+    model_samples = _rows(model_samples)
     n = model_samples.shape[0]
     if heldout_constraint.n_params:
         if cov_samples is None:
@@ -220,11 +247,16 @@ def heldout_log_predictive(heldout_constraint, model_samples, cov_samples=None):
     )
 
 
-def elpd(logp_samples, logw=None) -> float:
-    """Expected log predictive density ``log E_post[p(y_held | theta)]``.
+def log_posterior_predictive(logp_samples, logw=None) -> float:
+    """``log E_post[p(y_held | theta)]``: the joint log posterior predictive
+    density of the held-out block.
 
-    A log-mean-exp over posterior samples; pass ``logw`` (unnormalised log
-    importance weights, e.g. nested-sampling ``logwt``) for weighted samples.
+    A log-mean-exp over posterior samples of :func:`heldout_log_predictive`
+    values; pass ``logw`` (unnormalised log importance weights, e.g.
+    nested-sampling ``logwt``) for weighted samples.  This is the joint
+    predictive of the whole held-out block, not the pointwise-summed ``elpd``
+    of Vehtari et al.; divide by the number of held-out points for a
+    per-point score.
     """
     logp = np.asarray(logp_samples, dtype=float)
     if logw is None:
@@ -260,7 +292,8 @@ def compare_logz(a, b, sigma: float = 2.0) -> dict:
     Parameters
     ----------
     a, b : (mean, err) or (mean, err, n)
-        As returned by :func:`logz_summary`.
+        As returned by :func:`logz_summary`; a trailing replicate count is
+        accepted and ignored (it is informational only).
     sigma : float, optional
         A difference smaller than ``sigma * hypot(err_a, err_b)`` is a ``"tie"``.
 
@@ -286,6 +319,12 @@ def split_samples(config, samples):
     Row-wise :meth:`~rxmc.config.CalibrationConfig.split_parameters`: one
     covariance-sample block per parametric constraint, in
     ``config.evidence.parametric_constraints`` order.
+
+    Returns
+    -------
+    (np.ndarray, list of np.ndarray)
+        ``model_samples`` of shape ``(n, n_model_params)`` and one
+        ``(n, constraint.n_params)`` array per parametric constraint.
     """
     samples = np.asarray(samples, dtype=float)
     if samples.ndim == 1:
