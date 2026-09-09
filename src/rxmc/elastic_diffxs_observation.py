@@ -170,6 +170,11 @@ class ElasticDifferentialXSObservation(Observation):
             ),
         )
 
+    @property
+    def k(self) -> float:
+        """Entrance-channel wavenumber in fm^-1."""
+        return float(self.constraint_workspace.kinematics.k)
+
     @classmethod
     def from_measurement(
         cls,
@@ -312,3 +317,13 @@ def set_up_solver(
     )
 
     return constraint_ws, visualization_ws, kinematics
+
+
+def momentum_transfer(observation: ElasticDifferentialXSObservation) -> np.ndarray:
+    r"""Momentum transfer :math:`q = 2k\sin(\theta/2)` (fm^-1) on the data angles.
+
+    Handy as a fixed coordinate array for a
+    :func:`~rxmc.covariance.kernel_term` in :math:`q`-space:
+    ``kernel_term(kernel, coords=lambda x: 2 * obs.k * np.sin(x / 2))``.
+    """
+    return 2.0 * observation.k * np.sin(np.asarray(observation.x, dtype=float) / 2.0)
