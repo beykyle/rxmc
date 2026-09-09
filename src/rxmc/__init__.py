@@ -15,6 +15,7 @@ from . import params as params
 from . import physical_model as physical_model
 from . import predictive as predictive
 from . import priors as priors
+from . import transforms as transforms
 from . import walker as walker
 from .__version__ import __version__ as __version__
 
