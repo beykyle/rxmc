@@ -247,7 +247,6 @@ class TestParamCountValidation(unittest.TestCase):
         self.assertTrue(np.isfinite(c.log_likelihood(self.mp, (np.log(0.1),))))
 
     def test_studentt_chi2_full_tuple(self):
-
         eps = Parameter("log eps")
         student = Constraint(
             [self.obs],
@@ -271,7 +270,6 @@ class TestParamCountValidation(unittest.TestCase):
         )
 
     def test_covariance_matrix_full_tuple_convention(self):
-
         eta = Parameter("log eta")
         c = Constraint(
             [self.obs],
@@ -332,7 +330,6 @@ class TestParameterNameValidation(unittest.TestCase):
         self.assertIn("physical-model parameter", str(cm.exception))
 
     def test_likelihood_param_collision_raises(self):
-
         nu_clone = Parameter("nu")
         with self.assertRaises(ValueError):
             Constraint(
@@ -576,10 +573,31 @@ class TestMask(unittest.TestCase):
         self.assertEqual(c.empirical_coverage(lo, hi), 1.0)
         self.assertEqual(c.num_pts_within_interval(lo, hi), 4)
 
+    def test_no_active_points_coverage_is_nan(self):
+        c = Constraint([self.obs1, self.obs2], self.pm, mask=[])
+        self.assertEqual(c.n_data_pts, 0)
+        lo = [o.y - 1.0 for o in c.observations]
+        hi = [o.y + 1.0 for o in c.observations]
+        self.assertTrue(np.isnan(c.empirical_coverage(lo, hi)))
+
+    def test_generator_argument(self):
+        ref = Constraint([self.obs1, self.obs2], self.pm)
+        gen = Constraint((o for o in [self.obs1, self.obs2]), self.pm)
+        self.assertEqual(len(gen.observations), 2)
+        self.assertEqual(gen.n_data_pts, ref.n_data_pts)
+        self.assertAlmostEqual(gen.log_likelihood(self.mp), ref.log_likelihood(self.mp))
+
+    def test_ambiguous_observation_mask_raises(self):
+        with self.assertRaises(ValueError):
+            Constraint([self.obs1, self.obs2], self.pm, mask=[1, 0])
+        by_index = Constraint([self.obs1, self.obs2], self.pm, mask=[0])
+        self.assertEqual(by_index.n_data_pts, 3)
+        by_bool = Constraint([self.obs1, self.obs2], self.pm, mask=[False, True])
+        self.assertEqual(by_bool.n_data_pts, 2)
+
 
 class TestComparisonSpaceTransform(unittest.TestCase):
     def setUp(self):
-
         self.pm = Polynomial(order=1)
         self.mp = (1.0, 2.0)
         self.x = np.array([1.0, 2.0, 3.0])

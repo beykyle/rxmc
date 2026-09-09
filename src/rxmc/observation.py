@@ -158,17 +158,13 @@ class Observation:
         else:
             # |t'(y_raw)|: the delta-method factor, reused by log_jacobian and
             # systematic_terms
-            self._abs_jacobian = np.abs(self.transform.derivative(y_raw))
-            self.y = self.transform(y_raw)
-            self.y_stat_err = self._abs_jacobian * y_stat_err
-            bad = self.mask & ~(np.isfinite(self.y) & np.isfinite(self.y_stat_err))
-            if np.any(bad):
-                raise ValueError(
-                    f"transform {self.transform.name!r} is not finite at "
-                    f"{int(bad.sum())} active data point(s) of dataset "
-                    f"{label or 'observation'!r} (e.g. non-positive y under a "
-                    "log transform); mask or drop those points"
-                )
+            # inactive points may be non-finite (inf * 0 -> nan); the guard
+            # below only inspects the active ones
+            with np.errstate(invalid="ignore", divide="ignore"):
+                self._abs_jacobian = np.abs(self.transform.derivative(y_raw))
+                self.y = self.transform(y_raw)
+                self.y_stat_err = self._abs_jacobian * y_stat_err
+        self._check_finite()
 
         self.y_sys_err_normalization = _store_error_spec(
             y_sys_err_normalization, self.n_data_pts, "y_sys_err_normalization"
@@ -176,6 +172,19 @@ class Observation:
         self.y_sys_err_offset = _store_error_spec(
             y_sys_err_offset, self.n_data_pts, "y_sys_err_offset"
         )
+
+    def _check_finite(self):
+        """Reject non-finite comparison-space values at the active points."""
+        if self.transform.is_identity:
+            return
+        bad = self.mask & ~(np.isfinite(self.y) & np.isfinite(self.y_stat_err))
+        if np.any(bad):
+            raise ValueError(
+                f"transform {self.transform.name!r} is not finite at "
+                f"{int(bad.sum())} active data point(s) of dataset "
+                f"{self.label or 'observation'!r} (e.g. non-positive y under a "
+                "log transform); mask or drop those points"
+            )
 
     # ------------------------------------------------------------------
     # Masks (active points)
@@ -196,6 +205,7 @@ class Observation:
         new.mask = _as_point_mask(mask, self.n_data_pts)
         if label is not None:
             new.label = label
+        new._check_finite()
         return new
 
     def masked_where(self, predicate, label=None):

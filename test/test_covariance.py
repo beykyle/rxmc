@@ -368,6 +368,15 @@ class TestActive:
         cov = ConstraintCovariance(self.terms, 6, active=np.arange(6))
         assert cov.active is None
 
+    def test_permuted_active_is_kept(self):
+        perm = np.array([5, 4, 3, 2, 1, 0])
+        cov = ConstraintCovariance(self.terms, 6, active=perm)
+        assert cov.active is not None and cov.n_active == 6
+        ref = ConstraintCovariance(self.terms, 6)
+        d_perm = cov.stacked_distance(self.ctx, (np.log(0.2),))
+        d_ref = ref.stacked_distance(self.ctx, (np.log(0.2),))
+        assert np.allclose(d_perm, d_ref)
+
 
 # ----------------------------------------------------------------------------
 # Factories

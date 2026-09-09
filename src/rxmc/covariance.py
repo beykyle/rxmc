@@ -392,7 +392,7 @@ class ConstraintCovariance:
             self.active = None
         else:
             active = np.asarray(active, dtype=int)
-            self.active = None if active.size == self.N else active
+            self.active = None if np.array_equal(active, np.arange(self.N)) else active
         self.n_active = self.N if self.active is None else int(self.active.size)
         if self._blocks is not None and self.active is not None:
             self._active_blocks = [b[np.isin(b, self.active)] for b in self._blocks]

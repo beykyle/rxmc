@@ -54,7 +54,9 @@ class Constraint:
         reported statistics rather than add to them.
     mask : sequence of bool or of int, optional
         Which *observations* are active (all by default): a boolean per
-        observation, or the indices of the active ones.  Combined with each
+        observation, or the indices of the active ones.  An integer array of
+        length ``len(observations)`` holding only 0/1 is ambiguous and
+        rejected; pass a bool array or explicit indices.  Combined with each
         observation's own point ``mask`` to give :attr:`active`.
 
     Attributes
@@ -87,6 +89,7 @@ class Constraint:
         self.physical_model = physical_model
         self.likelihood = likelihood if likelihood is not None else GaussianLikelihood()
 
+        observations = self.observations
         supports = stacked_supports(observations)
         self._supports = supports
         self.n_data_pts_total = sum(o.n_data_pts for o in observations)
@@ -133,8 +136,15 @@ class Constraint:
             if m.shape != (n,):
                 raise ValueError(f"mask must have one entry per observation ({n})")
             return m
+        idx = np.asarray(m, dtype=int)
+        if n > 1 and idx.shape == (n,) and np.isin(idx, (0, 1)).all():
+            raise ValueError(
+                f"ambiguous observation mask: an integer array of length {n} with "
+                "only 0/1 entries could be a boolean mask or a list of indices; "
+                "pass a bool array or integer indices"
+            )
         out = np.zeros(n, dtype=bool)
-        out[np.asarray(m, dtype=int)] = True
+        out[idx] = True
         return out
 
     # ------------------------------------------------------------------
@@ -159,7 +169,9 @@ class Constraint:
         one, so its parameter vector is identical — it is a *view* for
         evaluating the same likelihood on a different subset (e.g. held-out
         scoring), not an independent constraint to place in the same
-        :class:`~rxmc.evidence.Evidence`.
+        :class:`~rxmc.evidence.Evidence`.  Sharing the terms is safe because
+        both constraints stack the same observations in the same order, so the
+        terms' bound supports and cached ``x``-dependent values stay valid.
         """
         observations = list(self.observations)
         if point_masks is not None:
@@ -422,8 +434,7 @@ class Constraint:
         """Assemble the stacked covariance matrix Σ at a parameter point.
 
         Convenience accessor (e.g. for visualising the off-diagonal block
-        structure of correlated observations).  Restricted to the active points
-        unless ``active_only=False``.
+        structure of correlated observations).
 
         Parameters
         ----------
@@ -432,13 +443,19 @@ class Constraint:
         cov_params : tuple, optional
             Constraint parameters: covariance params followed by likelihood
             params, in :attr:`params` order (matching :meth:`log_likelihood`).
+        active_only : bool, optional
+            Restrict to the active points (default); ``False`` returns the
+            full stacked matrix.
 
         Returns
         -------
-        np.ndarray, shape (n_data_pts, n_data_pts)
+        np.ndarray
+            Shape ``(n_data_pts, n_data_pts)`` (active points) or
+            ``(n_data_pts_total, n_data_pts_total)`` when ``active_only=False``.
             A fresh copy (safe to mutate; never aliases the internal cache).
         """
-        return self._stack_and_covariance(model_params, cov_params, active_only)[1]
+        _, Sigma = self._stack_and_covariance(model_params, cov_params, active_only)
+        return Sigma
 
     # ------------------------------------------------------------------
     # Coverage diagnostics
@@ -457,5 +474,10 @@ class Constraint:
     def empirical_coverage(
         self, ylow: list[np.ndarray], yhigh: list[np.ndarray], xlim=None
     ):
-        """Fraction of data points within a predictive interval."""
+        """Fraction of active data points within a predictive interval.
+
+        ``nan`` when the constraint has no active points.
+        """
+        if self.n_data_pts == 0:
+            return float("nan")
         return self.num_pts_within_interval(ylow, yhigh, xlim) / self.n_data_pts

@@ -266,6 +266,13 @@ class TestObservationMask(unittest.TestCase):
         with self.assertRaises(ValueError):
             Observation(self.x, self.y).masked([True])
 
+    def test_masked_rechecks_transform_finiteness(self):
+        y = np.array([1.0, 0.0, 3.0, 4.0])
+        obs = Observation(self.x, y, transform=log, mask=[True, False, True, True])
+        self.assertEqual(obs.n_active, 3)
+        with self.assertRaises(ValueError):
+            obs.masked([True, True, True, True])
+
     def test_num_pts_within_interval_respects_mask(self):
         obs = Observation(self.x, self.y, mask=[True, False, True, False])
         n = obs.num_pts_within_interval(self.y - 0.1, self.y + 0.1)
