@@ -2,22 +2,32 @@
 
 import numpy as np
 import pytest
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel, Matern, WhiteKernel
 
 from helpers import make_ctx
 from rxmc.covariance import (
     ConstraintCovariance,
-    DenseTerm,
-    DiagonalTerm,
-    RankOneTerm,
+    StackContext,
+    Term,
+    averaging,
+    constant_amplitude,
+    exp_growth,
+    exp_growth_amplitude,
+    kernel_term,
     model_error_term,
     noise_fraction_term,
     noise_term,
     normalization_term,
     offset_term,
+    ones,
     statistical_term,
-    ym_basis,
+    systematic_term,
+    x_basis,
+    ym,
 )
+from rxmc.likelihood_model import mahalanobis_distance_sqr_cholesky
 from rxmc.params import Parameter
+from rxmc.transforms import Transform
 
 
 def single_block_ctx(x, y, ym):
@@ -25,473 +35,682 @@ def single_block_ctx(x, y, ym):
     return make_ctx(x, y, ym, [np.arange(n)])
 
 
-class TestDenseTerm:
-    def test_vector_is_diagonal(self):
-        t = DenseTerm([0, 1, 2], np.array([1.0, 2.0, 3.0]))
+def assemble(terms, ctx, theta=()):
+    cov = ConstraintCovariance(terms, len(ctx.x), blocks=ctx.supports)
+    return cov.matrix(ctx, *theta)
+
+
+# ----------------------------------------------------------------------------
+# Term
+# ----------------------------------------------------------------------------
+
+
+class TestTermKinds:
+    def test_diag_array_squares_std(self):
+        t = Term(np.array([1.0, 2.0, 3.0]), kind="diag", support=[0, 1, 2])
         S = np.zeros((3, 3))
-        t.add_to(S, None, np.array([]))
-        assert np.allclose(S, np.diag([1.0, 2.0, 3.0]))
+        t.add_to(S, None, ())
+        assert np.allclose(S, np.diag([1.0, 4.0, 9.0]))
+        assert t.is_constant
+        assert not t.couples_offdiagonal
 
-    def test_full_matrix_passthrough(self):
-        m = np.array([[2.0, 0.5], [0.5, 3.0]])
-        t = DenseTerm([0, 1], m)
+    def test_mode_array_outer(self):
+        v = np.array([1.0, 2.0])
+        t = Term(v, kind="mode", support=[0, 1])
         S = np.zeros((2, 2))
-        t.add_to(S, None, np.array([]))
-        assert np.allclose(S, m)
+        t.add_to(S, None, ())
+        assert np.allclose(S, np.outer(v, v))
+        assert t.couples_offdiagonal
 
-    def test_writes_into_subblock(self):
-        t = DenseTerm([2, 3], np.array([1.0, 1.0]))
+    def test_matrix_array_passthrough_into_subblock(self):
+        m = np.array([[2.0, 0.5], [0.5, 3.0]])
+        t = Term(m, support=[2, 3])
         S = np.zeros((4, 4))
-        t.add_to(S, None, np.array([]))
+        t.add_to(S, None, ())
         expected = np.zeros((4, 4))
-        expected[2, 2] = expected[3, 3] = 1.0
+        expected[2:, 2:] = m
         assert np.allclose(S, expected)
+
+    def test_bad_kind_raises(self):
+        with pytest.raises(ValueError, match="kind"):
+            Term(np.ones(2), kind="rank1", support=[0, 1])
 
     def test_scalar_broadcast_raises(self):
         # a (1, 1) matrix on a length-3 support used to broadcast silently
-        # into the whole block
-        with pytest.raises(ValueError, match="does not match support"):
-            DenseTerm(np.arange(3), [[0.04]])
+        with pytest.raises(ValueError, match="expects shape"):
+            Term([[0.04]], support=np.arange(3))
 
     def test_wrong_length_vector_raises(self):
-        with pytest.raises(ValueError, match="does not match support"):
-            DenseTerm(np.arange(3), np.ones(2))
+        with pytest.raises(ValueError, match="expects shape"):
+            Term(np.ones(2), kind="diag", support=np.arange(3))
 
     def test_asymmetric_matrix_raises(self):
         with pytest.raises(ValueError, match="symmetric"):
-            DenseTerm(np.arange(2), [[1.0, 0.5], [0.0, 1.0]])
+            Term(np.array([[1.0, 0.2], [0.0, 1.0]]), support=[0, 1])
 
-    def test_couples_offdiagonal(self):
-        # only terms that can write off-diagonal entries can couple blocks
-        assert not DenseTerm([0, 1, 2], np.ones(3)).couples_offdiagonal
-        assert DenseTerm([0, 1], np.array([[2.0, 0.5], [0.5, 3.0]])).couples_offdiagonal
-        assert not DiagonalTerm([0, 1]).couples_offdiagonal
-        assert RankOneTerm([0, 1], basis=np.ones(2)).couples_offdiagonal
+    def test_array_with_params_raises(self):
+        with pytest.raises(ValueError, match="array-valued"):
+            Term(np.ones(2), (Parameter("p"),), kind="diag", support=[0, 1])
 
+    def test_callable_sees_local_context_and_values(self):
+        seen = {}
 
-class TestDiagonalTerm:
-    def test_ones_basis_with_param(self):
-        p = Parameter("log eps")
-        t = DiagonalTerm([0, 1], basis=None, parameter=p, log=True)
-        ctx = single_block_ctx(np.zeros(2), np.zeros(2), np.zeros(2))
-        S = np.zeros((2, 2))
-        t.add_to(S, ctx, np.array([np.log(0.5)]))
-        assert np.allclose(S, np.diag([0.25, 0.25]))
+        def fn(c, a, b):
+            seen["c"] = c
+            return a * c.ym + b * c.y
 
-    def test_basis_array_no_param(self):
-        t = DiagonalTerm([0, 1], basis=np.array([2.0, 3.0]))
-        S = np.zeros((2, 2))
-        t.add_to(S, None, np.array([]))
-        assert np.allclose(S, np.diag([4.0, 9.0]))
-
-    def test_ym_basis_callable(self):
-        p = Parameter("log eps")
-        t = DiagonalTerm([0, 1], basis=ym_basis, parameter=p)
-        ym = np.array([2.0, 4.0])
-        ctx = single_block_ctx(np.zeros(2), np.zeros(2), ym)
-        S = np.zeros((2, 2))
-        t.add_to(S, ctx, np.array([np.log(0.1)]))
-        assert np.allclose(S, np.diag((0.1 * ym) ** 2))
-
-
-class TestRankOneTerm:
-    def test_outer_product(self):
-        v = np.array([1.0, 2.0, 3.0])
-        t = RankOneTerm([0, 1, 2], basis=v)
+        pa, pb = Parameter("a"), Parameter("b")
+        t = Term(fn, (pa, pb), kind="diag", support=[1, 2])
+        ctx = single_block_ctx([0.0, 1.0, 2.0], [1.0, 2.0, 3.0], [1.5, 2.5, 3.5])
         S = np.zeros((3, 3))
-        t.add_to(S, None, np.array([]))
-        assert np.allclose(S, np.outer(v, v))
+        t.add_to(S, ctx, (2.0, 1.0))
+        c = seen["c"]
+        assert np.allclose(c.x, [1.0, 2.0])
+        assert np.allclose(c.ym, [2.5, 3.5])
+        assert len(c) == 2
+        v = 2.0 * np.array([2.5, 3.5]) + np.array([2.0, 3.0])
+        assert np.allclose(np.diag(S), [0.0, *(v**2)])
 
-    def test_normalization_mode_scales_with_ym(self):
-        p = Parameter("log eta")
-        t = RankOneTerm([0, 1], basis=ym_basis, parameter=p)
-        ym = np.array([3.0, 5.0])
-        ctx = single_block_ctx(np.zeros(2), np.zeros(2), ym)
+    def test_callable_wrong_shape_raises(self):
+        t = Term(lambda c: np.ones(len(c) + 1), kind="diag", support=[0, 1])
+        ctx = single_block_ctx([0.0, 1.0], [0.0, 0.0], [0.0, 0.0])
+        with pytest.raises(ValueError, match="returned shape"):
+            t.add_to(np.zeros((2, 2)), ctx, ())
+
+    def test_wrong_param_count_raises(self):
+        t = Term(lambda c, a: a * ones(c), (Parameter("a"),), kind="diag", support=[0])
+        ctx = single_block_ctx([0.0], [0.0], [0.0])
+        with pytest.raises(ValueError, match="expected 1 params"):
+            t.add_to(np.zeros((1, 1)), ctx, ())
+
+    def test_constant_callable_cached(self):
+        calls = []
+
+        def fn(c):
+            calls.append(1)
+            return np.ones(len(c))
+
+        t = Term(fn, kind="diag", support=[0, 1], constant=True)
+        assert t.is_constant
+        ctx = single_block_ctx([0.0, 1.0], [0.0, 0.0], [0.0, 0.0])
+        t.add_to(np.zeros((2, 2)), ctx, ())
+        t.add_to(np.zeros((2, 2)), ctx, ())
+        assert len(calls) == 1
+
+    def test_constant_flag_ignored_with_params(self):
+        t = Term(lambda c, a: ones(c), (Parameter("a"),), kind="diag", constant=True)
+        assert not t.is_constant
+
+
+class TestTermCoords:
+    def test_coords_callable_applied_to_x(self):
+        t = Term(lambda c: c.x, kind="diag", support=[0, 1], coords=lambda x: 2 * x)
+        ctx = single_block_ctx([1.0, 3.0], [0.0, 0.0], [0.0, 0.0])
+        assert np.allclose(t.local_context(ctx).x, [2.0, 6.0])
+
+    def test_parametric_coords_params_appended(self):
+        pk = Parameter("k")
+        coords = Transform(lambda x, k: k * x, (pk,))
+        pa = Parameter("a")
+        t = Term(
+            lambda c, a: a * c.x, (pa,), kind="diag", support=[0, 1], coords=coords
+        )
+        assert t.params == (pa, pk)
+        ctx = single_block_ctx([1.0, 2.0], [0.0, 0.0], [0.0, 0.0])
         S = np.zeros((2, 2))
-        eta = 0.07
-        t.add_to(S, ctx, np.array([np.log(eta)]))
-        assert np.allclose(S, np.outer(eta * ym, eta * ym))
+        t.add_to(S, ctx, (3.0, 2.0))  # a=3, k=2 -> v = 3 * 2 * x
+        assert np.allclose(np.diag(S), (6.0 * np.array([1.0, 2.0])) ** 2)
 
-    def test_cross_block_coupling_writes_offdiagonal(self):
-        # support spans two blocks [0,1] and [2,3]
-        v = np.array([1.0, 1.0, 1.0, 1.0])
-        t = RankOneTerm([0, 1, 2, 3], basis=v)
-        S = np.zeros((4, 4))
-        t.add_to(S, None, np.array([]))
-        # off-diagonal blocks coupling block 0 and block 1 are non-zero
-        assert S[0, 2] != 0.0 and S[1, 3] != 0.0
+    def test_coords_array_2d_reaches_kernel(self):
+        kernel = RBF(length_scale=1.0)
+        X = np.array([[0.0, 0.0], [1.0, 1.0], [2.0, 0.0]])
+        t = kernel_term(kernel, coords=lambda x: X, jitter=0.0, support=np.arange(3))
+        ctx = single_block_ctx(np.zeros(3), np.zeros(3), np.zeros(3))
+        S = np.zeros((3, 3))
+        t.add_to(S, ctx, kernel.theta)
+        assert np.allclose(S, kernel(X))
+
+
+class TestSupportNone:
+    def test_bound_by_constraint_covariance(self):
+        p = Parameter("log eps")
+        t = noise_term(p)
+        assert not t.bound
+        cov = ConstraintCovariance([t], 3)
+        assert t.bound and np.array_equal(t.support, np.arange(3))
+        ctx = single_block_ctx(np.zeros(3), np.zeros(3), np.zeros(3))
+        assert np.allclose(cov.matrix(ctx, np.log(2.0)), 4.0 * np.eye(3))
+
+    def test_unbound_add_to_raises(self):
+        t = noise_term(Parameter("p"))
+        with pytest.raises(ValueError, match="unresolved"):
+            t.add_to(np.zeros((2, 2)), None, (0.0,))
+
+    def test_bind_idempotent_and_explicit_support_untouched(self):
+        t = Term(np.ones(2), kind="diag", support=[1, 2])
+        t.bind(5)
+        assert np.array_equal(t.support, [1, 2])
+        u = Term(np.ones(3), kind="diag")
+        u.bind(3)
+        u.bind(3)
+        assert np.array_equal(u.support, np.arange(3))
+
+    def test_array_length_checked_at_bind(self):
+        t = Term(np.ones(2), kind="diag")
+        with pytest.raises(ValueError, match="expects shape"):
+            ConstraintCovariance([t], 3)
+
+    def test_whole_stack_mode_block_diagonality(self):
+        one = ConstraintCovariance(
+            [offset_term(parameter=Parameter("w"))], 3, blocks=[np.arange(3)]
+        )
+        assert one.block_diagonal
+        two = ConstraintCovariance(
+            [offset_term(parameter=Parameter("w"))],
+            4,
+            blocks=[np.arange(2), np.arange(2, 4)],
+        )
+        assert not two.block_diagonal
+        diag = ConstraintCovariance(
+            [noise_term(Parameter("e"))], 4, blocks=[np.arange(2), np.arange(2, 4)]
+        )
+        assert diag.block_diagonal
+
+    def test_non_term_raises(self):
+        with pytest.raises(TypeError):
+            ConstraintCovariance([np.eye(2)], 2)
+
+
+# ----------------------------------------------------------------------------
+# Gather-by-identity and structural properties
+# ----------------------------------------------------------------------------
 
 
 class TestGatherByIdentity:
     def test_shared_parameter_dedup(self):
-        # Case B: two block-local terms share ONE Parameter object
-        eta = Parameter("log eta")
-        t1 = normalization_term([0, 1], parameter=eta)
-        t2 = normalization_term([2, 3], parameter=eta)
-        cov = ConstraintCovariance([t1, t2], N=4)
+        p = Parameter("log eps")
+        cov = ConstraintCovariance(
+            [noise_term(p, support=[0, 1]), noise_term(p, support=[2, 3])], 4
+        )
         assert cov.n_params == 1
-        assert cov.params == (eta,)
 
     def test_distinct_parameters_not_shared(self):
-        e1 = Parameter("log eta 1")
-        e2 = Parameter("log eta 2")
-        t1 = normalization_term([0, 1], parameter=e1)
-        t2 = normalization_term([2, 3], parameter=e2)
-        cov = ConstraintCovariance([t1, t2], N=4)
+        cov = ConstraintCovariance(
+            [
+                noise_term(Parameter("a"), support=[0, 1]),
+                noise_term(Parameter("b"), support=[2, 3]),
+            ],
+            4,
+        )
         assert cov.n_params == 2
-        assert cov.params == (e1, e2)
 
     def test_shared_value_fed_to_both(self):
-        eta = Parameter("log eta")
-        t1 = normalization_term([0, 1], parameter=eta)
-        t2 = normalization_term([2, 3], parameter=eta)
-        cov = ConstraintCovariance([t1, t2], N=4)
-        ym = np.array([1.0, 1.0, 2.0, 2.0])
-        ctx = make_ctx(np.zeros(4), np.zeros(4), ym, [np.arange(2), np.arange(2, 4)])
-        e = 0.1
-        S = cov.matrix(ctx, np.log(e))
-        # both blocks scaled by the same eta
-        assert np.allclose(S[:2, :2], np.outer(e * ym[:2], e * ym[:2]))
-        assert np.allclose(S[2:, 2:], np.outer(e * ym[2:], e * ym[2:]))
-        # block-local -> no cross coupling
-        assert np.allclose(S[:2, 2:], 0.0)
+        p = Parameter("log eps")
+        cov = ConstraintCovariance(
+            [noise_term(p, support=[0, 1]), noise_term(p, support=[2, 3])], 4
+        )
+        ctx = single_block_ctx(np.zeros(4), np.zeros(4), np.zeros(4))
+        S = cov.matrix(ctx, np.log(3.0))
+        assert np.allclose(S, 9.0 * np.eye(4))
 
     def test_first_seen_order_deterministic(self):
-        a = Parameter("a")
-        b = Parameter("b")
-        t1 = DiagonalTerm([0], parameter=b)
-        t2 = DiagonalTerm([1], parameter=a)
-        cov = ConstraintCovariance([t1, t2], N=2)
+        a, b = Parameter("a"), Parameter("b")
+        cov = ConstraintCovariance(
+            [
+                noise_term(b, support=[0]),
+                noise_term(a, support=[1]),
+                noise_term(b, support=[2]),
+            ],
+            3,
+        )
         assert cov.params == (b, a)
 
     def test_wrong_param_count_raises(self):
-        p = Parameter("p")
-        cov = ConstraintCovariance([DiagonalTerm([0], parameter=p)], N=1)
-        with pytest.raises(ValueError):
-            cov.matrix(single_block_ctx(np.zeros(1), np.zeros(1), np.zeros(1)))
+        cov = ConstraintCovariance([noise_term(Parameter("a"))], 2)
+        with pytest.raises(ValueError, match="expected 1 params"):
+            cov.matrix(None)
 
 
 class TestProperties:
-    def test_block_diagonal_true_for_local_terms(self):
+    def test_is_constant_and_caching(self):
         cov = ConstraintCovariance(
-            [
-                statistical_term([0, 1], np.ones(2)),
-                statistical_term([2, 3], np.ones(2)),
-            ],
-            N=4,
-            blocks=[np.arange(2), np.arange(2, 4)],
+            [statistical_term(np.array([1.0, 2.0]))], 2, blocks=[np.arange(2)]
         )
-        assert cov.block_diagonal
-
-    def test_block_diagonal_false_for_coupling(self):
-        cov = ConstraintCovariance(
-            [RankOneTerm([0, 1, 2, 3], basis=np.ones(4))],
-            N=4,
-            blocks=[np.arange(2), np.arange(2, 4)],
-        )
-        assert not cov.block_diagonal
-
-    def test_contiguous_cross_block_term_without_blocks_not_block_diagonal(self):
-        # the old contiguity heuristic classified a coupling term with a
-        # contiguous support as block-local; without explicit blocks the
-        # classification must now be conservative (dense path)
-        cov = ConstraintCovariance(
-            [
-                statistical_term([0, 1], np.ones(2)),
-                statistical_term([2, 3], np.ones(2)),
-                RankOneTerm(np.arange(4), basis=np.ones(4)),
-            ],
-            N=4,
-        )
-        assert not cov.block_diagonal
-
-    def test_diagonal_only_terms_block_diagonal_without_blocks(self):
-        # strictly-diagonal terms are block-diagonal under ANY partition
-        cov = ConstraintCovariance(
-            [statistical_term([0, 1], np.ones(2)), DiagonalTerm([2, 3])], N=4
-        )
-        assert cov.block_diagonal
-
-    def test_diagonal_term_spanning_blocks_stays_block_diagonal(self):
-        cov = ConstraintCovariance(
-            [DiagonalTerm(np.arange(4))],
-            N=4,
-            blocks=[np.arange(2), np.arange(2, 4)],
-        )
-        assert cov.block_diagonal
-
-    def test_is_constant(self):
-        cov = ConstraintCovariance([statistical_term([0, 1], np.ones(2))], N=2)
         assert cov.is_constant
-        p = Parameter("p")
-        cov2 = ConstraintCovariance([DiagonalTerm([0, 1], parameter=p)], N=2)
-        assert not cov2.is_constant
-
-    def test_constant_matrix_cached(self):
-        cov = ConstraintCovariance(
-            [statistical_term([0, 1], np.array([2.0, 3.0]))], N=2
-        )
-        m1 = cov.matrix(None)
-        m2 = cov.matrix(None)
-        assert m1 is m2
-        assert np.allclose(m1, np.diag([4.0, 9.0]))
-
-    def test_cached_matrix_readonly(self):
-        # the cached matrix is shared state: mutation must fail loudly
-        cov = ConstraintCovariance([statistical_term([0, 1], np.ones(2))], N=2)
-        m = cov.matrix(None)
-        with pytest.raises(ValueError):
-            m[0, 0] = 99.0
-
-    def test_cached_cholesky_readonly(self):
-        cov = ConstraintCovariance([statistical_term([0, 1], np.ones(2))], N=2)
+        S1 = cov.matrix(None)
+        S2 = cov.matrix(None)
+        assert S1 is S2
+        assert not S1.flags.writeable
         L, _ = cov.cholesky(None)
-        with pytest.raises(ValueError):
-            L[0, 0] = 99.0
+        assert not L.flags.writeable
 
-    def test_block_cholesky_cached_and_readonly(self):
+    def test_nonconstant_matrix_writable(self):
+        cov = ConstraintCovariance([noise_term(Parameter("a"))], 2)
+        ctx = single_block_ctx(np.zeros(2), np.zeros(2), np.zeros(2))
+        S = cov.matrix(ctx, 0.0)
+        assert S.flags.writeable
+
+    def test_block_cholesky_cached_and_requires_blocks(self):
         cov = ConstraintCovariance(
-            [
-                statistical_term([0, 1], np.ones(2)),
-                statistical_term([2, 3], np.ones(2)),
-            ],
-            N=4,
-            blocks=[np.arange(2), np.arange(2, 4)],
+            [statistical_term(np.ones(4))], 4, blocks=[np.arange(2), np.arange(2, 4)]
         )
         f1 = cov.block_cholesky(None)
         f2 = cov.block_cholesky(None)
         assert f1 is f2
         with pytest.raises(ValueError):
-            f1[0][0][0, 0] = 99.0
+            ConstraintCovariance([statistical_term(np.ones(2))], 2).block_cholesky(None)
 
-    def test_block_cholesky_requires_blocks(self):
-        cov = ConstraintCovariance([statistical_term([0, 1], np.ones(2))], N=2)
-        with pytest.raises(ValueError, match="blocks"):
-            cov.block_cholesky(None)
-
-    def test_block_cholesky_nonconstant_not_cached(self):
-        p = Parameter("log eps")
-        cov = ConstraintCovariance(
-            [
-                statistical_term([0, 1], np.ones(2)),
-                DiagonalTerm([2, 3], parameter=p),
-            ],
-            N=4,
-            blocks=[np.arange(2), np.arange(2, 4)],
-        )
-        ctx = make_ctx(
-            np.zeros(4), np.zeros(4), np.zeros(4), [np.arange(2), np.arange(2, 4)]
-        )
-        f1 = cov.block_cholesky(ctx, 0.0)
-        f2 = cov.block_cholesky(ctx, 0.0)
-        assert f1 is not f2
-        for (L1, d1), (L2, d2) in zip(f1, f2):
-            assert np.allclose(L1, L2)
-            assert d1 == d2
-
-    def test_nonconstant_matrix_writable(self):
-        p = Parameter("p")
-        cov = ConstraintCovariance([DiagonalTerm([0, 1], parameter=p)], N=2)
-        ctx = single_block_ctx(np.zeros(2), np.zeros(2), np.zeros(2))
-        S = cov.matrix(ctx, 0.0)
-        S[0, 0] = 99.0  # fresh array, caller-owned
-
-
-class TestNoSilentFastPathWithoutBlocks:
-    """A cross-block coupling built without explicit blocks must take the dense path.
-
-    This pins the fix for the contiguity-heuristic bug: a RankOneTerm whose
-    support is one contiguous run over two observation blocks used to be
-    misclassified as block-local, and the fast path silently dropped the
-    off-diagonal coupling.
-    """
+    def test_cross_block_term_without_blocks_not_block_diagonal(self):
+        cov = ConstraintCovariance([offset_term(parameter=Parameter("w"))], 4)
+        assert not cov.block_diagonal
+        diag = ConstraintCovariance([noise_term(Parameter("e"))], 4)
+        assert diag.block_diagonal
 
     def test_stacked_distance_matches_dense(self):
-        from rxmc.likelihood_model import mahalanobis_distance_sqr_cholesky
-
-        rng = np.random.default_rng(7)
-        y = rng.normal(size=4)
-        ym = y + 0.1 * rng.normal(size=4)
-        cov = ConstraintCovariance(
-            [
-                statistical_term(np.arange(4), np.full(4, 0.5)),
-                RankOneTerm(np.arange(4), basis=np.ones(4)),
-            ],
-            N=4,
-        )
-        ctx = make_ctx(np.arange(4.0), y, ym, [np.arange(2), np.arange(2, 4)])
-
-        d2, logdet = cov.stacked_distance(ctx)
-        Sigma = np.diag(np.full(4, 0.25)) + np.ones((4, 4))
-        d2_dense, logdet_dense = mahalanobis_distance_sqr_cholesky(y, ym, Sigma)
-        assert np.isclose(d2, d2_dense)
-        assert np.isclose(logdet, logdet_dense)
+        x = np.arange(4.0)
+        y = np.array([1.0, 2.0, 3.0, 4.0])
+        ymod = np.array([1.1, 1.9, 3.2, 3.8])
+        ctx = make_ctx(x, y, ymod, [np.arange(2), np.arange(2, 4)])
+        terms = [statistical_term(0.5 * np.ones(4)), noise_term(Parameter("e"))]
+        block = ConstraintCovariance(terms, 4, blocks=ctx.supports)
+        dense = ConstraintCovariance(terms, 4)
+        assert block.block_diagonal
+        d_b = block.stacked_distance(ctx, (np.log(0.3),))
+        d_d = dense.stacked_distance(ctx, (np.log(0.3),))
+        S = block.matrix(ctx, np.log(0.3))
+        assert np.allclose(d_b, mahalanobis_distance_sqr_cholesky(y, ymod, S))
+        assert np.allclose(d_d, d_b)
 
 
-class TestScalarLikeMagnitudes:
-    """0-d ndarrays (as stored by exfor_tools distributions) count as scalars."""
-
-    def test_zero_dim_offset_magnitude(self):
-        support = np.arange(3)
-        a = offset_term(support, magnitude=np.array(0.2))
-        b = offset_term(support, magnitude=0.2)
-        S1, S2 = np.zeros((3, 3)), np.zeros((3, 3))
-        a.add_to(S1, None, np.array([]))
-        b.add_to(S2, None, np.array([]))
-        assert np.allclose(S1, S2)
-
-    def test_zero_dim_normalization_magnitude(self):
-        support = np.arange(3)
-        ctx = single_block_ctx(np.zeros(3), np.zeros(3), np.array([1.0, 2.0, 3.0]))
-        a = normalization_term(support, magnitude=np.array(0.05))
-        b = normalization_term(support, magnitude=0.05)
-        S1, S2 = np.zeros((3, 3)), np.zeros((3, 3))
-        a.add_to(S1, ctx, np.array([]))
-        b.add_to(S2, ctx, np.array([]))
-        assert np.allclose(S1, S2)
+# ----------------------------------------------------------------------------
+# Factories
+# ----------------------------------------------------------------------------
 
 
-class TestFactoryHelpersReproduceOldCovariance:
-    """Each helper reproduces the matrix the old LikelihoodModel zoo built."""
-
+class TestFactories:
     def setup_method(self):
+        self.x = np.array([0.5, 1.0, 1.5])
         self.y = np.array([1.0, 2.0, 3.0])
         self.ym = np.array([1.1, 1.9, 3.2])
         self.stat = np.array([0.1, 0.2, 0.3])
-        self.support = np.arange(3)
-        self.ctx = single_block_ctx(np.arange(3.0), self.y, self.ym)
+        self.ctx = single_block_ctx(self.x, self.y, self.ym)
 
     def test_statistical_only(self):
-        S = ConstraintCovariance(
-            [statistical_term(self.support, self.stat)], N=3
-        ).matrix(self.ctx)
+        S = assemble([statistical_term(self.stat)], self.ctx)
         assert np.allclose(S, np.diag(self.stat**2))
 
     def test_unknown_noise(self):
-        eps = 0.05
-        p = Parameter("log eps")
-        cov = ConstraintCovariance(
-            [statistical_term(self.support, np.zeros(3)), noise_term(self.support, p)],
-            N=3,
-        )
-        S = cov.matrix(self.ctx, np.log(eps))
-        assert np.allclose(S, np.diag(np.full(3, eps**2)))
+        S = assemble([noise_term(Parameter("e"))], self.ctx, (np.log(0.4),))
+        assert np.allclose(S, 0.16 * np.eye(3))
+        S = assemble([noise_term(Parameter("e"), log=False)], self.ctx, (0.4,))
+        assert np.allclose(S, 0.16 * np.eye(3))
 
     def test_unknown_noise_fraction(self):
-        eps = 0.05
-        p = Parameter("log eps")
-        cov = ConstraintCovariance([noise_fraction_term(self.support, p)], N=3)
-        S = cov.matrix(self.ctx, np.log(eps))
-        assert np.allclose(S, np.diag((eps * self.ym) ** 2))
+        S = assemble([noise_fraction_term(Parameter("e"))], self.ctx, (np.log(0.4),))
+        assert np.allclose(S, np.diag((0.4 * self.ym) ** 2))
 
     def test_unknown_normalization_error(self):
-        eta = 0.07
-        p = Parameter("log eta")
-        cov = ConstraintCovariance([normalization_term(self.support, parameter=p)], N=3)
-        S = cov.matrix(self.ctx, np.log(eta))
-        assert np.allclose(S, eta**2 * np.outer(self.ym, self.ym))
+        S = assemble(
+            [normalization_term(parameter=Parameter("n"))], self.ctx, (np.log(0.05),)
+        )
+        assert np.allclose(S, 0.05**2 * np.outer(self.ym, self.ym))
 
     def test_unknown_model_error_averaging(self):
-        gamma = 0.1
-        p = Parameter("log gamma")
-        cov = ConstraintCovariance(
-            [model_error_term(self.support, p, averaging=True)], N=3
+        S = assemble(
+            [model_error_term(Parameter("g"), averaging=True)], self.ctx, (np.log(0.1),)
         )
-        S = cov.matrix(self.ctx, np.log(gamma))
         z = 0.5 * (self.y + self.ym)
-        assert np.allclose(S, np.diag((gamma * z) ** 2))
+        assert np.allclose(S, np.diag((0.1 * z) ** 2))
+        S = assemble(
+            [model_error_term(Parameter("g"), averaging=False)],
+            self.ctx,
+            (np.log(0.1),),
+        )
+        assert np.allclose(S, np.diag((0.1 * self.ym) ** 2))
 
     def test_fixed_normalization_systematic(self):
-        # data-given fractional normalisation (no free parameter)
-        frac = 0.03
-        cov = ConstraintCovariance(
-            [normalization_term(self.support, magnitude=frac)], N=3
-        )
-        S = cov.matrix(self.ctx)
-        expected = (frac**2) * np.outer(self.ym, self.ym)
-        assert np.allclose(S, expected)
+        S = assemble([normalization_term(magnitude=0.05)], self.ctx)
+        assert np.allclose(S, 0.05**2 * np.outer(self.ym, self.ym))
+        S = assemble([normalization_term(magnitude=np.array(0.05))], self.ctx)
+        assert np.allclose(S, 0.05**2 * np.outer(self.ym, self.ym))
 
     def test_fixed_offset_systematic(self):
-        off = 0.2
-        cov = ConstraintCovariance([offset_term(self.support, magnitude=off)], N=3)
-        S = cov.matrix(self.ctx)
-        omega = off * np.ones(3)
-        assert np.allclose(S, np.outer(omega, omega))
+        t = offset_term(magnitude=0.2)
+        assert t.is_constant
+        S = assemble([t], self.ctx)
+        assert np.allclose(S, 0.04 * np.ones((3, 3)))
+        S = assemble([offset_term(magnitude=np.array([0.1, 0.2, 0.3]))], self.ctx)
+        v = np.array([0.1, 0.2, 0.3])
+        assert np.allclose(S, np.outer(v, v))
 
+    def test_fixed_offset_in_constant_covariance_ignores_ym(self):
+        # a constant covariance never reads ym: it can be factored (eagerly, at
+        # Constraint construction) with a placeholder ym and the cached factor
+        # is reused afterwards
+        cov = ConstraintCovariance(
+            [statistical_term(self.stat), offset_term(magnitude=0.2)], 3
+        )
+        assert cov.is_constant
+        L, logdet = cov.cholesky(
+            StackContext.constant(self.ctx.x, self.ctx.y, [np.arange(3)])
+        )
+        assert np.all(np.isfinite(L))
+        L2, logdet2 = cov.cholesky(self.ctx)
+        assert L2 is L and logdet2 == logdet
 
-class TestOldObservationCovarianceEquivalence:
-    """A stat+offset+normalization stack matches the old Observation.covariance(ym)."""
+    def test_masked_magnitudes(self):
+        m = np.array([1.0, 0.0, 1.0])
+        S = assemble([offset_term(magnitude=0.2, mask=m)], self.ctx)
+        v = 0.2 * m
+        assert np.allclose(S, np.outer(v, v))
+        S = assemble(
+            [normalization_term(parameter=Parameter("n"), mask=m)],
+            self.ctx,
+            (np.log(0.5),),
+        )
+        v = 0.5 * m * self.ym
+        assert np.allclose(S, np.outer(v, v))
 
-    def test_full_covariance(self):
-        y = np.array([1.0, 2.0, 4.0])
-        ym = np.array([1.2, 2.1, 3.5])
-        stat = np.array([0.1, 0.2, 0.3])
-        norm = 0.05
-        offset = 0.2
-        support = np.arange(3)
-        ctx = make_ctx(np.arange(3.0), y, ym, [support])
+    def test_magnitude_length_mismatch_raises(self):
+        with pytest.raises(ValueError):
+            assemble([offset_term(magnitude=np.ones(2))], self.ctx)
 
+    def test_requires_magnitude_or_parameter(self):
+        with pytest.raises(ValueError):
+            offset_term()
+        with pytest.raises(ValueError):
+            normalization_term()
+
+    def test_systematic_term_with_basis(self):
+        s = Parameter("log s")
+        S = assemble([systematic_term(s, basis=x_basis(2.0))], self.ctx, (np.log(3.0),))
+        v = 3.0 * self.x / 2.0
+        assert np.allclose(S, np.outer(v, v))
+
+    def test_parametric_basis(self):
+        e, l = Parameter("log e"), Parameter("slope")
+        t = noise_term(e, basis=exp_growth(np.pi), basis_params=(l,))
+        assert t.params == (e, l)
+        S = assemble([t], self.ctx, (np.log(0.3), 0.0))
+        assert np.allclose(S, 0.09 * np.eye(3))  # slope 0 == plain noise_term
+        S = assemble([t], self.ctx, (np.log(0.3), 2.0))
+        assert np.allclose(S, np.diag((0.3 * np.exp(2.0 * self.x / np.pi)) ** 2))
+        # basis growing with ym in linear space
+        t = noise_term(e, basis=exp_growth(np.pi, base=ym), basis_params=(l,))
+        S = assemble([t], self.ctx, (np.log(0.3), 1.0))
+        assert np.allclose(S, np.diag((0.3 * self.ym * np.exp(self.x / np.pi)) ** 2))
+
+    def test_old_observation_covariance_equivalence(self):
+        offset, norm = 0.2, 0.05
         terms = [
-            statistical_term(support, stat),
-            offset_term(support, magnitude=offset),
-            normalization_term(support, magnitude=norm),
+            statistical_term(self.stat),
+            offset_term(magnitude=offset),
+            normalization_term(magnitude=norm),
         ]
-        S = ConstraintCovariance(terms, N=3).matrix(ctx)
-
-        # old Observation.covariance(ym):
+        S = assemble(terms, self.ctx)
         old = (
-            np.diag(stat**2)
+            np.diag(self.stat**2)
             + np.outer(offset * np.ones(3), offset * np.ones(3))
-            + np.outer(norm * np.ones(3), norm * np.ones(3)) * np.outer(ym, ym)
+            + norm**2 * np.outer(self.ym, self.ym)
         )
         assert np.allclose(S, old)
 
-
-def test_kernel_term_params_match_theta_length_isotropic():
-    from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel
-
-    from rxmc.covariance import KernelTerm
-
-    kernel = ConstantKernel(1.0) * RBF(length_scale=1.0) + WhiteKernel(1e-6)
-    term = KernelTerm(np.arange(4), kernel)
-    # one free Parameter per non-fixed hyperparameter element
-    assert len(term.params) == len(kernel.theta)
+    def test_bases(self):
+        c = Term(lambda c: c.ym, kind="diag", support=np.arange(3)).local_context(
+            self.ctx
+        )
+        assert np.allclose(ones(c), 1.0)
+        assert np.allclose(ym(c), self.ym)
+        assert np.allclose(averaging(c), 0.5 * (self.y + self.ym))
 
 
-def test_kernel_term_params_anisotropic():
-    from sklearn.gaussian_process.kernels import RBF, ConstantKernel
+class TestKernelTerm:
+    def test_params_match_theta_length_isotropic(self):
+        kernel = ConstantKernel(1.0) * RBF(length_scale=1.0) + WhiteKernel(1e-6)
+        term = kernel_term(kernel)
+        assert len(term.params) == len(kernel.theta)
+        assert not term.is_constant
 
-    from rxmc.covariance import KernelTerm
+    def test_params_anisotropic(self):
+        kernel = ConstantKernel(1.0) * RBF(length_scale=[1.0, 1.0])
+        term = kernel_term(kernel, support=np.arange(3))
+        assert len(term.params) == len(kernel.theta)
+        x2d = np.array([[0.0, 0.0], [1.0, 0.5], [2.0, 1.0]])
+        ctx = make_ctx(x2d, np.zeros(3), np.zeros(3), [np.arange(3)])
+        Sigma = np.zeros((3, 3))
+        term.add_to(Sigma, ctx, kernel.theta)
+        assert np.all(np.isfinite(Sigma))
 
-    # anisotropic: a vector length_scale is ONE hyperparameter with n_elements == 2
-    kernel = ConstantKernel(1.0) * RBF(length_scale=[1.0, 1.0])
-    term = KernelTerm(np.arange(3), kernel)
-    assert len(term.params) == len(kernel.theta)  # would be 1 vs 2 before the fix
+    def test_cross_block_values(self):
+        kernel = RBF(length_scale=1.0)
+        term = kernel_term(kernel, jitter=0.0, support=np.arange(4))
+        x = np.array([0.0, 1.0, 2.0, 3.0])
+        ctx = make_ctx(x, np.zeros(4), np.zeros(4), [np.arange(2), np.arange(2, 4)])
+        S = np.zeros((4, 4))
+        term.add_to(S, ctx, kernel.theta)
+        np.testing.assert_allclose(S, kernel(x[:, None]))
+        assert np.any(S[:2, 2:] != 0.0)
+        cov = ConstraintCovariance([term], N=4, blocks=[np.arange(2), np.arange(2, 4)])
+        assert not cov.block_diagonal
 
-    # the gathered theta has the right length for clone_with_theta in add_to
-    x2d = np.array([[0.0, 0.0], [1.0, 0.5], [2.0, 1.0]])
-    ctx = make_ctx(x2d, np.zeros(3), np.zeros(3), [np.arange(3)])
-    Sigma = np.zeros((3, 3))
-    term.add_to(Sigma, ctx, kernel.theta)  # must not raise
-    assert np.all(np.isfinite(Sigma))
+    def test_fixed_kernel_is_constant(self):
+        kernel = RBF(length_scale=1.0, length_scale_bounds="fixed")
+        term = kernel_term(kernel)
+        assert term.params == () and term.is_constant
+
+    def test_constant_term_may_read_x(self):
+        # constant means "independent of ym"; x is invariant and readable
+        x = np.linspace(0.0, 2.0, 4)
+        t = Term(lambda c: 0.1 * c.x, kind="diag", constant=True)
+        cov = ConstraintCovariance([t], 4)
+        assert cov.is_constant
+        ctx = StackContext.constant(x, np.zeros(4), [np.arange(4)])
+        np.testing.assert_allclose(cov.matrix(ctx), np.diag((0.1 * x) ** 2))
+        # a mis-declared constant term (reads ym) fails loudly, not silently
+        bad = ConstraintCovariance(
+            [Term(lambda c: 0.1 * c.ym, kind="diag", constant=True)], 4
+        )
+        with pytest.raises(TypeError):
+            bad.matrix(ctx)
+        assert cov.matrix(single_block_ctx(x, np.zeros(4), np.ones(4))) is cov.matrix(
+            ctx
+        )
+
+    def test_constant_amplitude_reproduces_constant_kernel(self):
+        x = np.linspace(0.0, 2.0, 5)
+        ctx = single_block_ctx(x, np.zeros(5), np.zeros(5))
+        A = 0.7
+        la = Parameter("log A")
+        term = kernel_term(
+            RBF(1.0), amplitude=constant_amplitude, amplitude_params=(la,), jitter=0.0
+        )
+        assert [p.name for p in term.params] == ["discrepancy_length_scale", "log A"]
+        S = assemble([term], ctx, (0.0, np.log(A)))
+        ref = ConstantKernel(A**2, constant_value_bounds="fixed") * RBF(1.0)
+        np.testing.assert_allclose(S, ref(x[:, None]))
+
+    def test_exp_growth_amplitude_and_coords(self):
+        x = np.linspace(0.1, 3.0, 4)
+        ctx = single_block_ctx(x, np.zeros(4), np.zeros(4))
+        la, sl = Parameter("log A"), Parameter("slope")
+        q = lambda x: 2.0 * np.sin(x / 2)  # noqa: E731
+        term = kernel_term(
+            Matern(1.0, nu=2.5),
+            coords=q,
+            amplitude=exp_growth_amplitude(np.pi),
+            amplitude_params=(la, sl),
+            jitter=0.0,
+        )
+        S = assemble([term], ctx, (np.log(0.5), np.log(0.3), 1.5))
+        # note: amplitude sees the *transformed* coordinate
+        a = 0.3 * np.exp(1.5 * q(x) / np.pi)
+        ref = np.outer(a, a) * Matern(0.5, nu=2.5)(q(x)[:, None])
+        np.testing.assert_allclose(S, ref)
+
+    def test_duplicate_coords_factorizable_with_jitter(self):
+        x = np.array([0.0, 0.0, 1.0])
+        ctx = single_block_ctx(x, np.zeros(3), np.zeros(3))
+        term = kernel_term(RBF(1.0), jitter=1e-8)
+        cov = ConstraintCovariance([term, statistical_term(1e-3 * np.ones(3))], 3)
+        L, _ = cov.cholesky(ctx, 0.0)
+        assert np.all(np.isfinite(L))
 
 
-def test_kernel_term_cross_block_values():
-    # a kernel spanning two observation blocks writes the correct
-    # off-diagonal coupling block (case A with a GP)
-    from sklearn.gaussian_process.kernels import RBF
+# ----------------------------------------------------------------------------
+# The alpha+Ca error-model ladder as one-line term lists (study self-checks)
+# ----------------------------------------------------------------------------
 
-    from rxmc.covariance import KernelTerm
 
-    kernel = RBF(length_scale=1.0)
-    term = KernelTerm(np.arange(4), kernel, jitter=0.0)
-    x = np.array([0.0, 1.0, 2.0, 3.0])
-    ctx = make_ctx(x, np.zeros(4), np.zeros(4), [np.arange(2), np.arange(2, 4)])
+class TestStudyForms:
+    """Each error model of the alpha+Ca study is one term list; compare to the
+    hand-rolled dense covariance from that study's ``error_covariance``."""
 
-    S = np.zeros((4, 4))
-    term.add_to(S, ctx, kernel.theta)
-    np.testing.assert_allclose(S, kernel(x[:, None]))
-    assert np.any(S[:2, 2:] != 0.0)
+    def setup_method(self):
+        rng = np.random.default_rng(1)
+        n = 12
+        self.x = np.sort(rng.uniform(0.2, 3.0, n))  # radians
+        self.y = rng.uniform(0.1, 1.5, n)  # log-space "data" (any values)
+        self.ym = self.y + rng.normal(0.0, 0.1, n)
+        self.ctx = single_block_ctx(self.x, self.y, self.ym)
+        self.X = np.pi
+        self.log_err, self.log_slope = Parameter("log_err"), Parameter("log_err_slope")
+        self.log_sys, self.log_amp = Parameter("log_sys"), Parameter("log_amp")
+        self.err, self.slope, self.sys, self.amp = 0.05, 1.3, 0.04, 0.2
+        self.k = 2.7
 
-    cov = ConstraintCovariance([term], N=4, blocks=[np.arange(2), np.arange(2, 4)])
-    assert not cov.block_diagonal
+    def xdeg(self):
+        return self.x / self.X  # theta / 180
+
+    def test_L0(self):
+        S = assemble([noise_term(self.log_err)], self.ctx, (np.log(self.err),))
+        assert np.allclose(S, self.err**2 * np.eye(len(self.x)))
+
+    def test_E0_linear_space(self):
+        S = assemble([noise_fraction_term(self.log_err)], self.ctx, (np.log(self.err),))
+        assert np.allclose(S, np.diag((self.err * self.ym) ** 2))
+
+    def test_L1(self):
+        terms = [
+            noise_term(
+                self.log_err, basis=exp_growth(self.X), basis_params=(self.log_slope,)
+            )
+        ]
+        S = assemble(terms, self.ctx, (np.log(self.err), self.slope))
+        sigma = self.err * np.exp(self.slope * self.xdeg())
+        assert np.allclose(S, np.diag(sigma**2))
+
+    def test_L2_rank_one_over_theta(self):
+        terms = [
+            noise_term(self.log_err),
+            systematic_term(self.log_sys, basis=x_basis(self.X)),
+        ]
+        S = assemble(terms, self.ctx, (np.log(self.err), np.log(self.sys)))
+        u = self.xdeg()
+        assert np.allclose(
+            S, self.err**2 * np.eye(len(u)) + self.sys**2 * np.outer(u, u)
+        )
+
+    def test_L2n_and_L2y(self):
+        S = assemble(
+            [noise_term(self.log_err), offset_term(parameter=self.log_sys)],
+            self.ctx,
+            (np.log(self.err), np.log(self.sys)),
+        )
+        assert np.allclose(S, self.err**2 * np.eye(len(self.x)) + self.sys**2)
+        S = assemble(
+            [noise_term(self.log_err), normalization_term(parameter=self.log_sys)],
+            self.ctx,
+            (np.log(self.err), np.log(self.sys)),
+        )
+        assert np.allclose(
+            S,
+            self.err**2 * np.eye(len(self.x))
+            + self.sys**2 * np.outer(self.ym, self.ym),
+        )
+
+    def test_L12(self):
+        terms = [
+            noise_term(
+                self.log_err, basis=exp_growth(self.X), basis_params=(self.log_slope,)
+            ),
+            systematic_term(self.log_sys, basis=x_basis(self.X)),
+        ]
+        S = assemble(terms, self.ctx, (np.log(self.err), self.slope, np.log(self.sys)))
+        sigma = self.err * np.exp(self.slope * self.xdeg())
+        u = self.xdeg()
+        assert np.allclose(S, np.diag(sigma**2) + self.sys**2 * np.outer(u, u))
+
+    def test_Lgp_matern_in_theta(self):
+        ell = 0.3
+        terms = [
+            noise_term(self.log_err),
+            kernel_term(
+                Matern(1.0, nu=2.5),
+                coords=lambda x: x / self.X,
+                amplitude=constant_amplitude,
+                amplitude_params=(self.log_amp,),
+                jitter=0.0,
+                prefix="gp",
+            ),
+        ]
+        S = assemble(terms, self.ctx, (np.log(self.err), np.log(ell), np.log(self.amp)))
+        u = self.xdeg()
+        K = self.amp**2 * Matern(ell, nu=2.5)(u[:, None])
+        assert np.allclose(S, self.err**2 * np.eye(len(u)) + K)
+
+    def test_Lgpn_angle_growing_amplitude(self):
+        ell = 0.3
+        terms = [
+            noise_term(self.log_err),
+            kernel_term(
+                Matern(1.0, nu=2.5),
+                coords=lambda x: x / self.X,
+                amplitude=exp_growth_amplitude(1.0),
+                amplitude_params=(self.log_amp, self.log_slope),
+                jitter=0.0,
+            ),
+        ]
+        S = assemble(
+            terms,
+            self.ctx,
+            (np.log(self.err), np.log(ell), np.log(self.amp), self.slope),
+        )
+        u = self.xdeg()
+        a = self.amp * np.exp(self.slope * u)
+        K = np.outer(a, a) * Matern(ell, nu=2.5)(u[:, None])
+        assert np.allclose(S, self.err**2 * np.eye(len(u)) + K)
+
+    def test_LKp_kernel_in_momentum_transfer(self):
+        # b^2 I + s^2 11^T + a(q) a(q') RBF(|q - q'| / l_q), a = A q^(r/2)
+        log_b, log_s, r_pow = Parameter("log_b"), Parameter("log_s"), Parameter("r")
+        b, s, lq, r = 0.05, 0.05, 1.2, 0.8
+        q = 2.0 * self.k * np.sin(self.x / 2)
+        terms = [
+            noise_term(log_b),
+            offset_term(parameter=log_s),
+            kernel_term(
+                RBF(1.0),
+                coords=lambda x: 2.0 * self.k * np.sin(x / 2),
+                amplitude=lambda c, lA, r: np.exp(lA) * c.x ** (r / 2),
+                amplitude_params=(self.log_amp, r_pow),
+                jitter=0.0,
+                prefix="gpq",
+            ),
+        ]
+        S = assemble(
+            terms, self.ctx, (np.log(b), np.log(s), np.log(lq), np.log(self.amp), r)
+        )
+        a = self.amp * q ** (r / 2)
+        K = np.outer(a, a) * RBF(lq)(q[:, None])
+        ref = b**2 * np.eye(len(q)) + s**2 * np.ones((len(q), len(q))) + K
+        assert np.allclose(S, ref)
+
+    def test_custom_term_direct(self):
+        # anything the factories cannot say is a one-line Term
+        e, l = Parameter("e"), Parameter("l")
+        t = Term(
+            lambda c, e, l: np.exp(e) * np.exp(l * c.x / np.pi), (e, l), kind="diag"
+        )
+        S = assemble([t], self.ctx, (np.log(self.err), self.slope))
+        sigma = self.err * np.exp(self.slope * self.xdeg())
+        assert np.allclose(S, np.diag(sigma**2))

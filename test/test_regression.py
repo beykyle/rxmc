@@ -66,8 +66,8 @@ class TestSystematicDefaultBehaviourChange(unittest.TestCase):
             [self.obs],
             self.pm,
             extra_terms=[
-                offset_term(support, magnitude=self.offset),
-                normalization_term(support, magnitude=self.norm),
+                offset_term(magnitude=self.offset, support=support),
+                normalization_term(magnitude=self.norm, support=support),
             ],
         )
         recovered = c.log_likelihood(self.model_params)
@@ -121,7 +121,7 @@ class TestCaseACrossDatasetCorrelation(unittest.TestCase):
         from rxmc.params import Parameter
 
         eta = Parameter("log eta")
-        coupling = normalization_term(np.arange(4), parameter=eta)
+        coupling = normalization_term(parameter=eta, support=np.arange(4))
         c = Constraint([obs1, obs2], pm, extra_terms=[coupling])
 
         # the assembled Sigma has non-zero cross-block (off-diagonal) entries

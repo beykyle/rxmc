@@ -15,20 +15,14 @@ from rxmc.proposal import NormalProposalDistribution
 from rxmc.walker import Walker
 
 
-class FloorSlopeNoiseTerm(Term):
+def floor_slope_noise_term(support=None):
     """diag((exp(floor) + exp(slope)*|ym|)**2) — a two-parameter noise term."""
-
-    def __init__(self, support):
-        self.support = np.asarray(support, dtype=int)
-        self.params = (
-            Parameter("log noise floor", float),
-            Parameter("log noise slope", float),
-        )
-
-    def add_to(self, Sigma, ctx, theta):
-        ym = ctx.ym[self.support]
-        sigma = np.exp(theta[0]) + np.exp(theta[1]) * np.abs(ym)
-        Sigma[self.support, self.support] += sigma**2
+    return Term(
+        lambda c, floor, slope: np.exp(floor) + np.exp(slope) * np.abs(c.ym),
+        (Parameter("log noise floor", float), Parameter("log noise slope", float)),
+        kind="diag",
+        support=support,
+    )
 
 
 class TestAdaptiveMetropolisSampler(unittest.TestCase):
@@ -93,7 +87,7 @@ class TestWalker(unittest.TestCase):
             y=np.array([1.0, 2.1, 3.2, 4.0, 5.1]),
             y_stat_err=np.array([0.1, 0.1, 0.1, 0.1, 0.1]),
         )
-        noise_term = FloorSlopeNoiseTerm(np.arange(observation.n_data_pts))
+        noise_term = floor_slope_noise_term(np.arange(observation.n_data_pts))
         constraint = Constraint(
             observations=[observation],
             physical_model=model,
@@ -139,7 +133,7 @@ class TestWalker(unittest.TestCase):
         constraint = Constraint(
             observations=[observation],
             physical_model=model,
-            extra_terms=[FloorSlopeNoiseTerm(np.arange(observation.n_data_pts))],
+            extra_terms=[floor_slope_noise_term(np.arange(observation.n_data_pts))],
         )
         weight = 2.5
         evidence = Evidence(constraints=[constraint], weights=np.array([weight]))
@@ -187,7 +181,7 @@ class TestWalkerValidation(unittest.TestCase):
         self.parametric = Constraint(
             observations=[obs],
             physical_model=self.model,
-            extra_terms=[FloorSlopeNoiseTerm(np.arange(obs.n_data_pts))],
+            extra_terms=[floor_slope_noise_term(np.arange(obs.n_data_pts))],
         )
         self.evidence = Evidence(constraints=[self.parametric])
         self.prior = scipy.stats.multivariate_normal(mean=[0.0, 1.0], cov=np.eye(2))

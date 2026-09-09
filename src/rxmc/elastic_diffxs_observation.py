@@ -33,8 +33,9 @@ class ElasticDifferentialXSObservation(Observation):
 
     This is an :class:`~rxmc.observation.Observation` (statistical error only): it
     inherits ``statistical_term`` and ``num_pts_within_interval``.  Any correlated
-    systematic — the dataset's reported normalisation/offset, or a fixed covariance
-    (:class:`~rxmc.covariance.DenseTerm`) — is composed explicitly as an
+    systematic — the dataset's reported normalisation/offset, or a fixed
+    covariance block (an array-valued :class:`~rxmc.covariance.Term`) — is
+    composed explicitly as an
     ``extra_terms`` entry in the :class:`~rxmc.constraint.Constraint`.
 
     It is designed to handle elastic differential cross section

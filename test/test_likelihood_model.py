@@ -8,7 +8,7 @@ from scipy.special import gammaln
 from helpers import manual_mvn_loglike
 from rxmc.constraint import Constraint
 from rxmc.covariance import (
-    DenseTerm,
+    Term,
     model_error_term,
     noise_fraction_term,
     noise_term,
@@ -52,7 +52,9 @@ class TestUnknownNoise(LikelihoodTestBase):
     def test_constant_noise(self):
         eps = 0.05
         p = Parameter("log eps")
-        c = Constraint([self.obs], self.pm, extra_terms=[noise_term(np.arange(3), p)])
+        c = Constraint(
+            [self.obs], self.pm, extra_terms=[noise_term(p, support=np.arange(3))]
+        )
         cov = np.diag(self.stat**2) + np.diag(np.full(3, eps**2))
         expected = manual_mvn_loglike(self.y, self.ym, cov)
         self.assertEqual(c.n_params, 1)
@@ -64,7 +66,9 @@ class TestUnknownNoise(LikelihoodTestBase):
         eps = 0.05
         p = Parameter("log eps")
         c = Constraint(
-            [self.obs], self.pm, extra_terms=[noise_fraction_term(np.arange(3), p)]
+            [self.obs],
+            self.pm,
+            extra_terms=[noise_fraction_term(p, support=np.arange(3))],
         )
         cov = np.diag(self.stat**2) + np.diag((eps * self.ym) ** 2)
         expected = manual_mvn_loglike(self.y, self.ym, cov)
@@ -80,7 +84,7 @@ class TestUnknownNormalizationError(LikelihoodTestBase):
         c = Constraint(
             [self.obs],
             self.pm,
-            extra_terms=[normalization_term(np.arange(3), parameter=p)],
+            extra_terms=[normalization_term(parameter=p, support=np.arange(3))],
         )
         cov = np.diag(self.stat**2) + eta**2 * np.outer(self.ym, self.ym)
         expected = manual_mvn_loglike(self.y, self.ym, cov)
@@ -96,7 +100,7 @@ class TestUnknownModelError(LikelihoodTestBase):
         c = Constraint(
             [self.obs],
             self.pm,
-            extra_terms=[model_error_term(np.arange(3), p, averaging=True)],
+            extra_terms=[model_error_term(p, averaging=True, support=np.arange(3))],
         )
         z = 0.5 * (self.y + self.ym)
         cov = np.diag(self.stat**2) + np.diag((gamma * z) ** 2)
@@ -110,7 +114,7 @@ class TestFixedCovariance(LikelihoodTestBase):
     def test_dense_term_fixed_full_covariance(self):
         cov = np.array([[0.04, 0.01, 0.0], [0.01, 0.09, 0.02], [0.0, 0.02, 0.16]])
         obs = Observation(self.x, self.y)  # no stat err -> zeros
-        c = Constraint([obs], self.pm, extra_terms=[DenseTerm(np.arange(3), cov)])
+        c = Constraint([obs], self.pm, extra_terms=[Term(cov, support=np.arange(3))])
         self.assertTrue(c.covariance.is_constant)
         expected = manual_mvn_loglike(self.y, self.ym, cov)
         self.assertAlmostEqual(c.log_likelihood(self.model_params), expected)
@@ -118,7 +122,7 @@ class TestFixedCovariance(LikelihoodTestBase):
     def test_cholesky_cached(self):
         cov = np.diag([0.04, 0.09, 0.16])
         obs = Observation(self.x, self.y)
-        c = Constraint([obs], self.pm, extra_terms=[DenseTerm(np.arange(3), cov)])
+        c = Constraint([obs], self.pm, extra_terms=[Term(cov, support=np.arange(3))])
         L1, _ = c.covariance.cholesky(None)
         L2, _ = c.covariance.cholesky(None)
         self.assertIs(L1, L2)

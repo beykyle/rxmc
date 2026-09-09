@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 
 from helpers import make_ctx
-from rxmc.covariance import ConstraintCovariance, RankOneTerm
+from rxmc.covariance import ConstraintCovariance, Term
 from rxmc.observation import Observation
 
 
@@ -36,7 +36,7 @@ class TestObservation(unittest.TestCase):
         y_stat_err = np.array([0.1, 0.2])
         observation = Observation(x, y, y_stat_err=y_stat_err)
         support = np.arange(2)
-        term = observation.statistical_term(support)
+        term = observation.statistical_term(support=support)
         Sigma = np.zeros((2, 2))
         term.add_to(Sigma, None, np.array([]))
         np.testing.assert_array_almost_equal(Sigma, np.diag(y_stat_err**2))
@@ -48,7 +48,7 @@ class TestObservation(unittest.TestCase):
         y_stat_err = np.array([0.3, 0.4])
         observation = Observation(x, y, y_stat_err=y_stat_err)
         support = np.array([2, 3])
-        cov = ConstraintCovariance([observation.statistical_term(support)], N=4)
+        cov = ConstraintCovariance([observation.statistical_term(support=support)], N=4)
         Sigma = cov.matrix(None)
         expected = np.zeros((4, 4))
         expected[2, 2] = 0.3**2
@@ -59,7 +59,9 @@ class TestObservation(unittest.TestCase):
         observation = Observation(
             np.array([1.0, 2.0]), np.array([2.0, 4.0]), y_stat_err=np.array([0.1, 0.2])
         )
-        cov = ConstraintCovariance([observation.statistical_term(np.arange(2))], N=2)
+        cov = ConstraintCovariance(
+            [observation.statistical_term(support=np.arange(2))], N=2
+        )
         self.assertTrue(cov.is_constant)
         self.assertTrue(cov.block_diagonal)
         self.assertEqual(cov.n_params, 0)
@@ -113,7 +115,7 @@ class TestObservation(unittest.TestCase):
         )
         terms = obs.systematic_terms(np.arange(2))
         self.assertEqual(len(terms), 2)
-        self.assertTrue(all(isinstance(t, RankOneTerm) for t in terms))
+        self.assertTrue(all(isinstance(t, Term) and t.kind == "mode" for t in terms))
 
     def test_systematic_terms_recover_old_covariance(self):
         # statistical_term + systematic_terms matches the old auto-folded
@@ -132,7 +134,7 @@ class TestObservation(unittest.TestCase):
         )
         support = np.arange(3)
         cov = ConstraintCovariance(
-            [obs.statistical_term(support), *obs.systematic_terms(support)], N=3
+            [obs.statistical_term(support=support), *obs.systematic_terms(support)], N=3
         )
         S = cov.matrix(make_ctx(np.arange(3.0), y, ym, [support]))
         old = (

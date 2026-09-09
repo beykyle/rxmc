@@ -3,11 +3,19 @@
 import unittest
 
 import numpy as np
+from sklearn.gaussian_process.kernels import RBF
 
 from helpers import manual_mvn_loglike
 from rxmc.constraint import Constraint
-from rxmc.covariance import RankOneTerm, normalization_term
+from rxmc.covariance import (
+    Term,
+    kernel_term,
+    noise_term,
+    normalization_term,
+    systematic_term,
+)
 from rxmc.evidence import Evidence
+from rxmc.likelihood_model import GaussianLikelihood, StudentT
 from rxmc.observation import Observation
 from rxmc.params import Parameter
 from rxmc.physical_model import PerObservationScaledModel, Polynomial
@@ -72,7 +80,7 @@ class TestStackedConstraint(unittest.TestCase):
         eta = 0.1
         p = Parameter("log eta")
         support = np.arange(5)
-        coupling = RankOneTerm(support, basis=lambda ctx, s: ctx.ym[s], parameter=p)
+        coupling = systematic_term(p, basis=lambda c: c.ym, support=support)
         c = Constraint([self.obs1, self.obs2], self.pm, extra_terms=[coupling])
 
         self.assertFalse(c.covariance.block_diagonal)
@@ -93,7 +101,7 @@ class TestStackedConstraint(unittest.TestCase):
             [self.obs1, self.obs2],
             self.pm,
             extra_terms=[
-                RankOneTerm(np.arange(5), basis=lambda c, s: c.ym[s], parameter=p)
+                systematic_term(p, basis=lambda c: c.ym, support=np.arange(5))
             ],
         )
         # independent: two per-block normalization modes (no cross coupling)
@@ -102,8 +110,8 @@ class TestStackedConstraint(unittest.TestCase):
             [self.obs1, self.obs2],
             self.pm,
             extra_terms=[
-                normalization_term(np.arange(2), parameter=p1),
-                normalization_term(np.arange(2, 5), parameter=p2),
+                normalization_term(parameter=p1, support=np.arange(2)),
+                normalization_term(parameter=p2, support=np.arange(2, 5)),
             ],
         )
         ll_coupled = coupled.log_likelihood(self.model_params, (np.log(eta),))
@@ -178,8 +186,8 @@ class TestSharedParameterCaseB(unittest.TestCase):
             [obs1, obs2],
             pm,
             extra_terms=[
-                normalization_term(np.arange(2), parameter=eta),
-                normalization_term(np.arange(2, 4), parameter=eta),
+                normalization_term(parameter=eta, support=np.arange(2)),
+                normalization_term(parameter=eta, support=np.arange(2, 4)),
             ],
         )
         # one shared parameter, covariance stays block-diagonal
@@ -210,7 +218,7 @@ class TestParamCountValidation(unittest.TestCase):
         c = Constraint(
             [self.obs],
             self.pm,
-            extra_terms=[normalization_term(np.arange(2), parameter=eta)],
+            extra_terms=[normalization_term(parameter=eta, support=np.arange(2))],
         )
         with self.assertRaises(ValueError) as cm:
             c.log_likelihood(self.mp)
@@ -221,20 +229,18 @@ class TestParamCountValidation(unittest.TestCase):
         c = Constraint(
             [self.obs],
             self.pm,
-            extra_terms=[normalization_term(np.arange(2), parameter=eta)],
+            extra_terms=[normalization_term(parameter=eta, support=np.arange(2))],
         )
         self.assertTrue(np.isfinite(c.log_likelihood(self.mp, (np.log(0.1),))))
 
     def test_studentt_chi2_full_tuple(self):
-        from rxmc.covariance import noise_term
-        from rxmc.likelihood_model import GaussianLikelihood, StudentT
 
         eps = Parameter("log eps")
         student = Constraint(
             [self.obs],
             self.pm,
             likelihood=StudentT(),
-            extra_terms=[noise_term(np.arange(2), eps)],
+            extra_terms=[noise_term(eps, support=np.arange(2))],
         )
         # covariance-only tuple is a deficit now
         with self.assertRaises(ValueError):
@@ -244,7 +250,7 @@ class TestParamCountValidation(unittest.TestCase):
             [self.obs],
             self.pm,
             likelihood=GaussianLikelihood(),
-            extra_terms=[noise_term(np.arange(2), Parameter("log eps g"))],
+            extra_terms=[noise_term(Parameter("log eps g"), support=np.arange(2))],
         )
         self.assertAlmostEqual(
             student.chi2(self.mp, (np.log(0.1), 4.0)),
@@ -252,14 +258,13 @@ class TestParamCountValidation(unittest.TestCase):
         )
 
     def test_covariance_matrix_full_tuple_convention(self):
-        from rxmc.likelihood_model import StudentT
 
         eta = Parameter("log eta")
         c = Constraint(
             [self.obs],
             self.pm,
             likelihood=StudentT(),
-            extra_terms=[normalization_term(np.arange(2), parameter=eta)],
+            extra_terms=[normalization_term(parameter=eta, support=np.arange(2))],
         )
         # reviewer repro: forwarding the full sampled tuple used to crash
         S = c.covariance_matrix(self.mp, (np.log(0.1), 4.0))
@@ -267,7 +272,7 @@ class TestParamCountValidation(unittest.TestCase):
             [self.obs],
             self.pm,
             extra_terms=[
-                normalization_term(np.arange(2), parameter=Parameter("log eta"))
+                normalization_term(parameter=Parameter("log eta"), support=np.arange(2))
             ],
         )
         np.testing.assert_allclose(S, gauss.covariance_matrix(self.mp, (np.log(0.1),)))
@@ -291,8 +296,12 @@ class TestParameterNameValidation(unittest.TestCase):
                 [self.obs],
                 self.pm,
                 extra_terms=[
-                    normalization_term(np.arange(2), parameter=Parameter("log eta")),
-                    normalization_term(np.arange(2), parameter=Parameter("log eta")),
+                    normalization_term(
+                        parameter=Parameter("log eta"), support=np.arange(2)
+                    ),
+                    normalization_term(
+                        parameter=Parameter("log eta"), support=np.arange(2)
+                    ),
                 ],
             )
         self.assertIn("SAME Parameter object", str(cm.exception))
@@ -304,13 +313,12 @@ class TestParameterNameValidation(unittest.TestCase):
                 [self.obs],
                 self.pm,
                 extra_terms=[
-                    normalization_term(np.arange(2), parameter=Parameter("a0"))
+                    normalization_term(parameter=Parameter("a0"), support=np.arange(2))
                 ],
             )
         self.assertIn("physical-model parameter", str(cm.exception))
 
     def test_likelihood_param_collision_raises(self):
-        from rxmc.likelihood_model import StudentT
 
         nu_clone = Parameter("nu")
         with self.assertRaises(ValueError):
@@ -318,7 +326,9 @@ class TestParameterNameValidation(unittest.TestCase):
                 [self.obs],
                 self.pm,
                 likelihood=StudentT(nu_parameter=Parameter("nu")),
-                extra_terms=[normalization_term(np.arange(2), parameter=nu_clone)],
+                extra_terms=[
+                    normalization_term(parameter=nu_clone, support=np.arange(2))
+                ],
             )
 
 
@@ -347,13 +357,11 @@ class TestSingularCovarianceGuard(unittest.TestCase):
         self.assertNotIn("observation 0'", msg)
 
     def test_zero_stat_err_with_covering_term_ok(self):
-        from rxmc.covariance import DenseTerm
-
         obs = Observation(self.x, self.y)
         c = Constraint(
             [obs],
             self.pm,
-            extra_terms=[DenseTerm(np.arange(2), np.array([0.04, 0.04]))],
+            extra_terms=[Term(np.array([0.2, 0.2]), kind="diag", support=np.arange(2))],
         )
         self.assertTrue(np.isfinite(c.log_likelihood((0.5, 1.2))))
 
@@ -366,11 +374,12 @@ class TestSingularCovarianceGuard(unittest.TestCase):
 
     def test_parametric_covariance_not_checked_eagerly(self):
         # replace-semantics: zero stat err + a free noise term must construct
-        from rxmc.covariance import noise_term
 
         obs = Observation(self.x, self.y)
         p = Parameter("log eps")
-        c = Constraint([obs], self.pm, extra_terms=[noise_term(np.arange(2), p)])
+        c = Constraint(
+            [obs], self.pm, extra_terms=[noise_term(p, support=np.arange(2))]
+        )
         self.assertEqual(c.n_params, 1)
 
 
@@ -398,17 +407,15 @@ class TestConstraintFixes(unittest.TestCase):
             c.marginal_log_likelihood([np.array([1.0, 2.0])])  # wrong length
 
     def test_include_statistical_term_false_omits_diagonal(self):
-        from rxmc.covariance import DenseTerm
-
         sup = np.arange(self.obs.n_data_pts)
         cov = np.diag([0.04, 0.04, 0.04])
         c = Constraint(
             [self.obs],
             self.pm,
-            extra_terms=[DenseTerm(sup, cov)],
+            extra_terms=[Term(cov, support=sup)],
             include_statistical_term=False,
         )
-        # only the supplied DenseTerm survives (no statistical diagonal added)
+        # only the supplied fixed Term survives (no statistical diagonal added)
         S = c.covariance_matrix(self.params)
         np.testing.assert_allclose(S, cov)
 
@@ -441,6 +448,44 @@ class TestScaledModel(unittest.TestCase):
         np.testing.assert_allclose(
             model.evaluate(obs, 1.5, 4.0), 1.5 * base.evaluate(obs, 4.0)
         )
+
+
+class TestConstantTermsReadX(unittest.TestCase):
+    """Constant terms (fixed kernels, x-dependent fixed diagonals) are evaluated
+    once with the invariant x/y at Constraint construction."""
+
+    def setUp(self):
+        self.pm = Polynomial(order=1)
+        self.mp = (0.1, 1.0)
+        self.x = np.linspace(0.0, 1.0, 5)
+        self.err = np.full(5, 0.1)
+        self.obs = Observation(self.x, self.x + 0.1, y_stat_err=self.err)
+
+    def test_fixed_kernel_term_in_constraint(self):
+        kernel = RBF(length_scale=0.3, length_scale_bounds="fixed")
+        c = Constraint(
+            [self.obs], self.pm, extra_terms=[kernel_term(kernel, jitter=0.0)]
+        )
+        self.assertTrue(c.covariance.is_constant)
+        self.assertEqual(c.n_params, 0)
+        ym = self.pm(self.obs, *self.mp)
+        cov = np.diag(self.err**2) + kernel(self.x[:, None])
+        expected = manual_mvn_loglike(self.obs.y, ym, cov)
+        self.assertAlmostEqual(c.log_likelihood(self.mp), expected)
+
+    def test_x_dependent_constant_term_in_constraint(self):
+        t = Term(lambda c: 0.1 * c.x, kind="diag", constant=True)
+        c = Constraint([self.obs], self.pm, extra_terms=[t])
+        self.assertTrue(c.covariance.is_constant)
+        ym = self.pm(self.obs, *self.mp)
+        cov = np.diag(self.err**2 + (0.1 * self.x) ** 2)
+        self.assertAlmostEqual(
+            c.log_likelihood(self.mp), manual_mvn_loglike(self.obs.y, ym, cov)
+        )
+        # the eager validation warmed the cache; a fresh copy is returned to callers
+        S = c.covariance_matrix(self.mp)
+        self.assertTrue(S.flags.writeable)
+        np.testing.assert_allclose(S, cov)
 
 
 if __name__ == "__main__":

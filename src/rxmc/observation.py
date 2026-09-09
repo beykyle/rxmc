@@ -22,7 +22,7 @@ result via ``Constraint(extra_terms=...)``.
 
 import numpy as np
 
-from .covariance import DenseTerm, normalization_term, offset_term, statistical_term
+from .covariance import normalization_term, offset_term, statistical_term
 
 
 def _store_error_spec(value, n, name):
@@ -110,33 +110,35 @@ class Observation:
             y_sys_err_offset, self.n_data_pts, "y_sys_err_offset"
         )
 
-    def statistical_term(self, support) -> DenseTerm:
+    def statistical_term(self, support=None):
         """The always-on, genuinely uncorrelated statistical diagonal.
 
         Parameters
         ----------
-        support : np.ndarray
-            Indices of this observation's block in the stacked vector.
+        support : np.ndarray, optional
+            Indices of this observation's block in the stacked vector
+            (``None`` for a single-observation constraint).
 
         Returns
         -------
-        DenseTerm
+        Term
             ``diag(y_stat_err**2)`` on ``support``.
         """
-        return statistical_term(support, self.y_stat_err)
+        return statistical_term(self.y_stat_err, support=support)
 
-    def systematic_terms(self, support) -> list:
+    def systematic_terms(self, support=None) -> list:
         """This dataset's reported correlated systematics as fixed rank-one terms.
 
         Opt-in — **not** added to any covariance automatically.  Pass the result
-        via ``Constraint(extra_terms=[*obs.systematic_terms(support), ...])``.
+        via ``Constraint(extra_terms=[*obs.systematic_terms(), ...])``.
         Zero magnitudes are skipped, so an observation without reported
         systematics yields an empty list.
 
         Parameters
         ----------
-        support : np.ndarray
-            Indices of this observation's block in the stacked vector.
+        support : np.ndarray, optional
+            Indices of this observation's block in the stacked vector
+            (``None`` for a single-observation constraint).
 
         Returns
         -------
@@ -149,12 +151,14 @@ class Observation:
         if self.y_sys_err_offset is not None and np.any(
             np.asarray(self.y_sys_err_offset) != 0.0
         ):
-            terms.append(offset_term(support, magnitude=self.y_sys_err_offset))
+            terms.append(offset_term(magnitude=self.y_sys_err_offset, support=support))
         if self.y_sys_err_normalization is not None and np.any(
             np.asarray(self.y_sys_err_normalization) != 0.0
         ):
             terms.append(
-                normalization_term(support, magnitude=self.y_sys_err_normalization)
+                normalization_term(
+                    magnitude=self.y_sys_err_normalization, support=support
+                )
             )
         return terms
 

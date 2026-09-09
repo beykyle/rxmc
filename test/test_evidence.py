@@ -49,7 +49,7 @@ class TestEvidence(unittest.TestCase):
         parametric = Constraint(
             observations=self.observations,
             physical_model=self.pm,
-            extra_terms=[model_error_term(np.arange(3), gamma)],
+            extra_terms=[model_error_term(gamma, support=np.arange(3))],
         )
         evidence = Evidence(constraints=[self.constraints[0], parametric])
         self.assertEqual(len(evidence.parametric_constraints), 1)
@@ -61,7 +61,7 @@ class TestEvidence(unittest.TestCase):
         parametric = Constraint(
             observations=self.observations,
             physical_model=self.pm,
-            extra_terms=[model_error_term(np.arange(3), gamma)],
+            extra_terms=[model_error_term(gamma, support=np.arange(3))],
         )
         evidence = Evidence(constraints=[parametric])
         # one tuple per parametric constraint
@@ -75,7 +75,7 @@ class TestEvidence(unittest.TestCase):
         parametric = Constraint(
             observations=self.observations,
             physical_model=self.pm,
-            extra_terms=[model_error_term(np.arange(3), gamma)],
+            extra_terms=[model_error_term(gamma, support=np.arange(3))],
         )
         evidence = Evidence(constraints=[parametric])
         with self.assertRaises(ValueError):
@@ -99,7 +99,7 @@ class TestCrossConstraintParameterValidation(unittest.TestCase):
         return Constraint(
             observations=self.obs,
             physical_model=self.pm,
-            extra_terms=[model_error_term(np.arange(3), param)],
+            extra_terms=[model_error_term(param, support=np.arange(3))],
         )
 
     def test_same_parameter_object_in_two_constraints_raises(self):

@@ -26,7 +26,7 @@ def model_error_constraint(observation, model, gamma):
     return Constraint(
         observations=[observation],
         physical_model=model,
-        extra_terms=[model_error_term(support, gamma, averaging=True)],
+        extra_terms=[model_error_term(gamma, averaging=True, support=support)],
     )
 
 

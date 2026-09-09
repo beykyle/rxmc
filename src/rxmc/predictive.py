@@ -1,7 +1,7 @@
 """
 Predictive-uncertainty helpers.
 
-A :class:`~rxmc.covariance.KernelTerm` (like the GP discrepancy model it replaced)
+A :func:`~rxmc.covariance.kernel_term`
 only inflates the covariance *at the data points* with ``K(X, X)`` — it does not
 propagate the discrepancy to new ``x``.  :func:`gp_posterior_predictive` performs
 the standard Gaussian-process conditioning needed to predict the discrepancy (mean
@@ -9,7 +9,7 @@ and covariance) at new points, and :func:`total_predictive_band` turns a posteri
 sample of ``[model params | kernel log-theta]`` into a data-space predictive band
 that propagates model-parameter, discrepancy, and observation-noise uncertainty.
 
-The kernel is duck-typed exactly as in :class:`~rxmc.covariance.KernelTerm`: a
+The kernel is duck-typed exactly as in :func:`~rxmc.covariance.kernel_term`: a
 scikit-learn-style object exposing ``clone_with_theta`` and ``__call__``, with
 ``theta`` in sklearn **log-theta** space.
 """
@@ -64,7 +64,7 @@ def gp_posterior_predictive(
     ----------
     kernel : sklearn-style kernel
         Object with ``clone_with_theta`` and ``__call__`` (as for
-        :class:`~rxmc.covariance.KernelTerm`).
+        :func:`~rxmc.covariance.kernel_term`).
     theta : array-like
         Kernel hyperparameters in sklearn **log-theta** space.
     X_train, X_pred : array-like
@@ -189,7 +189,7 @@ def total_predictive_band(
         ``mean_fn(x, *model_params) -> y`` on a raw ``x`` array (e.g. a model's
         ``.y`` plotting helper).
     kernel : sklearn-style kernel
-        The discrepancy kernel (as passed to :class:`~rxmc.covariance.KernelTerm`).
+        The discrepancy kernel (as passed to :func:`~rxmc.covariance.kernel_term`).
     x_train, y_train, x_pred : array-like
         Training inputs/outputs and the prediction grid.
     draws : array-like, shape (n_samples, n_draw_cols)

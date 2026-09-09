@@ -131,13 +131,19 @@ class Constraint:
         Catching it here names the offending dataset instead of surfacing an
         opaque ``LinAlgError`` deep inside a sampler.
         """
+        ctx = StackContext.constant(self._x_stacked, self._y_stacked, self._supports)
+        cov = self.covariance
         try:
-            self.covariance.cholesky(None)
+            # warm whichever factorisation the likelihood path will use
+            if cov.uses_block_path:
+                cov.block_cholesky(ctx)
+            else:
+                cov.cholesky(ctx)
         except np.linalg.LinAlgError as err:
             labels = [
                 o.label or f"observation {i}" for i, o in enumerate(self.observations)
             ]
-            Sigma = self.covariance.matrix(None)
+            Sigma = self.covariance.matrix(ctx)
             zero_rows = np.flatnonzero(np.diag(Sigma) == 0.0)
             offenders = [
                 label
@@ -156,10 +162,11 @@ class Constraint:
                 )
             msg += (
                 " Remedies: pass the dataset's reported systematics as terms "
-                "(extra_terms=[*obs.systematic_terms(support)], with supports "
-                "from rxmc.covariance.stacked_supports(observations)), add a "
-                "noise_term or DenseTerm covering those points, or compose the "
-                "full covariance explicitly with include_statistical_term=False."
+                "(extra_terms=[*obs.systematic_terms()]; for a multi-observation "
+                "constraint place them with support= from "
+                "rxmc.covariance.stacked_supports(observations)), add a "
+                "noise_term or a fixed Term covering those points, or compose "
+                "the full covariance explicitly with include_statistical_term=False."
             )
             raise ValueError(msg) from err
 
