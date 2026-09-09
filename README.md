@@ -35,10 +35,13 @@ obs = rxmc.observation.Observation(
 
 # a constraint owns one multivariate likelihood over its stacked observations;
 # every correlated mode is an explicit covariance term - nothing is folded in
-# silently
-(support,) = rxmc.covariance.stacked_supports([obs])
+# silently.  Here: the reported normalisation systematic plus an unknown
+# constant noise inferred alongside the model
+log_eps = rxmc.params.Parameter("log_eps")
 constraint = rxmc.constraint.Constraint(
-    [obs], model, extra_terms=obs.systematic_terms(support)
+    [obs],
+    model,
+    extra_terms=[*obs.systematic_terms(), rxmc.covariance.noise_term(log_eps)],
 )
 evidence = rxmc.evidence.Evidence([constraint])
 
@@ -62,7 +65,12 @@ walker.walk(n_steps=10_000, burnin=1_000, batch_size=1_000)
 > reported systematic errors are never folded into the covariance
 > automatically. The default constraint covariance is the statistical diagonal
 > only; systematics enter explicitly, e.g. via
-> `obs.systematic_terms(support)` passed to `Constraint(extra_terms=...)`.
+> `obs.systematic_terms()` passed to `Constraint(extra_terms=...)`.
+
+> **Note — jitr:** this version requires
+> [jitr](https://github.com/beykyle/lagrange-rmatrix) ≥ 3.0 (workspaces take
+> potential *arrays* on `ws.radial_grid()`); `requirements.txt` pins
+> `jitr>=3.0` from PyPI. Python ≥ 3.12.
 
 
 ## Installation
@@ -156,31 +164,45 @@ for:
 Pure measured data — `x`, `y`, and the statistical error on `y` — plus the
 measurement's reported systematic magnitudes retained as inert metadata
 (`y_sys_err_normalization`, `y_sys_err_offset`). It contributes only its
-statistical diagonal by default; `obs.systematic_terms(support)` turns the
+statistical diagonal by default; `obs.systematic_terms()` turns the
 metadata into explicit covariance terms when you ask.
+
+An observation also owns its **comparison space**: `Observation(x, y,
+transform=rxmc.transforms.log)` takes raw `y`, compares in log space (errors
+propagated by the delta method) and the constraint transforms the model
+prediction to match. A point-level `mask` (or `obs.masked_where(...)`) selects
+which points enter a likelihood — fit/held-out splits without rebuilding
+anything.
 
 ### `PhysicalModel`
 
 Maps model parameters to predicted observables for a given `Observation`.
-`ScaledModel` / `PerObservationScaledModel` wrap any model with latent
-normalization parameters (Kennedy–O'Hagan style).
+A parametric `transform=` (e.g. `rxmc.transforms.scale()` or
+`per_observation_scaling(observations)`) adds latent normalization parameters
+(Kennedy–O'Hagan style) to any model.
 
 ### Covariance `Term`s (`rxmc.covariance`)
 
 Every uncertainty beyond the statistical diagonal is an explicit additive
-contribution to the constraint's stacked covariance. Factory helpers cover the
-common modes:
+contribution to the constraint's stacked covariance. There is one generic
+`Term(fn, params, kind=...)` — `fn` is a numpy-style callable of the term's
+local `x`/`y`/`ym` and its parameters, `kind` is `"diag"`, `"mode"` or
+`"matrix"`, and an optional `coords` transform changes the coordinate the term
+lives in. Factory helpers cover the common modes in one line:
 
-- `normalization_term` / `offset_term` — correlated systematics, fixed
-  magnitude or free nuisance,
-- `noise_term` / `noise_fraction_term` — unknown statistical noise,
+- `normalization_term` / `offset_term` / `systematic_term` — correlated
+  modes, fixed magnitude or free nuisance, prediction-, unit- or user-basis
+  scaled,
+- `noise_term` / `noise_fraction_term` — unknown statistical noise (with an
+  optional parametric basis, e.g. noise growing with angle),
 - `model_error_term` — uncorrelated model error,
-- `discrepancy_term` — Gaussian-process model discrepancy using sklearn
-  kernels.
+- `kernel_term` — Gaussian-process model discrepancy using sklearn kernels,
+  optionally in transformed coordinates and with a parametric amplitude.
 
 A term whose support spans several observations *couples* them (correlated
 datasets); referencing the same `Parameter` object in two terms *shares* one
-sampled value between them.
+sampled value between them. `support=None` (the default) means the whole
+constraint.
 
 ### Likelihood functionals
 
@@ -197,6 +219,13 @@ a covariance assembled from terms, and a likelihood functional.
 
 Aggregates multiple independent constraints that share the same physical-model
 parameterization.
+
+### Model comparison (`rxmc.model_comparison`)
+
+Sampler-agnostic posterior-predictive draws, coverage/sharpness checks,
+held-out scoring on `constraint.complement()`, and log-evidence bookkeeping
+(`logz_summary`, `compare_logz`, `log_jacobian` for comparing fits done in
+different comparison spaces).
 
 ## Examples and tutorials
 
