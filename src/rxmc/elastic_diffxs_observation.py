@@ -67,6 +67,7 @@ class ElasticDifferentialXSObservation(Observation):
         zeros_per_node=5,
         angles_vis: np.ndarray = np.linspace(0.01, 180, 100),
         compound_correction: np.ndarray = None,
+        transform=None,
     ):
         """
         Parameters
@@ -112,6 +113,9 @@ class ElasticDifferentialXSObservation(Observation):
         compound_correction : np.ndarray, optional
             Compound-nuclear contribution to dXS/dΩ in mb/sr, added to the
             calculated cross section before comparing to data.
+        transform : Transform or callable, optional
+            Comparison-space transform; see
+            :class:`~rxmc.observation.Observation`.
         """
         self.reaction = reaction
         self.quantity = quantity
@@ -158,6 +162,7 @@ class ElasticDifferentialXSObservation(Observation):
             angles_rad_constraint,
             np.asarray(y) / norm,
             label=dataset_label,
+            transform=transform,
             **normalized_error_kwargs(
                 norm, y_stat_err, y_sys_err_normalization, y_sys_err_offset
             ),

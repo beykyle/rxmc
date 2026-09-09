@@ -5,6 +5,7 @@ import numpy as np
 from helpers import make_ctx
 from rxmc.covariance import ConstraintCovariance, Term
 from rxmc.observation import Observation
+from rxmc.transforms import log
 
 
 class TestObservation(unittest.TestCase):
@@ -161,6 +162,61 @@ class TestObservation(unittest.TestCase):
         observation = Observation(x, y)
         num_pts = observation.num_pts_within_interval(ylow, yhigh)
         self.assertEqual(num_pts, 2)
+
+
+class TestObservationTransform(unittest.TestCase):
+    def setUp(self):
+        self.x = np.array([1.0, 2.0, 3.0])
+        self.y = np.array([2.0, 4.0, 8.0])
+        self.err = np.array([0.2, 0.4, 0.8])
+
+    def test_raw_kept_and_y_transformed(self):
+        obs = Observation(self.x, self.y, y_stat_err=self.err, transform=log)
+        np.testing.assert_allclose(obs.y_raw, self.y)
+        np.testing.assert_allclose(obs.y, np.log(self.y))
+        np.testing.assert_allclose(obs.y_stat_err_raw, self.err)
+        # delta method: sigma_log = sigma / y
+        np.testing.assert_allclose(obs.y_stat_err, self.err / self.y)
+        self.assertIs(obs.transform, log)
+
+    def test_identity_by_default(self):
+        obs = Observation(self.x, self.y, y_stat_err=self.err)
+        self.assertTrue(obs.transform.is_identity)
+        self.assertIs(obs.y, obs.y_raw)
+        self.assertEqual(obs.log_jacobian, 0.0)
+
+    def test_log_jacobian(self):
+        obs = Observation(self.x, self.y, transform=log)
+        self.assertAlmostEqual(obs.log_jacobian, -np.sum(np.log(self.y)))
+
+    def test_parametric_transform_rejected(self):
+        from rxmc.transforms import scale
+
+        with self.assertRaises(ValueError):
+            Observation(self.x, self.y, transform=scale())
+
+    def test_plain_callable_accepted(self):
+        obs = Observation(self.x, self.y, transform=np.sqrt)
+        np.testing.assert_allclose(obs.y, np.sqrt(self.y))
+
+    def test_systematic_terms_propagated_by_delta_method(self):
+        obs = Observation(
+            self.x,
+            self.y,
+            y_sys_err_offset=0.5,
+            y_sys_err_normalization=0.1,
+            transform=log,
+        )
+        terms = obs.systematic_terms()
+        self.assertEqual(len(terms), 2)
+        ym_raw = np.array([2.5, 3.5, 9.0])
+        ctx = make_ctx(self.x, obs.y, np.log(ym_raw), [np.arange(3)])
+        cov = ConstraintCovariance(terms, 3, blocks=ctx.supports)
+        S = cov.matrix(ctx)
+        omega = 0.5 / self.y  # |t'(y)| * offset
+        # fractional normalisation in log space is a constant offset eta
+        eta = 0.1 * ym_raw * (1.0 / ym_raw)
+        np.testing.assert_allclose(S, np.outer(omega, omega) + np.outer(eta, eta))
 
 
 if __name__ == "__main__":

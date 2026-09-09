@@ -22,7 +22,8 @@ result via ``Constraint(extra_terms=...)``.
 
 import numpy as np
 
-from .covariance import normalization_term, offset_term, statistical_term
+from .covariance import offset_term, statistical_term, systematic_term
+from .transforms import as_transform
 
 
 def _store_error_spec(value, n, name):
@@ -58,13 +59,24 @@ class Observation:
         inert metadata; see :meth:`systematic_terms`.
     label : str, optional
         Human-readable dataset identifier used in error messages.
+    transform : Transform or callable, optional
+        Parameter-free *comparison-space* transform (see :mod:`rxmc.transforms`).
+        Pass **raw** ``y``: the observation stores ``y = transform(y_raw)`` and
+        propagates ``y_stat_err`` by the delta method, and the
+        :class:`~rxmc.constraint.Constraint` applies the same transform to the
+        model prediction — so ``transform=rxmc.transforms.log`` compares in log
+        space with the model written once, in physical space.
 
     Attributes
     ----------
     x, y : np.ndarray
-        The data.
+        The data, ``y`` in comparison space.
+    y_raw, y_stat_err_raw : np.ndarray
+        ``y`` and its statistical error as given (physical space).
     y_stat_err : np.ndarray
-        Statistical error on ``y`` (raw, not squared).
+        Statistical error on ``y`` in comparison space (raw, not squared).
+    transform : Transform
+        The comparison-space transform (identity by default).
     y_sys_err_normalization : float or np.ndarray or None
         Fractional normalisation uncertainty (dimensionless).
     y_sys_err_offset : float or np.ndarray or None
@@ -83,25 +95,51 @@ class Observation:
         y_sys_err_normalization=None,
         y_sys_err_offset=None,
         label=None,
+        transform=None,
     ):
         self.label = label
         self.x = np.asarray(x)
-        self.y = np.asarray(y)
-        if self.x.shape != self.y.shape:
+        y_raw = np.asarray(y, dtype=float)
+        if self.x.shape != y_raw.shape:
             raise ValueError(
                 "x and y must have the same shape, they have shapes "
-                f"{self.x.shape} and {self.y.shape}"
+                f"{self.x.shape} and {y_raw.shape}"
             )
         self.n_data_pts = self.x.shape[0]
 
-        y_stat_err = y_stat_err if y_stat_err is not None else np.zeros_like(self.y)
+        y_stat_err = y_stat_err if y_stat_err is not None else np.zeros_like(y_raw)
         y_stat_err = np.asarray(y_stat_err, dtype=float)
-        if y_stat_err.shape != self.y.shape:
+        if y_stat_err.shape != y_raw.shape:
             raise ValueError(
                 "y_stat_err must have the same shape as y, "
-                f"it has shape {y_stat_err.shape} and y has shape {self.y.shape}"
+                f"it has shape {y_stat_err.shape} and y has shape {y_raw.shape}"
             )
-        self.y_stat_err = y_stat_err
+
+        self.transform = as_transform(transform)
+        if self.transform.params:
+            raise ValueError(
+                "an Observation's comparison-space transform must be parameter-free"
+            )
+        self.y_raw = y_raw
+        self.y_stat_err_raw = y_stat_err
+        if self.transform.is_identity:
+            self.y = y_raw
+            self.y_stat_err = y_stat_err
+            self._abs_jacobian = None
+        else:
+            # |t'(y_raw)|: the delta-method factor, reused by log_jacobian and
+            # systematic_terms
+            self._abs_jacobian = np.abs(self.transform.derivative(y_raw))
+            self.y = self.transform(y_raw)
+            self.y_stat_err = self._abs_jacobian * y_stat_err
+            bad = ~(np.isfinite(self.y) & np.isfinite(self.y_stat_err))
+            if np.any(bad):
+                raise ValueError(
+                    f"transform {self.transform.name!r} is not finite at "
+                    f"{int(bad.sum())} data point(s) of dataset "
+                    f"{label or 'observation'!r} (e.g. non-positive y under a "
+                    "log transform); drop those points"
+                )
 
         self.y_sys_err_normalization = _store_error_spec(
             y_sys_err_normalization, self.n_data_pts, "y_sys_err_normalization"
@@ -109,6 +147,39 @@ class Observation:
         self.y_sys_err_offset = _store_error_spec(
             y_sys_err_offset, self.n_data_pts, "y_sys_err_offset"
         )
+
+    # ------------------------------------------------------------------
+    # Comparison-space bookkeeping
+    # ------------------------------------------------------------------
+
+    @property
+    def log_jacobian(self) -> float:
+        r"""``sum(log |t'(y_raw)|)`` over all points.
+
+        The log-Jacobian of the comparison-space transform: a constant in the
+        parameters, needed only to compare marginal likelihoods (log Z) across
+        different comparison spaces (``log Z_raw = log Z_transformed +
+        log_jacobian``).  Zero for the identity.
+        """
+        if self.transform.is_identity:
+            return 0.0
+        return float(np.sum(np.log(self._abs_jacobian)))
+
+    def _raw_prediction(self, ym):
+        """Invert the comparison-space transform on a prediction."""
+        if self.transform.is_identity:
+            return np.asarray(ym, dtype=float)
+        inv = self.transform.inverse
+        if inv is None:
+            raise ValueError(
+                f"transform {self.transform.name!r} has no inverse; cannot map "
+                "predictions back to physical space"
+            )
+        return inv(ym)
+
+    # ------------------------------------------------------------------
+    # Covariance terms
+    # ------------------------------------------------------------------
 
     def statistical_term(self, support=None):
         """The always-on, genuinely uncorrelated statistical diagonal.
@@ -122,7 +193,7 @@ class Observation:
         Returns
         -------
         Term
-            ``diag(y_stat_err**2)`` on ``support``.
+            ``diag(y_stat_err**2)`` on ``support`` (comparison space).
         """
         return statistical_term(self.y_stat_err, support=support)
 
@@ -132,7 +203,10 @@ class Observation:
         Opt-in — **not** added to any covariance automatically.  Pass the result
         via ``Constraint(extra_terms=[*obs.systematic_terms(), ...])``.
         Zero magnitudes are skipped, so an observation without reported
-        systematics yields an empty list.
+        systematics yields an empty list.  Magnitudes are reported in physical
+        space and propagated to the comparison space by the delta method
+        (``|t'| * omega`` for an offset, ``|t'(ym_raw)| * eta * ym_raw`` for a
+        normalisation).
 
         Parameters
         ----------
@@ -147,19 +221,29 @@ class Observation:
             fractional, prediction-scaled normalisation mode
             (``eta**2 * outer(ym, ym)``).
         """
+
+        def reported(spec):
+            if spec is None or not np.any(np.asarray(spec) != 0.0):
+                return None
+            return np.broadcast_to(np.asarray(spec, dtype=float), (self.n_data_pts,))
+
+        # the identity transform has unit Jacobian and trivial inverse, so the
+        # delta-method expressions below reduce to the plain magnitudes
+        t = self.transform
         terms = []
-        if self.y_sys_err_offset is not None and np.any(
-            np.asarray(self.y_sys_err_offset) != 0.0
-        ):
-            terms.append(offset_term(magnitude=self.y_sys_err_offset, support=support))
-        if self.y_sys_err_normalization is not None and np.any(
-            np.asarray(self.y_sys_err_normalization) != 0.0
-        ):
-            terms.append(
-                normalization_term(
-                    magnitude=self.y_sys_err_normalization, support=support
-                )
-            )
+        omega = reported(self.y_sys_err_offset)
+        if omega is not None:
+            if not t.is_identity:
+                omega = self._abs_jacobian * omega
+            terms.append(offset_term(magnitude=omega, support=support))
+        eta = reported(self.y_sys_err_normalization)
+        if eta is not None:
+
+            def basis(c):
+                ym_raw = self._raw_prediction(c.ym)
+                return eta * ym_raw * np.abs(t.derivative(ym_raw))
+
+            terms.append(systematic_term(None, basis, support=support))
         return terms
 
     def num_pts_within_interval(
@@ -170,7 +254,8 @@ class Observation:
     ):
         """Number of points of ``y`` that fall within ``[ylow, yhigh)``.
 
-        Useful for empirical-coverage diagnostics.
+        Useful for empirical-coverage diagnostics.  ``ylow``/``yhigh`` are in
+        comparison space.
 
         Parameters
         ----------

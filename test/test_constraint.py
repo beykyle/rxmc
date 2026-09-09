@@ -19,6 +19,7 @@ from rxmc.likelihood_model import GaussianLikelihood, StudentT
 from rxmc.observation import Observation
 from rxmc.params import Parameter
 from rxmc.physical_model import PerObservationScaledModel, Polynomial
+from rxmc.transforms import log
 
 
 class TestStackedConstraint(unittest.TestCase):
@@ -448,6 +449,46 @@ class TestScaledModel(unittest.TestCase):
         np.testing.assert_allclose(
             model.evaluate(obs, 1.5, 4.0), 1.5 * base.evaluate(obs, 4.0)
         )
+
+
+class TestComparisonSpaceTransform(unittest.TestCase):
+    def setUp(self):
+
+        self.pm = Polynomial(order=1)
+        self.mp = (1.0, 2.0)
+        self.x = np.array([1.0, 2.0, 3.0])
+        self.y = np.array([3.2, 4.9, 7.3])
+        self.err = np.array([0.3, 0.5, 0.7])
+
+    def test_log_space_equals_hand_built(self):
+        obs = Observation(self.x, self.y, y_stat_err=self.err, transform=log)
+        eps = Parameter("log eps")
+        c = Constraint([obs], self.pm, extra_terms=[noise_term(eps)])
+        ym = self.pm(obs, *self.mp)
+        cov = np.diag((self.err / self.y) ** 2) + 0.04 * np.eye(3)
+        expected = manual_mvn_loglike(np.log(self.y), np.log(ym), cov)
+        self.assertAlmostEqual(c.log_likelihood(self.mp, (np.log(0.2),)), expected)
+        self.assertAlmostEqual(c.log_jacobian, -np.sum(np.log(self.y)))
+
+    def test_predict_spaces(self):
+        obs = Observation(self.x, self.y, transform=log)
+        c = Constraint([obs], self.pm, extra_terms=[noise_term(Parameter("e"))])
+        ym = self.pm(obs, *self.mp)
+        np.testing.assert_allclose(c.predict(*self.mp)[0], np.log(ym))
+        np.testing.assert_allclose(c.predict(*self.mp, raw=True)[0], ym)
+
+    def test_nonpositive_prediction_is_minus_inf(self):
+        obs = Observation(self.x, self.y, transform=log)
+        c = Constraint([obs], self.pm, extra_terms=[noise_term(Parameter("e"))])
+        ll = c.log_likelihood((-10.0, 0.0), (0.0,))
+        self.assertEqual(ll, -np.inf)
+        self.assertEqual(c.marginal_log_likelihood([np.full(3, -1.0)], 0.0), -np.inf)
+
+    def test_nonpositive_prediction_chi2_is_plus_inf(self):
+        # chi2 is a distance: an invalid prediction must be +inf, not -inf
+        obs = Observation(self.x, self.y, transform=log)
+        c = Constraint([obs], self.pm, extra_terms=[noise_term(Parameter("e"))])
+        self.assertEqual(c.chi2((-10.0, 0.0), (0.0,)), np.inf)
 
 
 class TestConstantTermsReadX(unittest.TestCase):

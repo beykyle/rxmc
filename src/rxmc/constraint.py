@@ -15,6 +15,9 @@ diagonal (strictly block-diagonal — reproducing the old summed independent
 likelihoods).  Correlated modes — a dataset's own normalisation/offset
 systematic, an unknown-noise term, or a cross-dataset coupling — are supplied as
 ``extra_terms``.
+
+Each observation's comparison-space ``transform`` is applied to the model
+prediction here, so the residual ``y - ym`` is formed in that space.
 """
 
 import numpy as np
@@ -185,13 +188,13 @@ class Constraint:
             )
         ym_arrays = []
         for o, y in zip(self.observations, ym):
-            y = np.asarray(y)
+            y = np.asarray(y, dtype=float)
             if y.shape != o.y.shape:
                 raise ValueError(
                     f"prediction shape {y.shape} does not match observation shape "
                     f"{o.y.shape}"
                 )
-            ym_arrays.append(y)
+            ym_arrays.append(o.transform(y))
         return StackContext(
             x=self._x_stacked,
             y=self._y_stacked,
@@ -213,8 +216,16 @@ class Constraint:
     # Likelihood
     # ------------------------------------------------------------------
 
-    def _evaluate(self, ctx, cov_params, statistic):
+    def _evaluate(self, ctx, cov_params, statistic, *, invalid=-np.inf):
+        """Evaluate ``statistic(d2, logdet, n, *like_params)`` on the stack.
+
+        ``invalid`` is returned when the prediction is not finite (e.g. a
+        non-positive prediction under a log comparison space): ``-inf`` for a
+        log likelihood (default), ``+inf`` for a chi-squared.
+        """
         cov_part, like_part = self._split(cov_params)
+        if not np.all(np.isfinite(ctx.ym)):
+            return invalid
         d2, logdet = self.covariance.stacked_distance(ctx, cov_part)
         return statistic(d2, logdet, self.n_data_pts, *like_part)
 
@@ -253,11 +264,23 @@ class Constraint:
         chi-squared statistic ignores them.
         """
         ctx = self._stack(model_params)
-        return self._evaluate(ctx, cov_params, self.likelihood.chi2)
+        return self._evaluate(ctx, cov_params, self.likelihood.chi2, invalid=np.inf)
 
-    def predict(self, *model_params):
-        """Generate predictions for each observation."""
-        return [self.physical_model(obs, *model_params) for obs in self.observations]
+    def predict(self, *model_params, raw=False):
+        """Predictions for each observation (comparison space).
+
+        With ``raw=True`` the predictions are returned in physical space (the
+        model's own output, before each observation's ``transform``).
+        """
+        ym = [self.physical_model(obs, *model_params) for obs in self.observations]
+        if raw:
+            return ym
+        return [o.transform(y) for o, y in zip(self.observations, ym)]
+
+    @property
+    def log_jacobian(self) -> float:
+        """Sum of the observations' comparison-space log-Jacobians."""
+        return float(sum(o.log_jacobian for o in self.observations))
 
     def covariance_matrix(self, model_params, cov_params=()):
         """Assemble the stacked covariance matrix Σ at a parameter point.
