@@ -212,6 +212,16 @@ class TestObservationTransform(unittest.TestCase):
         with self.assertRaises(ValueError):
             Observation(self.x, self.y, transform=scale())
 
+    def test_normalisation_systematic_needs_inverse(self):
+        obs = Observation(
+            self.x, self.y, y_sys_err_normalization=0.1, transform=np.sqrt
+        )
+        with self.assertRaisesRegex(ValueError, "no inverse"):
+            obs.systematic_terms()
+        # an offset alone is propagated at the data and needs no inverse
+        obs2 = Observation(self.x, self.y, y_sys_err_offset=0.1, transform=np.sqrt)
+        self.assertEqual(len(obs2.systematic_terms()), 1)
+
     def test_plain_callable_accepted(self):
         obs = Observation(self.x, self.y, transform=np.sqrt)
         np.testing.assert_allclose(obs.y, np.sqrt(self.y))

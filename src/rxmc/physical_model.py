@@ -76,12 +76,14 @@ class PhysicalModel:
         observation : Observation
             Observation containing the independent-variable grid.
         *params : float
-            Model parameter values.
+            Physical-model (base) parameter values only; any transform
+            parameters are split off by :meth:`__call__` before this is called.
 
         Returns
         -------
         np.ndarray
-            Predicted observable values on the observation grid.
+            Predicted observable values on the observation grid (physical
+            space, before the model transform).
 
         Raises
         ------
@@ -144,9 +146,7 @@ class Polynomial(PhysicalModel):
             ``self.order + 1``.
         """
         if len(params) != self.order + 1:
-            raise ValueError(
-                f"Expected {len(self.params)} parameters, got {len(params)}"
-            )
+            raise ValueError(f"Expected {self.order + 1} parameters, got {len(params)}")
 
         x_powers = np.vander(observation.x, self.order + 1, increasing=True)
         y = np.dot(x_powers, np.asarray(params))

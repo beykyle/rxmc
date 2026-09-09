@@ -51,15 +51,20 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
         Parameters
         ----------
         U_p_coulomb : callable
-            ``f(r, *args) -> np.ndarray`` (on the radial grid ``r``) — proton Coulomb potential.
+            ``f(r, *args) -> np.ndarray`` on the radial grid ``r``: the proton Coulomb
+            potential.
         U_p_central : callable
-            ``f(r, *args) -> np.ndarray`` (on the radial grid ``r``) — proton central potential.
+            ``f(r, *args) -> np.ndarray`` on the radial grid ``r``: the proton central
+            potential.
         U_p_spin_orbit : callable
-            ``f(r, *args) -> np.ndarray`` (on the radial grid ``r``) — proton spin-orbit potential.
+            ``f(r, *args) -> np.ndarray`` on the radial grid ``r``: the proton spin-orbit
+            potential.
         U_n_central : callable
-            ``f(r, *args) -> np.ndarray`` (on the radial grid ``r``) — neutron central potential.
+            ``f(r, *args) -> np.ndarray`` on the radial grid ``r``: the neutron central
+            potential.
         U_n_spin_orbit : callable
-            ``f(r, *args) -> np.ndarray`` (on the radial grid ``r``) — neutron spin-orbit potential.
+            ``f(r, *args) -> np.ndarray`` on the radial grid ``r``: the neutron spin-orbit
+            potential.
         calculate_params : callable
             ``f(workspace, *params) -> (args_p_coulomb, args_p_central,
             args_p_spin_orbit, args_n_central, args_n_spin_orbit)``
@@ -117,7 +122,9 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
         observation : IsobaricAnalogPNObservation
             Observation containing the pre-built workspace.
         *params : float
-            Physical-model parameter values, consumed by *calculate_params*.
+            Physical-model (base) parameter values, consumed by
+            *calculate_params*; transform parameters are split off by
+            ``__call__``.
 
         Returns
         -------

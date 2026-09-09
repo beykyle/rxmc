@@ -111,7 +111,9 @@ is no wrapper class per use:
   spaces. Parametric transforms are rejected here.
 - **Parametric model transforms, on the model.** `PhysicalModel(params,
   transform=scale())` appends the transform's parameters to the model's and
-  applies it after `evaluate`. This is the Kennedy–O'Hagan latent scale ρ (it
+  applies it after `evaluate` (unlike the former `ScaledModel`, which prepended a
+  `log normalization` parameter, the scale parameters come *last* and default to
+  `log_rho` / `log_rho_i`). This is the Kennedy–O'Hagan latent scale ρ (it
   changes the *mean*, so it is not a covariance term);
   `per_observation_scaling(observations)` gives one ρᵢ per dataset, routed by
   observation identity.

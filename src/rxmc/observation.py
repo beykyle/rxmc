@@ -275,8 +275,11 @@ class Observation:
         Parameters
         ----------
         support : np.ndarray, optional
-            Indices of this observation's block in the stacked vector
-            (``None`` for a single-observation constraint).
+            Indices of this observation's block in the stacked vector.  ``None``
+            binds the terms to the whole constraint, which is right only for a
+            single-observation constraint; in a multi-observation constraint
+            they then fail loudly with a shape error, so pass the block's
+            support there (see :func:`rxmc.covariance.stacked_supports`).
 
         Returns
         -------
@@ -292,7 +295,11 @@ class Observation:
             return np.broadcast_to(np.asarray(spec, dtype=float), (self.n_data_pts,))
 
         # the identity transform has unit Jacobian and trivial inverse, so the
-        # delta-method expressions below reduce to the plain magnitudes
+        # delta-method expressions below reduce to the plain magnitudes.  The
+        # two modes are linearised at different points on purpose: the offset
+        # is an error on the *data*, so it is propagated at y_raw; the
+        # normalisation multiplies the *prediction*, so its mode eta * ym_raw is
+        # propagated at ym_raw.
         t = self.transform
         terms = []
         omega = reported(self.y_sys_err_offset)
@@ -302,6 +309,11 @@ class Observation:
             terms.append(offset_term(magnitude=omega, support=support))
         eta = reported(self.y_sys_err_normalization)
         if eta is not None:
+            if not t.is_identity and t.inverse is None:
+                raise ValueError(
+                    f"transform {t.name!r} has no inverse; the normalisation "
+                    "systematic needs the physical-space prediction"
+                )
 
             def basis(c):
                 ym_raw = self._raw_prediction(c.ym)

@@ -28,6 +28,15 @@ import numpy as np
 from .params import Parameter
 
 
+def _unpack(contextual, args):
+    """Split a composed transform's positional ``args`` into ``(context, a, values)``."""
+    if contextual:
+        context, a, *values = args
+        return context, a, values
+    a, *values = args
+    return None, a, values
+
+
 class Transform:
     """A numpy-style transform with optional parameters.
 
@@ -79,11 +88,20 @@ class Transform:
 
     @property
     def is_identity(self) -> bool:
+        """Whether this is the module-level :data:`identity` singleton.
+
+        An object-identity test, not a semantic one: ``Transform(lambda a: a)``
+        or ``log | exp`` are not recognised and take no identity fast path.
+        """
         return self is identity
 
     @property
     def inverse(self) -> "Transform | None":
-        """The inverse transform, or ``None`` if unknown."""
+        """The inverse transform, or ``None`` if unknown.
+
+        Only meaningful for parameter-free transforms (a parametric inverse
+        would need the same values, which are not carried along).
+        """
         if self._inverse is None and self._inverse_factory is not None:
             self._inverse = self._inverse_factory()
         if self._inverse is None:
@@ -124,18 +142,12 @@ class Transform:
         contextual = f.contextual or g.contextual
 
         def fn(*args):
-            if contextual:
-                context, a, *values = args
-            else:
-                context, (a, *values) = None, args
+            context, a, values = _unpack(contextual, args)
             b = f(a, *values[:nf], context=context)
             return g(b, *values[nf:], context=context)
 
         def derivative(*args):
-            if contextual:
-                context, a, *values = args
-            else:
-                context, (a, *values) = None, args
+            context, a, values = _unpack(contextual, args)
             b = f(a, *values[:nf], context=context)
             return g.derivative(b, *values[nf:], context=context) * f.derivative(
                 a, *values[:nf], context=context
@@ -184,6 +196,7 @@ def _identity(a):
 
 
 def _safe_log(a):
+    """``log(a)`` for an ndarray ``a``, ``-inf`` where ``a <= 0`` (no warnings)."""
     out = np.full(np.shape(a), -np.inf, dtype=float)
     pos = a > 0
     out[pos] = np.log(a[pos])
@@ -298,6 +311,11 @@ def per_observation_scaling(
         raise ValueError("need exactly one parameter per observation")
 
     def _value(context, values):
+        if context is None:
+            raise ValueError(
+                "per_observation_scaling is contextual: evaluate it through a "
+                "PhysicalModel, or pass context=observation"
+            )
         i = index.get(id(_root(context)))
         if i is None:
             raise KeyError(
@@ -319,5 +337,5 @@ def per_observation_scaling(
         derivative=derivative,
         name="per_observation_scaling",
     )
-    t.observations = observations  # keep ids alive
+    t._keepalive = observations  # routing is id()-keyed: keep the objects alive
     return t

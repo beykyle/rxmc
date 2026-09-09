@@ -175,13 +175,17 @@ class TestPerObservationScaling(unittest.TestCase):
         # garbage-collected observation's id can never be recycled
         import gc
 
-        model = self.make_model([self.obs1, self.obs2])
-        gc.collect()
-        self.assertIs(model.transform.observations[0], self.obs1)
-        mp = (0.0, 2.0, np.log(1.0), np.log(2.0))
-        np.testing.assert_allclose(
-            model(model.transform.observations[0], *mp), [2.0, 4.0, 6.0]
+        model = self.make_model(
+            [Observation(np.array([1.0]), np.array([1.0])), self.obs2]
         )
+        gc.collect()
+        mp = (0.0, 2.0, np.log(1.0), np.log(2.0))
+        np.testing.assert_allclose(model(self.obs2, *mp), [4.0, 8.0, 12.0])
+        # the first observation is still registered, so a new object can never
+        # inherit its id and be routed to its scale
+        stranger = Observation(np.array([1.0]), np.array([1.0]))
+        with self.assertRaises(KeyError):
+            model(stranger, *mp)
 
     def test_unregistered_observation_raises(self):
         model = self.make_model([self.obs1])
@@ -459,6 +463,9 @@ class TestScaleTransform(unittest.TestCase):
         obs = Observation(np.array([1.0]), np.array([1.0]))
         with self.assertRaises(ValueError):
             model(obs, 1.0)
+        # evaluate() counts base parameters only, not the transform's
+        with self.assertRaisesRegex(ValueError, "Expected 1 parameters"):
+            model.evaluate(obs, 1.0, 2.0)
 
 
 class TestMask(unittest.TestCase):

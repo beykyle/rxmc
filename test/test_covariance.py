@@ -1,5 +1,7 @@
 """Unit tests for the stacked-covariance core (:mod:`rxmc.covariance`)."""
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel, Matern, WhiteKernel
@@ -25,6 +27,7 @@ from rxmc.covariance import (
     x_basis,
     ym,
 )
+from rxmc.elastic_diffxs_observation import momentum_transfer
 from rxmc.likelihood_model import mahalanobis_distance_sqr_cholesky
 from rxmc.params import Parameter
 from rxmc.transforms import Transform
@@ -776,7 +779,8 @@ class TestStudyForms:
         # b^2 I + s^2 11^T + a(q) a(q') RBF(|q - q'| / l_q), a = A q^(r/2)
         log_b, log_s, r_pow = Parameter("log_b"), Parameter("log_s"), Parameter("r")
         b, s, lq, r = 0.05, 0.05, 1.2, 0.8
-        q = 2.0 * self.k * np.sin(self.x / 2)
+        q = momentum_transfer(SimpleNamespace(k=self.k, x=self.x))
+        assert np.allclose(q, 2.0 * self.k * np.sin(self.x / 2))
         terms = [
             noise_term(log_b),
             offset_term(parameter=log_s),

@@ -84,7 +84,12 @@ class ElasticDifferentialXSModel(PhysicalModel):
         super().__init__(params, transform=transform)
 
     def _xs(self, ws, params):
-        """Evaluate the potentials on ``ws.radial_grid()`` and solve."""
+        """Evaluate the potentials on ``ws.radial_grid()`` and solve.
+
+        ``calculate_interaction_from_params`` returns either two argument
+        tuples ``(central, spin_orbit)`` or three ``(central, spin_orbit,
+        coulomb)``; anything else is an error.
+        """
         args = self.calculate_interaction_from_params(ws, *params)
         if len(args) == 2:
             (central_args, spin_orbit_args), coulomb_args = args, ()

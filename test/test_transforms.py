@@ -108,6 +108,11 @@ class TestPerObservationScaling(unittest.TestCase):
         with self.assertRaises(ValueError):
             per_observation_scaling([self.o2, view])
 
+    def test_missing_context_raises(self):
+        t = per_observation_scaling([self.o1])
+        with self.assertRaisesRegex(ValueError, "contextual"):
+            t(np.array([1.0]), 0.0)
+
     def test_linear_and_custom_parameters(self):
         t = per_observation_scaling([self.o1], log=False)
         self.assertEqual(t.params[0].name, "rho_0")
