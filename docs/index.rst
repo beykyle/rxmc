@@ -24,5 +24,7 @@ full calibration problems (:class:`~rxmc.evidence.Evidence`).
 
    installation
    design
+   groundup_design
+   bugs_found
    api
    examples
