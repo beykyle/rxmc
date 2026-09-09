@@ -11,6 +11,7 @@ from . import likelihood_model as likelihood_model
 from . import metropolis_hastings as metropolis_hastings
 from . import model_comparison as model_comparison
 from . import observation as observation
+from . import observation_from_measurement as observation_from_measurement
 from . import param_sampling as param_sampling
 from . import params as params
 from . import physical_model as physical_model
@@ -34,6 +35,7 @@ __all__ = [
     "likelihood_model",
     "metropolis_hastings",
     "observation",
+    "observation_from_measurement",
     "param_sampling",
     "params",
     "physical_model",

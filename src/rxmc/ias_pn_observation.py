@@ -1,19 +1,16 @@
 import jitr
 import numpy as np
 from exfor_tools.distribution import Distribution
-from pint import UnitRegistry
 
 from .observation import Observation
-from .observation_from_measurement import (
+from .observation_from_measurement import (  # noqa: F401  (re-exported names)
+    DEFAULT_LMAX,
+    XS_UNIT,
     check_angle_grid,
     measurement_kwargs,
     normalized_error_kwargs,
+    ureg,
 )
-
-# Create a unit registry
-ureg = UnitRegistry()
-
-DEFAULT_LMAX = 20
 
 
 class IsobaricAnalogPNObservation(Observation):
@@ -117,11 +114,13 @@ class IsobaricAnalogPNObservation(Observation):
             angle_rad_constraint=angles_rad_constraint,
             angle_rad_vis=angles_rad_vis,
             lmax=self.lmax,
+            wavelengths_beyond_range=wavelengths_beyond_range,
+            zeros_per_node=zeros_per_node,
         )
         self.constraint_workspace = constraint_ws
         self.visualization_workspace = vis_ws
 
-        self.y_units = ureg.barn / ureg.steradian
+        self.y_units = XS_UNIT
         measurement_unit = 1 * ureg(y_units)
         if not measurement_unit.check(self.y_units):
             raise ValueError(

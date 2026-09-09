@@ -10,7 +10,7 @@ from rxmc.evidence import Evidence
 from rxmc.observation import Observation
 from rxmc.params import Parameter
 from rxmc.physical_model import Polynomial
-from rxmc.priors import TruncatedNormalPrior
+from rxmc.priors import IndependentPrior, TruncatedNormalPrior
 
 
 def gamma_parameter():
@@ -101,6 +101,61 @@ class TestParameterConfig(unittest.TestCase):
         u = np.array([0.5, 0.5])
         theta = config.prior_transform(u)
         np.testing.assert_allclose(theta, [0.0, 0.0], atol=1e-10)
+
+    def test_list_prior_is_wrapped_in_independent_prior(self):
+        """A list of marginals becomes one IndependentPrior (as in Sampler)."""
+        prior_list = [scipy.stats.norm(0, 1), scipy.stats.uniform(0, 2)]
+        config = ParameterConfig(
+            params=[self.param1, self.param2],
+            prior=prior_list,
+            initial_proposal_distribution=prior_list,
+        )
+        self.assertIsInstance(config.prior, IndependentPrior)
+        self.assertIsInstance(config.initial_proposal_distribution, IndependentPrior)
+        self.assertEqual(config.x0(3).shape, (3, 2))
+        x = np.array([0.3, 1.0])
+        expected = sum(d.logpdf(xi) for d, xi in zip(prior_list, x))
+        self.assertAlmostEqual(config.prior_logpdf(x), expected)
+        with self.assertRaises(ValueError):
+            ParameterConfig(
+                params=[self.param1],
+                prior=prior_list,
+                initial_proposal_distribution=prior_list,
+            )
+
+    def test_infer_dim_calls_mean_method(self):
+        """A custom prior exposing mean() as a method is sized correctly."""
+
+        class Custom:
+            def mean(self):
+                return np.zeros(3)
+
+            def logpdf(self, x):
+                return 0.0
+
+            def rvs(self, n):
+                return np.zeros((n, 3))
+
+        self.assertEqual(ParameterConfig._infer_dim(Custom()), 3)
+        params = [Parameter(f"p{i}") for i in range(3)]
+        ParameterConfig(params, prior=Custom(), initial_proposal_distribution=Custom())
+        with self.assertRaises(ValueError):
+            ParameterConfig(
+                params[:2], prior=Custom(), initial_proposal_distribution=Custom()
+            )
+        # frozen scipy univariates expose mean() too and stay one-dimensional
+        self.assertEqual(ParameterConfig._infer_dim(scipy.stats.norm(0, 1)), 1)
+
+    def test_prior_transform_boundary_finite(self):
+        """u = 0 / 1 are clipped into the open cube before ppf."""
+        prior_list = [scipy.stats.norm(0, 1), scipy.stats.norm(0, 1)]
+        config = ParameterConfig(
+            params=[self.param1, self.param2],
+            prior=prior_list,
+            initial_proposal_distribution=prior_list,
+        )
+        theta = config.prior_transform(np.array([0.0, 1.0]))
+        self.assertTrue(np.all(np.isfinite(theta)))
 
     def test_prior_transform_generic(self):
         """Generic prior with prior_transform method is called directly."""

@@ -12,7 +12,23 @@ import jitr
 import numpy as np
 
 from .elastic_diffxs_observation import ElasticDifferentialXSObservation
+from .observation_from_measurement import MB_PER_B
 from .physical_model import PhysicalModel
+
+
+def _require_observation(observation) -> None:
+    """Reject observations this model cannot evaluate on.
+
+    Both reaction observations report ``quantity == "dXS/dA"``, so a string
+    check cannot tell them apart; the class carries the solver workspace the
+    model needs.
+    """
+    if not isinstance(observation, ElasticDifferentialXSObservation):
+        raise ValueError(
+            "ElasticDifferentialXSModel requires an "
+            "ElasticDifferentialXSObservation, got "
+            f"{type(observation).__name__}"
+        )
 
 
 class ElasticDifferentialXSModel(PhysicalModel):
@@ -134,6 +150,7 @@ class ElasticDifferentialXSModel(PhysicalModel):
         np.ndarray
             Predicted observable on ``observation.constraint_workspace.angles``.
         """
+        _require_observation(observation)
         if observation.quantity != self.quantity:
             raise ValueError(
                 f"Observation quantity {observation.quantity} does not match "
@@ -171,6 +188,7 @@ class ElasticDifferentialXSModel(PhysicalModel):
         np.ndarray
             Predicted observable on ``observation.visualization_workspace.angles``.
         """
+        _require_observation(observation)
         if observation.quantity != self.quantity:
             raise ValueError(
                 f"Observation quantity {observation.quantity} does not match "
@@ -197,8 +215,8 @@ class ElasticDifferentialXSModel(PhysicalModel):
 def extract_dXS_dA(
     xs: jitr.xs.elastic.ElasticXS, ws: jitr.xs.elastic.DifferentialWorkspace
 ) -> np.ndarray:
-    """Extracts dXS/dA in b/Sr"""
-    return xs.dsdo / 1000
+    """Extracts dXS/dA in b/Sr (``jitr`` reports mb/sr)."""
+    return xs.dsdo / MB_PER_B
 
 
 def extract_dXS_dRuth(

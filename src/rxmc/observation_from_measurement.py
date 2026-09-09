@@ -6,10 +6,30 @@ and :class:`~rxmc.ias_pn_observation.IsobaricAnalogPNObservation`) are now plain
 :class:`~rxmc.observation.Observation` subclasses carrying **statistical error
 only**; any correlated systematic is composed explicitly as a
 :class:`~rxmc.covariance.Term` in the :class:`~rxmc.constraint.Constraint`.  This
-module just holds the angle-grid validation they share.
+module holds what the reaction observations *and* the reaction models share:
+the angle-grid validation, the single ``pint`` unit registry, and the unit
+convention (cross sections are stored internally in b/sr; ``jitr`` returns
+mb/sr, so model outputs are divided by :data:`MB_PER_B`).
 """
 
 import numpy as np
+from pint import UnitRegistry
+
+#: The one unit registry for the package.  ``pint`` refuses to combine
+#: quantities from different registries, so every module must use this one.
+ureg = UnitRegistry()
+
+#: Default maximum partial wave for the reaction solvers.
+DEFAULT_LMAX = 20
+
+#: Internal cross-section unit: every ``y`` in b/sr.
+XS_UNIT = ureg.barn / ureg.steradian
+
+#: Unit ``jitr`` reports cross sections (and the Rutherford cross section) in.
+RUTHERFORD_UNIT = ureg.millibarn / ureg.steradian
+
+#: Millibarn per barn; divides ``jitr`` output to land in :data:`XS_UNIT`.
+MB_PER_B = float((1 * ureg.barn).to(ureg.millibarn).magnitude)
 
 
 def normalized_error_kwargs(

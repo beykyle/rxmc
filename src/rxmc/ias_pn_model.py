@@ -13,7 +13,22 @@ import jitr
 import numpy as np
 
 from .ias_pn_observation import IsobaricAnalogPNObservation
+from .observation_from_measurement import MB_PER_B
 from .physical_model import PhysicalModel
+
+
+def _require_observation(observation) -> None:
+    """Reject observations this model cannot evaluate on.
+
+    Both reaction observations report ``quantity == "dXS/dA"``, so a string
+    check cannot tell them apart; the class carries the solver workspace the
+    model needs.
+    """
+    if not isinstance(observation, IsobaricAnalogPNObservation):
+        raise ValueError(
+            "IsobaricAnalogPNXSModel requires an IsobaricAnalogPNObservation, "
+            f"got {type(observation).__name__}"
+        )
 
 
 class IsobaricAnalogPNXSModel(PhysicalModel):
@@ -106,7 +121,7 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
                 self.U_n_central(r, *args_n_central),
                 self.U_n_spin_orbit(r, *args_n_spin_orbit),
             )
-            / 1000
+            / MB_PER_B  # jitr reports mb/sr; internal unit is b/sr
         )
 
     def evaluate(
@@ -132,6 +147,7 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
             Predicted (p,n) IAS differential cross section in b/sr on
             ``observation.constraint_workspace.angles``.
         """
+        _require_observation(observation)
         return self._xs(observation.constraint_workspace, params)
 
     def visualizable_model_prediction(
@@ -155,6 +171,7 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
             Predicted (p,n) IAS differential cross section in b/sr on
             ``observation.visualization_workspace.angles``.
         """
+        _require_observation(observation)
         base, values = self.split_params(params)
         xs = self._xs(observation.visualization_workspace, base)
         return self.apply_transform(observation, xs, values)

@@ -11,20 +11,17 @@ only; correlated systematics are composed as :class:`~rxmc.covariance.Term` s in
 import jitr
 import numpy as np
 from exfor_tools.distribution import Distribution
-from pint import UnitRegistry
 
 from .observation import Observation
-from .observation_from_measurement import (
+from .observation_from_measurement import (  # noqa: F401  (re-exported names)
+    DEFAULT_LMAX,
+    RUTHERFORD_UNIT,
+    XS_UNIT,
     check_angle_grid,
     measurement_kwargs,
     normalized_error_kwargs,
+    ureg,
 )
-
-# Create a unit registry
-ureg = UnitRegistry()
-
-
-DEFAULT_LMAX = 20
 
 
 class ElasticDifferentialXSObservation(Observation):
@@ -201,8 +198,8 @@ class ElasticDifferentialXSObservation(Observation):
         self, measurement_quantity: str, measurement_y_units: str
     ):
         # Determine the xs_unit based on self.quantity
-        xs_unit = ureg.barn / ureg.steradian
-        rutherford_unit = ureg.millibarn / ureg.steradian
+        xs_unit = XS_UNIT
+        rutherford_unit = RUTHERFORD_UNIT
         if self.quantity == "dXS/dA":
             y_unit = xs_unit
         elif self.quantity in {"dXS/dRuth", "Ay"}:

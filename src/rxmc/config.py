@@ -21,8 +21,10 @@ multivariate), the built-in :class:`~rxmc.priors.TruncatedNormalPrior`, and
 any user-supplied class that satisfies the same interface.
 
 Alternatively, a **list** of univariate ``scipy.stats`` frozen distributions
-(one per parameter) may be passed.  This form and any prior class that
-implements ``prior_transform(u)`` both support the Dynesty-compatible
+(one per parameter) may be passed; it is wrapped in an
+:class:`~rxmc.priors.IndependentPrior` on construction (the same rule
+:class:`~rxmc.param_sampling.Sampler` applies).  That class and any prior
+class that implements ``prior_transform(u)`` support the Dynesty-compatible
 :meth:`CalibrationConfig.prior_transform`.
 """
 
@@ -32,6 +34,7 @@ import numpy as np
 
 from rxmc.evidence import Evidence
 from rxmc.params import Parameter
+from rxmc.priors import as_prior, clip_unit_cube
 
 
 class ParameterConfig:
@@ -73,8 +76,10 @@ class ParameterConfig:
     ):
         self.params = params
         self.ndim = len(params)
-        self.prior = prior
-        self.initial_proposal_distribution = initial_proposal_distribution
+        # a list of marginals becomes an IndependentPrior here, so every
+        # method below sees one prior object (the rule Sampler applies too)
+        self.prior = as_prior(prior)
+        self.initial_proposal_distribution = as_prior(initial_proposal_distribution)
 
         if self.ndim == 0:
             raise ValueError("Parameter list cannot be empty")
@@ -90,27 +95,33 @@ class ParameterConfig:
 
     @staticmethod
     def _infer_dim(dist) -> Optional[int]:
-        """Return the dimensionality of a prior object, or None if unknown."""
-        if hasattr(dist, "dim") and isinstance(dist.dim, int):
-            return dist.dim
-        if hasattr(dist, "mean"):
-            return int(np.size(dist.mean))
-        return None
+        """Return the dimensionality of a prior object, or None if unknown.
+
+        An integer ``dim`` attribute wins; otherwise the size of ``mean`` is
+        used, *calling* it when it is a method (frozen ``scipy.stats``
+        univariates and user classes expose ``mean()``; scipy multivariates
+        expose an array).
+        """
+        dim = getattr(dist, "dim", None)
+        if isinstance(dim, int) and not isinstance(dim, bool):
+            return dim
+        mean = getattr(dist, "mean", None)
+        if mean is None:
+            return None
+        if callable(mean):
+            try:
+                mean = mean()
+            except Exception:
+                return None
+        return int(np.size(mean))
 
     def _validate_prior_dim(self, dist, name: str) -> None:
-        if isinstance(dist, list):
-            if len(dist) != self.ndim:
-                raise ValueError(
-                    f"{name} list length ({len(dist)}) does not match "
-                    f"number of parameters ({self.ndim})"
-                )
-        else:
-            dim = self._infer_dim(dist)
-            if dim is not None and dim != self.ndim:
-                raise ValueError(
-                    f"{name} dimensionality ({dim}) does not match "
-                    f"number of parameters ({self.ndim})"
-                )
+        dim = self._infer_dim(dist)
+        if dim is not None and dim != self.ndim:
+            raise ValueError(
+                f"{name} dimensionality ({dim}) does not match "
+                f"number of parameters ({self.ndim})"
+            )
 
     # ------------------------------------------------------------------
     # Public API
@@ -129,11 +140,7 @@ class ParameterConfig:
         ndarray, shape (nwalkers, ndim)
             One initial position per walker.
         """
-        dist = self.initial_proposal_distribution
-        if isinstance(dist, list):
-            samples = [d.rvs(nwalkers) for d in dist]
-            return np.column_stack(samples)
-        samples = np.atleast_1d(dist.rvs(nwalkers))
+        samples = np.atleast_1d(self.initial_proposal_distribution.rvs(nwalkers))
         return samples.reshape(nwalkers, -1)
 
     def prior_logpdf(self, x: np.ndarray) -> float:
@@ -149,22 +156,15 @@ class ParameterConfig:
         float
             Log prior probability at ``x``.
         """
-        x = np.atleast_1d(x)
-        if isinstance(self.prior, list):
-            logpdfs = [dist.logpdf(x[i]) for i, dist in enumerate(self.prior)]
-            return float(np.sum(logpdfs))
-        return float(self.prior.logpdf(x))
+        return float(self.prior.logpdf(np.atleast_1d(x)))
 
     def prior_transform(self, u: np.ndarray) -> np.ndarray:
         """Map unit-cube coordinates to physical parameters for this sector.
 
-        Supports two forms:
-
-        * **List prior** — each element must expose a ``ppf`` method (all
-          frozen ``scipy.stats`` univariate distributions do).
-        * **Joint prior with ``prior_transform``** — the prior object must
-          implement ``prior_transform(u) -> ndarray`` itself (e.g.
-          :class:`~rxmc.priors.TruncatedNormalPrior`).
+        The prior object must implement ``prior_transform(u) -> ndarray``
+        (:class:`~rxmc.priors.IndependentPrior`, which a list prior becomes,
+        and :class:`~rxmc.priors.TruncatedNormalPrior` do).  ``u`` is clipped
+        into the open unit cube first, so an exact ``0`` or ``1`` stays finite.
 
         Parameters
         ----------
@@ -179,15 +179,15 @@ class ParameterConfig:
         Raises
         ------
         NotImplementedError
-            If the prior is neither a list nor exposes ``prior_transform``.
+            If the prior does not expose ``prior_transform``.
         """
-        if isinstance(self.prior, list):
-            return np.array([dist.ppf(u[i]) for i, dist in enumerate(self.prior)])
+        u = clip_unit_cube(u)
         if hasattr(self.prior, "prior_transform"):
             return self.prior.prior_transform(u)
         raise NotImplementedError(
-            "Prior transform requires either a list of distributions with ppf "
-            "or a prior object that implements prior_transform(u)."
+            "Prior transform requires a prior object that implements "
+            "prior_transform(u) (a list of scipy marginals is wrapped in "
+            "IndependentPrior, which does)."
         )
 
 
@@ -314,10 +314,11 @@ class CalibrationConfig:
         """Prior distribution objects in parameter-sector order.
 
         Returns one entry per sector: the model prior first, followed by one
-        entry per likelihood sector.  Each entry is whatever was passed as
-        ``prior`` to the corresponding :class:`ParameterConfig` — a list of
-        univariate distributions, a multivariate distribution, or a custom
-        prior object.
+        entry per likelihood sector.  Each entry is the prior object held by
+        the corresponding :class:`ParameterConfig` — a multivariate
+        distribution, a custom prior object, or the
+        :class:`~rxmc.priors.IndependentPrior` a list of univariate
+        distributions was wrapped into.
         """
         return [pc.prior for pc in self.parameter_configs]
 
@@ -489,12 +490,9 @@ class CalibrationConfig:
         ValueError
             If ``u`` does not have length ``ndim``.
         """
-        u = np.asarray(u, dtype=float)
+        u = clip_unit_cube(u)
         if u.shape[-1] != self.ndim:
             raise ValueError(f"Expected u with length {self.ndim}, got shape {u.shape}")
-
-        eps = np.finfo(float).eps
-        u = np.clip(u, eps, 1.0 - eps)
 
         theta = np.empty_like(u)
         offset = 0

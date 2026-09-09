@@ -116,5 +116,43 @@ class TestIsobaricAnalogPNXSModel(unittest.TestCase):
         self.assertTrue(np.all(np.isfinite(y_vis)))
 
 
+class TestObservationTypeChecks(unittest.TestCase):
+    """A reaction model refuses an observation of the wrong class up front
+    (no solver is touched, so these need no jitr workspace)."""
+
+    def setUp(self):
+        from rxmc.observation import Observation
+
+        self.plain = Observation(x=np.array([0.1, 0.2]), y=np.array([1.0, 1.0]))
+        self.elastic = ElasticDifferentialXSModel(
+            "dXS/dA",
+            interaction_central=central,
+            interaction_spin_orbit=spin_orbit,
+            calculate_interaction_from_params=lambda ws, *x: (tuple(x), ()),
+            params=[Parameter("Vv")],
+        )
+        self.ias = IsobaricAnalogPNXSModel(
+            U_p_coulomb=coulomb_charged_sphere,
+            U_p_central=central,
+            U_p_spin_orbit=spin_orbit,
+            U_n_central=central,
+            U_n_spin_orbit=spin_orbit,
+            calculate_params=lambda ws, *x: ((), (), (), (), ()),
+            params=[Parameter("Vv")],
+        )
+
+    def test_elastic_model_rejects_foreign_observation(self):
+        with self.assertRaisesRegex(ValueError, "ElasticDifferentialXSObservation"):
+            self.elastic.evaluate(self.plain, 1.0)
+        with self.assertRaisesRegex(ValueError, "ElasticDifferentialXSObservation"):
+            self.elastic.visualizable_model_prediction(self.plain, 1.0)
+
+    def test_ias_model_rejects_foreign_observation(self):
+        with self.assertRaisesRegex(ValueError, "IsobaricAnalogPNObservation"):
+            self.ias.evaluate(self.plain, 1.0)
+        with self.assertRaisesRegex(ValueError, "IsobaricAnalogPNObservation"):
+            self.ias.visualizable_model_prediction(self.plain, 1.0)
+
+
 if __name__ == "__main__":
     unittest.main()

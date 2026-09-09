@@ -348,5 +348,75 @@ class TestIsobaricAnalogPNObservation(unittest.TestCase):
         self.assertEqual(obs.y_sys_err_normalization, 0.02)
 
 
+class TestSolverSettingsForwarding(unittest.TestCase):
+    """The basis-size settings must reach ``set_up_solver`` on both classes."""
+
+    @patch("rxmc.elastic_diffxs_observation.set_up_solver")
+    def test_elastic_forwards_solver_settings(self, mock_set_up_solver):
+        mock_set_up_solver.return_value = (
+            DummyElasticWorkspace(),
+            DummyElasticWorkspace(),
+            object(),
+        )
+        ElasticDifferentialXSObservation(
+            x=np.array([15.0, 30.0]),
+            y=np.array([1.0, 0.5]),
+            Elab=12.0,
+            reaction=object(),
+            quantity="dXS/dA",
+            measurement_quantity="dXS/dA",
+            y_units="barn / steradian",
+            lmax=7,
+            wavelengths_beyond_range=3.5,
+            zeros_per_node=9,
+        )
+        kwargs = mock_set_up_solver.call_args.kwargs
+        self.assertEqual(kwargs["lmax"], 7)
+        self.assertEqual(kwargs["wavelengths_beyond_range"], 3.5)
+        self.assertEqual(kwargs["zeros_per_node"], 9)
+
+    @patch("rxmc.ias_pn_observation.set_up_solver")
+    def test_ias_forwards_solver_settings(self, mock_set_up_solver):
+        mock_set_up_solver.return_value = (object(), object(), object(), object())
+        IsobaricAnalogPNObservation(
+            x=np.array([10.0, 25.0]),
+            y=np.array([0.4, 0.3]),
+            Elab=30.0,
+            reaction=object(),
+            ExIAS=5.0,
+            y_units="barn / steradian",
+            lmax=7,
+            wavelengths_beyond_range=3.5,
+            zeros_per_node=9,
+        )
+        kwargs = mock_set_up_solver.call_args.kwargs
+        self.assertEqual(kwargs["lmax"], 7)
+        self.assertEqual(kwargs["wavelengths_beyond_range"], 3.5)
+        self.assertEqual(kwargs["zeros_per_node"], 9)
+
+
+class TestSharedUnits(unittest.TestCase):
+    def test_one_unit_registry(self):
+        import rxmc.elastic_diffxs_observation as elastic
+        import rxmc.ias_pn_observation as ias
+        from rxmc.observation_from_measurement import ureg
+
+        self.assertIs(elastic.ureg, ureg)
+        self.assertIs(ias.ureg, ureg)
+        self.assertEqual(elastic.DEFAULT_LMAX, ias.DEFAULT_LMAX)
+
+    def test_unit_constants_agree(self):
+        from rxmc.observation_from_measurement import (
+            MB_PER_B,
+            RUTHERFORD_UNIT,
+            XS_UNIT,
+            ureg,
+        )
+
+        self.assertEqual(MB_PER_B, 1000.0)
+        self.assertEqual((1 * XS_UNIT).to(RUTHERFORD_UNIT).magnitude, MB_PER_B)
+        self.assertTrue((1 * ureg("mb/sr")).check(XS_UNIT))
+
+
 if __name__ == "__main__":
     unittest.main()
