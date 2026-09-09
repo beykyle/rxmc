@@ -9,6 +9,7 @@ from . import ias_pn_model as ias_pn_model
 from . import ias_pn_observation as ias_pn_observation
 from . import likelihood_model as likelihood_model
 from . import metropolis_hastings as metropolis_hastings
+from . import model_comparison as model_comparison
 from . import observation as observation
 from . import param_sampling as param_sampling
 from . import params as params
