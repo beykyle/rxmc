@@ -4,7 +4,11 @@ from exfor_tools.distribution import Distribution
 from pint import UnitRegistry
 
 from .observation import Observation
-from .observation_from_measurement import check_angle_grid, normalized_error_kwargs
+from .observation_from_measurement import (
+    check_angle_grid,
+    measurement_kwargs,
+    normalized_error_kwargs,
+)
 
 # Create a unit registry
 ureg = UnitRegistry()
@@ -142,26 +146,15 @@ class IsobaricAnalogPNObservation(Observation):
         measurement: Distribution,
         reaction: jitr.reactions.Reaction,
         ExIAS: float,
-        lmax: int = DEFAULT_LMAX,
-        angles_vis: np.ndarray = np.linspace(0.01, 180, 100),
-        wavelengths_beyond_range: float = 2.0,
-        zeros_per_node: int = 5,
+        **kwargs,
     ):
+        """Construct from an ``exfor_tools`` ``Distribution``.
+
+        ``**kwargs`` (solver settings, ``transform``, ``mask``, ...) are
+        forwarded to the constructor.
+        """
         return cls(
-            x=measurement.x,
-            y=measurement.y,
-            Elab=measurement.Einc,
-            reaction=reaction,
-            ExIAS=ExIAS,
-            y_units=measurement.y_units,
-            y_stat_err=measurement.statistical_err,
-            y_sys_err_normalization=measurement.systematic_norm_err,
-            y_sys_err_offset=measurement.systematic_offset_err,
-            dataset_label=getattr(measurement, "subentry", None),
-            lmax=lmax,
-            angles_vis=angles_vis,
-            wavelengths_beyond_range=wavelengths_beyond_range,
-            zeros_per_node=zeros_per_node,
+            reaction=reaction, ExIAS=ExIAS, **measurement_kwargs(measurement), **kwargs
         )
 
 

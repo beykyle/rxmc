@@ -14,7 +14,11 @@ from exfor_tools.distribution import Distribution
 from pint import UnitRegistry
 
 from .observation import Observation
-from .observation_from_measurement import check_angle_grid, normalized_error_kwargs
+from .observation_from_measurement import (
+    check_angle_grid,
+    measurement_kwargs,
+    normalized_error_kwargs,
+)
 
 # Create a unit registry
 ureg = UnitRegistry()
@@ -164,29 +168,19 @@ class ElasticDifferentialXSObservation(Observation):
         measurement: Distribution,
         reaction: jitr.reactions.Reaction,
         quantity: str,
-        lmax: int = DEFAULT_LMAX,
-        wavelengths_beyond_range=2.0,
-        zeros_per_node=5,
-        angles_vis: np.ndarray = np.linspace(0.01, 180, 100),
-        compound_correction: np.ndarray = None,
+        **kwargs,
     ):
+        """Construct from an ``exfor_tools`` ``Distribution``.
+
+        ``**kwargs`` (solver settings, ``compound_correction``, ``transform``,
+        ``mask``, ...) are forwarded to the constructor.
+        """
         return cls(
-            x=measurement.x,
-            y=measurement.y,
-            Elab=measurement.Einc,
             reaction=reaction,
             quantity=quantity,
             measurement_quantity=measurement.quantity,
-            y_units=measurement.y_units,
-            y_stat_err=measurement.statistical_err,
-            y_sys_err_normalization=measurement.systematic_norm_err,
-            y_sys_err_offset=measurement.systematic_offset_err,
-            dataset_label=getattr(measurement, "subentry", None),
-            lmax=lmax,
-            wavelengths_beyond_range=wavelengths_beyond_range,
-            zeros_per_node=zeros_per_node,
-            angles_vis=angles_vis,
-            compound_correction=compound_correction,
+            **measurement_kwargs(measurement),
+            **kwargs,
         )
 
     def calculate_normalization(

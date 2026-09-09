@@ -9,6 +9,23 @@ from rxmc.ias_pn_observation import IsobaricAnalogPNObservation
 from rxmc.observation import Observation
 
 
+def make_measurement(**overrides):
+    """A minimal ``exfor_tools``-like Distribution stub."""
+    fields = dict(
+        x=np.array([20.0, 40.0]),
+        y=np.array([2.0, 1.0]),
+        Einc=8.0,
+        quantity="dXS/dA",
+        y_units="barn / steradian",
+        statistical_err=np.array([0.2, 0.1]),
+        systematic_norm_err=0.03,
+        systematic_offset_err=0.02,
+        subentry="subentry",
+    )
+    fields.update(overrides)
+    return SimpleNamespace(**fields)
+
+
 class DummyElasticWorkspace:
     def __init__(self, rutherford=1.0):
         self.rutherford = rutherford
@@ -56,17 +73,7 @@ class TestElasticDifferentialXSObservation(unittest.TestCase):
             object(),
         )
 
-        measurement = SimpleNamespace(
-            x=np.array([20.0, 40.0]),
-            y=np.array([2.0, 1.0]),
-            Einc=8.0,
-            quantity="dXS/dA",
-            y_units="barn / steradian",
-            statistical_err=np.array([0.2, 0.1]),
-            systematic_norm_err=0.03,
-            systematic_offset_err=0.02,
-            subentry="elastic-subentry",
-        )
+        measurement = make_measurement(subentry="elastic-subentry")
 
         obs = ElasticDifferentialXSObservation.from_measurement(
             measurement=measurement,
@@ -97,14 +104,10 @@ class TestElasticDifferentialXSObservation(unittest.TestCase):
             object(),
         )
 
-        measurement = SimpleNamespace(
-            x=np.array([20.0, 40.0]),
+        measurement = make_measurement(
             y=np.array([1800.0, 300.0]),
-            Einc=8.0,
-            quantity="dXS/dA",
             y_units="mb/sr",
             statistical_err=np.array([20.0, 10.0]),
-            systematic_norm_err=np.array(0.03),  # 0-d, as exfor_tools stores it
             systematic_offset_err=5.0,  # mb/sr
             subentry="ruth-subentry",
         )
@@ -247,11 +250,10 @@ class TestIsobaricAnalogPNObservation(unittest.TestCase):
     def test_from_measurement_construction(self, mock_set_up_solver):
         mock_set_up_solver.return_value = (object(), object(), object(), object())
 
-        measurement = SimpleNamespace(
+        measurement = make_measurement(
             x=np.array([5.0, 15.0]),
             y=np.array([0.9, 0.7]),
             Einc=18.0,
-            y_units="barn / steradian",
             statistical_err=np.array([0.08, 0.07]),
             systematic_norm_err=0.02,
             systematic_offset_err=0.01,

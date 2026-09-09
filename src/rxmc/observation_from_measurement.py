@@ -35,6 +35,26 @@ def normalized_error_kwargs(
     }
 
 
+def measurement_kwargs(measurement) -> dict:
+    """The ``Observation``-side constructor keywords carried by an
+    ``exfor_tools`` :class:`~exfor_tools.distribution.Distribution`.
+
+    Shared by the reaction observations' ``from_measurement`` classmethods; the
+    reaction-specific arguments (``reaction``, ``quantity``/``ExIAS``, solver
+    settings, ``transform``, ``mask``) are passed alongside.
+    """
+    return {
+        "x": measurement.x,
+        "y": measurement.y,
+        "Elab": measurement.Einc,
+        "y_units": measurement.y_units,
+        "y_stat_err": measurement.statistical_err,
+        "y_sys_err_normalization": measurement.systematic_norm_err,
+        "y_sys_err_offset": measurement.systematic_offset_err,
+        "dataset_label": getattr(measurement, "subentry", None),
+    }
+
+
 def check_angle_grid(angles_rad: np.ndarray, name: str):
     if len(angles_rad.shape) > 1:
         raise ValueError(f"{name} must be 1D, is {len(angles_rad.shape)}D")
