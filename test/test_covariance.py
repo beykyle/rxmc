@@ -141,6 +141,24 @@ class TestTermKinds:
         t = Term(lambda c, a: ones(c), (Parameter("a"),), kind="diag", constant=True)
         assert not t.is_constant
 
+    def test_constant_term_may_read_x(self):
+        # constant means "independent of ym"; x is invariant and readable
+        x = np.linspace(0.0, 2.0, 4)
+        t = Term(lambda c: 0.1 * c.x, kind="diag", constant=True)
+        cov = ConstraintCovariance([t], 4)
+        assert cov.is_constant
+        ctx = StackContext.constant(x, np.zeros(4), [np.arange(4)])
+        np.testing.assert_allclose(cov.matrix(ctx), np.diag((0.1 * x) ** 2))
+        # a mis-declared constant term (reads ym) fails loudly, not silently
+        bad = ConstraintCovariance(
+            [Term(lambda c: 0.1 * c.ym, kind="diag", constant=True)], 4
+        )
+        with pytest.raises(TypeError):
+            bad.matrix(ctx)
+        assert cov.matrix(single_block_ctx(x, np.zeros(4), np.ones(4))) is cov.matrix(
+            ctx
+        )
+
 
 class TestTermCoords:
     def test_coords_callable_applied_to_x(self):
@@ -219,6 +237,21 @@ class TestSupportNone:
     def test_non_term_raises(self):
         with pytest.raises(TypeError):
             ConstraintCovariance([np.eye(2)], 2)
+
+    def test_rebinding_to_a_different_stack_raises(self):
+        t = noise_term(Parameter("p"))
+        ConstraintCovariance([t], 4)
+        ConstraintCovariance([t], 4)  # same stack (a masked view): fine
+        with pytest.raises(ValueError, match="already bound"):
+            ConstraintCovariance([t], 6)
+
+    def test_local_context_checks_param_count(self):
+        s = Parameter("s")
+        t = Term(lambda c: c.x, kind="diag", coords=Transform(lambda a, s: s * a, (s,)))
+        t.bind(2)
+        ctx = single_block_ctx(np.ones(2), np.zeros(2), np.zeros(2))
+        with pytest.raises(ValueError, match="expected 1 params"):
+            t.local_context(ctx)
 
 
 # ----------------------------------------------------------------------------
@@ -467,6 +500,24 @@ class TestFactories:
         v = 0.5 * m * self.ym
         assert np.allclose(S, np.outer(v, v))
 
+    def test_length_one_magnitude_or_mask_raises(self):
+        # a length-1 array is not a scalar: it must not broadcast silently
+        with pytest.raises(ValueError, match="shape"):
+            assemble([offset_term(magnitude=np.array([0.2]))], self.ctx)
+        with pytest.raises(ValueError, match="shape"):
+            assemble([offset_term(magnitude=0.2, mask=np.array([1.0]))], self.ctx)
+        with pytest.raises(ValueError, match="shape"):
+            assemble(
+                [normalization_term(parameter=Parameter("n"), mask=np.array([1.0]))],
+                self.ctx,
+                (0.0,),
+            )
+
+    def test_zero_d_magnitude_is_scalar(self):
+        # exfor_tools stores scalar systematics as 0-d arrays
+        S = assemble([offset_term(magnitude=np.array(0.2))], self.ctx)
+        assert np.allclose(S, 0.04 * np.ones((3, 3)))
+
     def test_magnitude_length_mismatch_raises(self):
         with pytest.raises(ValueError):
             assemble([offset_term(magnitude=np.ones(2))], self.ctx)
@@ -554,24 +605,6 @@ class TestKernelTerm:
         term = kernel_term(kernel)
         assert term.params == () and term.is_constant
 
-    def test_constant_term_may_read_x(self):
-        # constant means "independent of ym"; x is invariant and readable
-        x = np.linspace(0.0, 2.0, 4)
-        t = Term(lambda c: 0.1 * c.x, kind="diag", constant=True)
-        cov = ConstraintCovariance([t], 4)
-        assert cov.is_constant
-        ctx = StackContext.constant(x, np.zeros(4), [np.arange(4)])
-        np.testing.assert_allclose(cov.matrix(ctx), np.diag((0.1 * x) ** 2))
-        # a mis-declared constant term (reads ym) fails loudly, not silently
-        bad = ConstraintCovariance(
-            [Term(lambda c: 0.1 * c.ym, kind="diag", constant=True)], 4
-        )
-        with pytest.raises(TypeError):
-            bad.matrix(ctx)
-        assert cov.matrix(single_block_ctx(x, np.zeros(4), np.ones(4))) is cov.matrix(
-            ctx
-        )
-
     def test_constant_amplitude_reproduces_constant_kernel(self):
         x = np.linspace(0.0, 2.0, 5)
         ctx = single_block_ctx(x, np.zeros(5), np.zeros(5))
@@ -589,7 +622,10 @@ class TestKernelTerm:
         x = np.linspace(0.1, 3.0, 4)
         ctx = single_block_ctx(x, np.zeros(4), np.zeros(4))
         la, sl = Parameter("log A"), Parameter("slope")
-        q = lambda x: 2.0 * np.sin(x / 2)  # noqa: E731
+
+        def q(x):
+            return 2.0 * np.sin(x / 2)
+
         term = kernel_term(
             Matern(1.0, nu=2.5),
             coords=q,

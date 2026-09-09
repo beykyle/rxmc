@@ -67,6 +67,8 @@ a numpy-style callable of a :class:`~rxmc.covariance.TermContext` (the term's
 local ``x``/``y``/``ym``) and its parameters, plus a ``kind``
 (``"diag"``/``"mode"``/``"matrix"``).  The factory helpers build the common
 terms in one line; anything else is a direct ``Term(fn, params, kind=...)``.
+A :class:`~rxmc.covariance.StackContext` bundles the stacked ``x``/``y``/``ym``
+that a :class:`~rxmc.covariance.ConstraintCovariance` is evaluated on.
 
 .. autosummary::
    :toctree: generated/
@@ -91,6 +93,7 @@ terms in one line; anything else is a direct ``Term(fn, params, kind=...)``.
    rxmc.covariance.exp_growth_amplitude
    rxmc.covariance.stacked_supports
    rxmc.covariance.ConstraintCovariance
+   rxmc.covariance.StackContext
 
 Likelihood functionals
 ----------------------

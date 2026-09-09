@@ -69,7 +69,6 @@ __all__ = [
     "model_error_term",
     "systematic_term",
     "kernel_term",
-    "discrepancy_term",
 ]
 
 KINDS = ("diag", "mode", "matrix")
@@ -187,6 +186,14 @@ class Term:
         may be read freely (e.g. a fixed-hyperparameter kernel over ``x``).  A
         constant term is first evaluated with ``c.ym is None``, so a
         mis-declared term fails loudly.  Ignored (``True``) for array ``fn``.
+
+    Notes
+    -----
+    A Term is stateful: its support is bound once (see :meth:`bind`) and
+    constant or coordinate-transformed values are cached on the assumption that
+    the constraint's ``x`` never changes.  Build a fresh Term per constraint;
+    only masked views of one constraint (which stack the same observations)
+    may share Terms.
     """
 
     def __init__(
@@ -210,6 +217,7 @@ class Term:
         self._n_fn_params = len(fn_params)
         self.params = fn_params + self.coords.params
         self.support = None
+        self._bound_N = None
         self._cache = None
         self._x_cache = None
 
@@ -240,10 +248,21 @@ class Term:
     def bind(self, N: int) -> None:
         """Resolve ``support=None`` to the whole stack of length ``N``.
 
-        Idempotent; a term constructed with an explicit support is untouched.
+        Idempotent for the same ``N``; a term constructed with an explicit
+        support is untouched.  Re-binding to a *different* ``N`` raises: one
+        Term belongs to one constraint (masked views of that constraint share
+        its stack, see :meth:`rxmc.constraint.Constraint.masked`).
         """
+        N = int(N)
         if self.support is None:
-            self._set_support(np.arange(int(N)))
+            self._set_support(np.arange(N))
+            self._bound_N = N
+        elif self._bound_N is not None and self._bound_N != N:
+            raise ValueError(
+                f"Term already bound to a stack of length {self._bound_N}; cannot "
+                f"re-bind it to length {N}. One Term belongs to one constraint "
+                "(masked views of the same constraint share its stack)"
+            )
 
     def _set_support(self, ix: np.ndarray) -> None:
         self.support = ix
@@ -285,8 +304,11 @@ class Term:
     def local_context(self, ctx: StackContext, theta=()) -> TermContext:
         """The :class:`TermContext` this term sees at ``theta``."""
         self._check_bound()
+        theta = np.asarray(theta, dtype=float)
+        if len(theta) != len(self.params):
+            raise ValueError(f"expected {len(self.params)} params, got {len(theta)}")
         ix = self.support
-        x = self._coords_x(ctx, np.asarray(theta, dtype=float))
+        x = self._coords_x(ctx, theta)
         ym = None if ctx.ym is None else ctx.ym[ix]
         return TermContext(x=x, y=ctx.y[ix], ym=ym, support=ix)
 
@@ -450,7 +472,8 @@ class ConstraintCovariance:
         Parameters
         ----------
         ctx : StackContext
-            Stacked arrays.  When :attr:`is_constant`, ``ctx.ym`` is never read
+            Stacked arrays.  ``ctx`` itself may be ``None`` only when every term
+            is array-valued.  When :attr:`is_constant`, ``ctx.ym`` is never read
             (it may be ``None``, see :meth:`StackContext.constant`) and the
             result is cached.
         *theta : float
@@ -634,12 +657,30 @@ def _masked(magnitude, mask=None):
 
     Scalar-like values include 0-d ndarrays (e.g. ``np.array(0.05)`` as stored by
     ``exfor_tools`` distributions), not just Python scalars.  An array magnitude
-    is checked against the support length when the term is evaluated
-    (``np.broadcast_to`` in the basis).
+    must have exactly the support's length; this is checked by :func:`_full`
+    when the term is evaluated.
     """
     v = float(magnitude) if np.ndim(magnitude) == 0 else np.asarray(magnitude, float)
     if mask is not None:
         v = v * np.asarray(mask, dtype=float)
+    return v
+
+
+def _full(v, n):
+    """``v`` as a length-``n`` vector.
+
+    Scalars are broadcast; arrays must already have shape ``(n,)`` — a length-1
+    array is *not* treated as a scalar, so a magnitude or mask of the wrong
+    length fails loudly instead of being spread over the support.
+    """
+    v = np.asarray(v, dtype=float)
+    if v.ndim == 0:
+        return np.full(n, float(v))
+    if v.shape != (n,):
+        raise ValueError(
+            f"magnitude/basis has shape {v.shape} but the term's support has "
+            f"length {n}"
+        )
     return v
 
 
@@ -662,7 +703,7 @@ def _scaled_term(
 
     def fn(c, *values):
         b = basis(c, *values[nc:]) if callable(basis) else basis
-        return coef(values[:nc]) * np.broadcast_to(b, (len(c),))
+        return coef(values[:nc]) * _full(b, len(c))
 
     return Term(fn, cparams + basis_params, kind=kind, support=support, coords=coords)
 
@@ -685,7 +726,7 @@ def offset_term(
     mag = _masked(1.0 if magnitude is None else magnitude, mask=mask)
 
     def basis(c):
-        return np.broadcast_to(mag, (len(c),))
+        return _full(mag, len(c))
 
     if parameter is None:
         return Term(basis, kind="mode", support=support, constant=True)
@@ -706,7 +747,7 @@ def normalization_term(
     mag = _masked(1.0 if magnitude is None else magnitude, mask=mask)
 
     def basis(c):
-        return np.broadcast_to(mag, (len(c),)) * c.ym
+        return _full(mag, len(c)) * c.ym
 
     return _scaled_term("mode", parameter, log, basis, support=support)
 
@@ -771,6 +812,24 @@ def systematic_term(
     )
 
 
+def _kernel_params(kernel, prefix) -> list:
+    """One :class:`~rxmc.params.Parameter` per free kernel hyperparameter element."""
+    params = []
+    for hp in kernel.hyperparameters:
+        if hp.fixed:
+            continue
+        if hp.n_elements == 1:
+            params.append(Parameter(f"{prefix}_{hp.name}", float, latex_name=hp.name))
+        else:
+            params.extend(
+                Parameter(
+                    f"{prefix}_{hp.name}_{i}", float, latex_name=f"{hp.name}[{i}]"
+                )
+                for i in range(hp.n_elements)
+            )
+    return params
+
+
 def kernel_term(
     kernel,
     coords=None,
@@ -797,7 +856,8 @@ def kernel_term(
         momentum transfer).  Default: ``x`` itself.
     amplitude : callable or array, optional
         ``amplitude(c, *amplitude_values) -> vector a``; the block becomes
-        ``outer(a, a) * K``.  See :func:`constant_amplitude`,
+        ``outer(a, a) * K``.  Like the kernel, it sees the *transformed*
+        coordinate: ``c.x`` is ``coords(x)``.  See :func:`constant_amplitude`,
         :func:`exp_growth_amplitude`.
     amplitude_params : sequence of Parameter, optional
         Parameters consumed by ``amplitude``.
@@ -808,19 +868,7 @@ def kernel_term(
     support : array_like of int, optional
         See :class:`Term`.
     """
-    kparams = []
-    for hp in kernel.hyperparameters:
-        if hp.fixed:
-            continue
-        if hp.n_elements == 1:
-            kparams.append(Parameter(f"{prefix}_{hp.name}", float, latex_name=hp.name))
-        else:
-            kparams.extend(
-                Parameter(
-                    f"{prefix}_{hp.name}_{i}", float, latex_name=f"{hp.name}[{i}]"
-                )
-                for i in range(hp.n_elements)
-            )
+    kparams = _kernel_params(kernel, prefix)
     nk = len(kparams)
     amplitude_params = tuple(amplitude_params)
     # with no free kernel hyperparameters and parameter-free coordinates,
@@ -854,7 +902,3 @@ def kernel_term(
         coords=coords,
         constant=nk == 0 and not amplitude_params and not callable(amplitude),
     )
-
-
-discrepancy_term = kernel_term
-"""Alias of :func:`kernel_term` (a GP model-discrepancy term)."""
