@@ -3,6 +3,7 @@ examples/*.pdf
 
 # docs
 docs/_build/
+docs/generated/
 
 #slurm
 *.out
