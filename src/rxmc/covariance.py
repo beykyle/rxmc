@@ -78,7 +78,7 @@ KINDS = ("diag", "mode", "matrix")
 class StackContext:
     """Bundle of stacked arrays passed to every :meth:`Term.add_to`.
 
-    Attributes
+    Parameters
     ----------
     x : np.ndarray
         Stacked independent variable, ``np.concatenate`` over observations.

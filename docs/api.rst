@@ -55,6 +55,9 @@ as a latent normalisation) and covariance terms (coordinate transforms).
 
    rxmc.transforms.Transform
    rxmc.transforms.as_transform
+   rxmc.transforms.identity
+   rxmc.transforms.log
+   rxmc.transforms.exp
    rxmc.transforms.scale
    rxmc.transforms.per_observation_scaling
 
