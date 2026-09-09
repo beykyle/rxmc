@@ -50,6 +50,7 @@ class IsobaricAnalogPNObservation(Observation):
         wavelengths_beyond_range: float = 2.0,
         zeros_per_node: int = 5,
         transform=None,
+        mask=None,
     ):
         """
         Initialize a Observation instance for the (p,n) IAS reaction.
@@ -137,6 +138,7 @@ class IsobaricAnalogPNObservation(Observation):
             np.asarray(y) / norm,
             label=dataset_label,
             transform=transform,
+            mask=mask,
             **normalized_error_kwargs(
                 norm, y_stat_err, y_sys_err_normalization, y_sys_err_offset
             ),

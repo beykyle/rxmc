@@ -7,6 +7,7 @@ import numpy as np
 from rxmc.elastic_diffxs_observation import ElasticDifferentialXSObservation
 from rxmc.ias_pn_observation import IsobaricAnalogPNObservation
 from rxmc.observation import Observation
+from rxmc.transforms import log
 
 
 def make_measurement(**overrides):
@@ -90,6 +91,30 @@ class TestElasticDifferentialXSObservation(unittest.TestCase):
         self.assertEqual(obs.y_sys_err_normalization, 0.03)
         self.assertEqual(obs.y_sys_err_offset, 0.02)
         self.assertEqual(len(obs.systematic_terms(np.arange(obs.n_data_pts))), 2)
+
+    @patch("rxmc.elastic_diffxs_observation.set_up_solver")
+    def test_from_measurement_forwards_transform_and_mask(self, mock_set_up_solver):
+        mock_set_up_solver.return_value = (
+            DummyElasticWorkspace(),
+            DummyElasticWorkspace(),
+            object(),
+        )
+        measurement = make_measurement(
+            systematic_norm_err=None,
+            systematic_offset_err=None,
+            subentry="elastic-subentry",
+        )
+        mask = np.array([True, False])
+        obs = ElasticDifferentialXSObservation.from_measurement(
+            measurement=measurement,
+            reaction=object(),
+            quantity="dXS/dA",
+            transform=log,
+            mask=mask,
+        )
+        self.assertIs(obs.transform, log)
+        np.testing.assert_allclose(obs.y, np.log(measurement.y))
+        np.testing.assert_array_equal(obs.mask, mask)
 
     @patch("rxmc.elastic_diffxs_observation.set_up_solver")
     def test_from_measurement_rutherford_array_norm(self, mock_set_up_solver):
@@ -275,6 +300,30 @@ class TestIsobaricAnalogPNObservation(unittest.TestCase):
         self.assertEqual(obs.y_sys_err_normalization, 0.02)
         self.assertEqual(obs.y_sys_err_offset, 0.01)
         self.assertEqual(len(obs.systematic_terms(np.arange(obs.n_data_pts))), 2)
+
+    @patch("rxmc.ias_pn_observation.set_up_solver")
+    def test_from_measurement_forwards_transform_and_mask(self, mock_set_up_solver):
+        mock_set_up_solver.return_value = (object(), object(), object(), object())
+        measurement = make_measurement(
+            x=np.array([5.0, 15.0]),
+            y=np.array([0.9, 0.7]),
+            Einc=18.0,
+            statistical_err=np.array([0.08, 0.07]),
+            systematic_norm_err=None,
+            systematic_offset_err=None,
+            subentry="ias-subentry",
+        )
+        mask = np.array([False, True])
+        obs = IsobaricAnalogPNObservation.from_measurement(
+            measurement=measurement,
+            reaction=object(),
+            ExIAS=4.5,
+            transform=log,
+            mask=mask,
+        )
+        self.assertIs(obs.transform, log)
+        np.testing.assert_allclose(obs.y, np.log(measurement.y))
+        np.testing.assert_array_equal(obs.mask, mask)
 
     @patch("rxmc.ias_pn_observation.set_up_solver")
     def test_unit_conversion_divides_offset_not_normalization(self, mock_set_up_solver):

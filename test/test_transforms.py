@@ -98,6 +98,16 @@ class TestPerObservationScaling(unittest.TestCase):
         with self.assertRaises(KeyError):
             t(a, 0.0, 0.0, context=Observation(np.array([1.0]), np.array([1.0])))
 
+    def test_masked_view_routes_to_root(self):
+        t = per_observation_scaling([self.o1, self.o2])
+        view = self.o2.masked(np.array([False]))
+        self.assertIs(view.identity, self.o2)
+        a = np.array([1.0])
+        np.testing.assert_allclose(t(a, 0.0, np.log(5.0), context=view), [5.0])
+        # registering a view and its root is still a duplicate
+        with self.assertRaises(ValueError):
+            per_observation_scaling([self.o2, view])
+
     def test_linear_and_custom_parameters(self):
         t = per_observation_scaling([self.o1], log=False)
         self.assertEqual(t.params[0].name, "rho_0")

@@ -451,6 +451,119 @@ class TestScaledModel(unittest.TestCase):
         )
 
 
+class TestMask(unittest.TestCase):
+    """Masks select the active rows; terms are authored over the full stack."""
+
+    def setUp(self):
+        self.pm = Polynomial(order=1)
+        self.mp = (0.5, 1.5)
+        self.obs1 = Observation(
+            np.array([1.0, 2.0, 3.0]),
+            np.array([2.1, 3.4, 5.2]),
+            y_stat_err=np.array([0.1, 0.2, 0.3]),
+        )
+        self.obs2 = Observation(
+            np.array([4.0, 5.0]),
+            np.array([6.7, 8.1]),
+            y_stat_err=np.array([0.2, 0.2]),
+        )
+
+    def test_point_mask_equals_hand_subset(self):
+        eta = Parameter("log eta")
+        masked = Constraint(
+            [self.obs1.masked([True, False, True]), self.obs2],
+            self.pm,
+            extra_terms=[normalization_term(parameter=eta)],
+        )
+        sub = Observation(
+            self.obs1.x[[0, 2]],
+            self.obs1.y[[0, 2]],
+            y_stat_err=self.obs1.y_stat_err[[0, 2]],
+        )
+        ref = Constraint(
+            [sub, self.obs2], self.pm, extra_terms=[normalization_term(parameter=eta)]
+        )
+        self.assertEqual(masked.n_data_pts, 4)
+        self.assertEqual(masked.n_data_pts_total, 5)
+        self.assertEqual(masked.covariance.N, 5)
+        self.assertAlmostEqual(
+            masked.log_likelihood(self.mp, (np.log(0.1),)),
+            ref.log_likelihood(self.mp, (np.log(0.1),)),
+        )
+        # block-diagonal path too
+        eps = Parameter("log eps")
+        masked = Constraint(
+            [self.obs1.masked([True, False, True]), self.obs2],
+            self.pm,
+            extra_terms=[noise_term(eps)],
+        )
+        ref = Constraint([sub, self.obs2], self.pm, extra_terms=[noise_term(eps)])
+        self.assertTrue(masked.covariance.block_diagonal)
+        self.assertAlmostEqual(
+            masked.log_likelihood(self.mp, (np.log(0.3),)),
+            ref.log_likelihood(self.mp, (np.log(0.3),)),
+        )
+
+    def test_observation_mask_drops_block(self):
+        c = Constraint([self.obs1, self.obs2], self.pm, mask=[True, False])
+        ref = Constraint([self.obs1], self.pm)
+        self.assertEqual(c.n_data_pts, 3)
+        self.assertAlmostEqual(c.log_likelihood(self.mp), ref.log_likelihood(self.mp))
+        c2 = Constraint([self.obs1, self.obs2], self.pm, mask=[1])
+        self.assertEqual(c2.n_data_pts, 2)
+        ev = Evidence([c2])
+        self.assertEqual(ev.n_dof, 2 - 2)
+
+    def test_complement_partitions(self):
+        c = Constraint(
+            [self.obs1.masked_where(lambda x: x < 2.5), self.obs2],
+            self.pm,
+            mask=[True, False],
+        )
+        h = c.complement()
+        self.assertEqual(c.n_data_pts, 2)
+        self.assertEqual(h.n_data_pts, 3)  # obs1's third point + all of obs2
+        both = set(c.active) | set(h.active)
+        self.assertEqual(both, set(range(5)))
+        self.assertEqual(set(c.active) & set(h.active), set())
+        full = Constraint([self.obs1, self.obs2], self.pm)
+        self.assertAlmostEqual(
+            c.log_likelihood(self.mp) + h.log_likelihood(self.mp),
+            full.log_likelihood(self.mp),
+        )
+
+    def test_masked_shares_params(self):
+        eta = Parameter("log eta")
+        c = Constraint(
+            [self.obs1, self.obs2],
+            self.pm,
+            extra_terms=[normalization_term(parameter=eta)],
+        )
+        h = c.masked(point_masks=[[False, True, False], None])
+        self.assertEqual(h.params, c.params)
+        self.assertEqual(h.n_data_pts, 3)
+
+    def test_predict_and_covariance_active(self):
+        c = Constraint([self.obs1.masked([True, False, True]), self.obs2], self.pm)
+        ym, S = c.predict_and_covariance(self.mp)
+        self.assertEqual(ym.shape, (4,))
+        self.assertEqual(S.shape, (4, 4))
+        full = c.covariance_matrix(self.mp, active_only=False)
+        self.assertEqual(full.shape, (5, 5))
+        np.testing.assert_allclose(
+            c.y, np.concatenate([self.obs1.y[[0, 2]], self.obs2.y])
+        )
+        preds = c.predict(*self.mp)
+        self.assertEqual(len(preds[0]), 3)  # all points, per observation
+
+    def test_coverage_uses_active_points(self):
+        c = Constraint([self.obs1.masked([True, False, True]), self.obs2], self.pm)
+        lo = [o.y - 1.0 for o in c.observations]
+        hi = [o.y + 1.0 for o in c.observations]
+        self.assertEqual(c.empirical_coverage(lo, hi), 1.0)
+        self.assertEqual(c.num_pts_within_interval(lo, hi), 4)
+
+
 class TestComparisonSpaceTransform(unittest.TestCase):
     def setUp(self):
 

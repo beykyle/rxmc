@@ -20,10 +20,20 @@ into fixed-magnitude rank-one terms, but only when the caller asks: pass its
 result via ``Constraint(extra_terms=...)``.
 """
 
+import copy
+
 import numpy as np
 
 from .covariance import offset_term, statistical_term, systematic_term
 from .transforms import as_transform
+
+
+def _as_point_mask(mask, n) -> np.ndarray:
+    """Coerce a point mask to a boolean array of shape ``(n,)``."""
+    mask = np.asarray(mask, dtype=bool)
+    if mask.shape != (n,):
+        raise ValueError(f"mask must have shape ({n},), got {mask.shape}")
+    return mask
 
 
 def _store_error_spec(value, n, name):
@@ -66,6 +76,11 @@ class Observation:
         :class:`~rxmc.constraint.Constraint` applies the same transform to the
         model prediction — so ``transform=rxmc.transforms.log`` compares in log
         space with the model written once, in physical space.
+    mask : array_like of bool, optional
+        Which points are *active* in a likelihood (default all).  Inactive
+        points stay in the block (supports/terms are authored over all points)
+        but are excluded from the residual; use :meth:`masked` /
+        :meth:`masked_where` to derive fit/held-out views.
 
     Attributes
     ----------
@@ -77,6 +92,13 @@ class Observation:
         Statistical error on ``y`` in comparison space (raw, not squared).
     transform : Transform
         The comparison-space transform (identity by default).
+    mask : np.ndarray of bool
+        Active points.
+    identity : Observation
+        The root observation this one is a view of.  Views made by
+        :meth:`masked` share it, so anything routing by observation (e.g.
+        :func:`rxmc.transforms.per_observation_scaling`) treats a masked view
+        and its root as the same dataset.
     y_sys_err_normalization : float or np.ndarray or None
         Fractional normalisation uncertainty (dimensionless).
     y_sys_err_offset : float or np.ndarray or None
@@ -96,8 +118,10 @@ class Observation:
         y_sys_err_offset=None,
         label=None,
         transform=None,
+        mask=None,
     ):
         self.label = label
+        self.identity = self
         self.x = np.asarray(x)
         y_raw = np.asarray(y, dtype=float)
         if self.x.shape != y_raw.shape:
@@ -122,6 +146,11 @@ class Observation:
             )
         self.y_raw = y_raw
         self.y_stat_err_raw = y_stat_err
+        self.mask = (
+            np.ones(self.n_data_pts, dtype=bool)
+            if mask is None
+            else _as_point_mask(mask, self.n_data_pts)
+        )
         if self.transform.is_identity:
             self.y = y_raw
             self.y_stat_err = y_stat_err
@@ -132,13 +161,13 @@ class Observation:
             self._abs_jacobian = np.abs(self.transform.derivative(y_raw))
             self.y = self.transform(y_raw)
             self.y_stat_err = self._abs_jacobian * y_stat_err
-            bad = ~(np.isfinite(self.y) & np.isfinite(self.y_stat_err))
+            bad = self.mask & ~(np.isfinite(self.y) & np.isfinite(self.y_stat_err))
             if np.any(bad):
                 raise ValueError(
                     f"transform {self.transform.name!r} is not finite at "
-                    f"{int(bad.sum())} data point(s) of dataset "
+                    f"{int(bad.sum())} active data point(s) of dataset "
                     f"{label or 'observation'!r} (e.g. non-positive y under a "
-                    "log transform); drop those points"
+                    "log transform); mask or drop those points"
                 )
 
         self.y_sys_err_normalization = _store_error_spec(
@@ -149,12 +178,37 @@ class Observation:
         )
 
     # ------------------------------------------------------------------
+    # Masks (active points)
+    # ------------------------------------------------------------------
+
+    @property
+    def n_active(self) -> int:
+        """Number of active (unmasked) points."""
+        return int(self.mask.sum())
+
+    def masked(self, mask, label=None):
+        """A shallow copy of this observation with a new point mask.
+
+        No data or pre-computed workspaces are rebuilt: the copy shares them and
+        only changes which points enter a likelihood.
+        """
+        new = copy.copy(self)
+        new.mask = _as_point_mask(mask, self.n_data_pts)
+        if label is not None:
+            new.label = label
+        return new
+
+    def masked_where(self, predicate, label=None):
+        """:meth:`masked` with ``mask = predicate(x)`` (points where it is True)."""
+        return self.masked(np.asarray(predicate(self.x), dtype=bool), label=label)
+
+    # ------------------------------------------------------------------
     # Comparison-space bookkeeping
     # ------------------------------------------------------------------
 
     @property
     def log_jacobian(self) -> float:
-        r"""``sum(log |t'(y_raw)|)`` over all points.
+        r"""``sum(log |t'(y_raw)|)`` over the active points.
 
         The log-Jacobian of the comparison-space transform: a constant in the
         parameters, needed only to compare marginal likelihoods (log Z) across
@@ -163,7 +217,7 @@ class Observation:
         """
         if self.transform.is_identity:
             return 0.0
-        return float(np.sum(np.log(self._abs_jacobian)))
+        return float(np.sum(np.log(self._abs_jacobian[self.mask])))
 
     def _raw_prediction(self, ym):
         """Invert the comparison-space transform on a prediction."""
@@ -252,10 +306,10 @@ class Observation:
         yhigh: np.ndarray,
         xlim=None,
     ):
-        """Number of points of ``y`` that fall within ``[ylow, yhigh)``.
+        """Number of active points of ``y`` that fall within ``[ylow, yhigh)``.
 
         Useful for empirical-coverage diagnostics.  ``ylow``/``yhigh`` are in
-        comparison space.
+        comparison space and indexed over *all* points of the block.
 
         Parameters
         ----------
@@ -264,10 +318,10 @@ class Observation:
         xlim : tuple, optional
             ``(x_min, x_max)`` range to restrict the count.
         """
-        mask = np.ones_like(self.y, dtype=bool)
+        mask = self.mask.copy()
         if xlim is not None:
             xlow, xhigh = xlim
-            mask = np.logical_and(self.x >= xlow, self.x < xhigh)
+            mask &= np.logical_and(self.x >= xlow, self.x < xhigh)
         return int(
             np.sum(
                 np.logical_and(

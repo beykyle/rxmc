@@ -368,12 +368,17 @@ class ConstraintCovariance:
         (``couples_offdiagonal == False``) is classified block-diagonal; any
         coupling-capable term conservatively forces the dense path — there is no
         guessing of block structure from support shape.
+    active : array_like of int, optional
+        Indices of the *active* (unmasked) rows of the stack.  The full
+        ``N x N`` matrix is always assembled (terms are authored in the full
+        space); factorisation and the Mahalanobis distance are restricted to
+        ``active``.  ``None`` means all rows.
 
     ``terms`` and ``blocks`` are treated as immutable after construction:
     :attr:`block_diagonal` and :attr:`is_constant` are decided once, here.
     """
 
-    def __init__(self, terms, N, blocks=None):
+    def __init__(self, terms, N, blocks=None, active=None):
         self.terms = list(terms)
         self.N = int(N)
         for t in self.terms:
@@ -383,6 +388,16 @@ class ConstraintCovariance:
         self._blocks = (
             None if blocks is None else [np.asarray(b, dtype=int) for b in blocks]
         )
+        if active is None:
+            self.active = None
+        else:
+            active = np.asarray(active, dtype=int)
+            self.active = None if active.size == self.N else active
+        self.n_active = self.N if self.active is None else int(self.active.size)
+        if self._blocks is not None and self.active is not None:
+            self._active_blocks = [b[np.isin(b, self.active)] for b in self._blocks]
+        else:
+            self._active_blocks = self._blocks
 
         params, index_of = [], {}
         for t in self.terms:
@@ -423,14 +438,14 @@ class ConstraintCovariance:
     @property
     def uses_block_path(self) -> bool:
         """Whether :meth:`stacked_distance` factors block by block
-        (:meth:`block_cholesky`) rather than the whole stack
+        (:meth:`block_cholesky`) rather than the whole active stack
         (:meth:`cholesky`)."""
         return (
             self.block_diagonal and self._blocks is not None and len(self._blocks) > 1
         )
 
     def matrix(self, ctx, *theta) -> np.ndarray:
-        """Assemble the stacked covariance matrix.
+        """Assemble the full stacked covariance matrix (all ``N`` rows).
 
         Parameters
         ----------
@@ -456,8 +471,15 @@ class ConstraintCovariance:
             self._const_cache = Sigma
         return Sigma
 
+    def active_matrix(self, ctx, *theta) -> np.ndarray:
+        """The covariance restricted to the active rows/columns."""
+        Sigma = self.matrix(ctx, *theta)
+        if self.active is None:
+            return Sigma
+        return Sigma[np.ix_(self.active, self.active)]
+
     def cholesky(self, ctx, *theta):
-        """Lower Cholesky factor and log-determinant of the full stacked covariance.
+        """Lower Cholesky factor and log-determinant of the active stacked covariance.
 
         Cached when :attr:`is_constant`, so a fixed covariance is factored once.
 
@@ -469,7 +491,7 @@ class ConstraintCovariance:
         """
         if self.is_constant and self._chol_cache is not None:
             return self._chol_cache
-        L, logdet = chol_logdet(self.matrix(ctx, *theta))
+        L, logdet = chol_logdet(self.active_matrix(ctx, *theta))
         result = (L, logdet)
         if self.is_constant:
             L.setflags(write=False)
@@ -481,7 +503,8 @@ class ConstraintCovariance:
 
         Only meaningful when :attr:`block_diagonal`; cached when
         :attr:`is_constant` so a constant block-diagonal covariance is factored
-        once instead of on every likelihood evaluation.
+        once instead of on every likelihood evaluation.  Blocks are restricted to
+        the active rows; a fully-masked block yields ``(empty, 0.0)``.
 
         Returns
         -------
@@ -494,7 +517,10 @@ class ConstraintCovariance:
             return self._block_chol_cache
         Sigma = self.matrix(ctx, *theta)
         factors = []
-        for ix in self._blocks:
+        for ix in self._active_blocks:
+            if ix.size == 0:
+                factors.append((np.zeros((0, 0)), 0.0))
+                continue
             L, logdet = chol_logdet(Sigma[np.ix_(ix, ix)])
             L.setflags(write=False)
             factors.append((L, logdet))
@@ -504,7 +530,7 @@ class ConstraintCovariance:
         return factors
 
     def stacked_distance(self, ctx, params=()):
-        r"""Squared Mahalanobis distance and log-determinant over the stacked residual.
+        r"""Squared Mahalanobis distance and log-determinant over the active residual.
 
         Owns the dispatch between the block-diagonal fast path (factor each
         block separately, :math:`O(\sum n_i^3)`, cached per block via
@@ -522,13 +548,17 @@ class ConstraintCovariance:
             factors = self.block_cholesky(ctx, *params)
             d2 = 0.0
             logdet = 0.0
-            for ix, (L, ld) in zip(self._blocks, factors):
+            for ix, (L, ld) in zip(self._active_blocks, factors):
+                if ix.size == 0:
+                    continue
                 z = sc.linalg.solve_triangular(L, r[ix], lower=True)
                 d2 += float(np.dot(z, z))
                 logdet += ld
             return d2, logdet
 
         L, logdet = self.cholesky(ctx, *params)
+        if self.active is not None:
+            r = r[self.active]
         z = sc.linalg.solve_triangular(L, r, lower=True)
         return float(np.dot(z, z)), logdet
 

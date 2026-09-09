@@ -322,6 +322,53 @@ class TestProperties:
         assert np.allclose(d_d, d_b)
 
 
+class TestActive:
+    def setup_method(self):
+        self.x = np.arange(6.0)
+        self.y = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+        self.ym = self.y + 0.1 * np.array([1, -1, 1, -1, 1, -1])
+        self.blocks = [np.arange(3), np.arange(3, 6)]
+        self.ctx = make_ctx(self.x, self.y, self.ym, self.blocks)
+        self.eta = Parameter("log eta")
+        self.terms = [
+            statistical_term(0.3 * np.ones(6)),
+            normalization_term(parameter=self.eta),  # whole stack -> dense
+        ]
+        self.active = np.array([0, 2, 3, 5])
+
+    def _reference(self, cov, active):
+        """Dense (d2, logdet) on the active subset of ``cov``'s full matrix."""
+        S = cov.matrix(self.ctx, np.log(0.2))[np.ix_(active, active)]
+        return mahalanobis_distance_sqr_cholesky(self.y[active], self.ym[active], S)
+
+    def test_dense_path_restricts_to_active(self):
+        cov = ConstraintCovariance(self.terms, 6, active=self.active)
+        assert cov.n_active == 4
+        d2, ld = cov.stacked_distance(self.ctx, (np.log(0.2),))
+        assert np.allclose((d2, ld), self._reference(cov, self.active))
+        assert cov.active_matrix(self.ctx, np.log(0.2)).shape == (4, 4)
+        assert cov.matrix(self.ctx, np.log(0.2)).shape == (6, 6)
+
+    def test_block_path_restricts_to_active(self):
+        terms = [statistical_term(0.3 * np.ones(6)), noise_term(Parameter("e"))]
+        cov = ConstraintCovariance(terms, 6, blocks=self.blocks, active=self.active)
+        assert cov.block_diagonal and cov.uses_block_path
+        d2, ld = cov.stacked_distance(self.ctx, (np.log(0.2),))
+        assert np.allclose((d2, ld), self._reference(cov, self.active))
+
+    def test_fully_masked_block_skipped(self):
+        terms = [statistical_term(0.3 * np.ones(6))]
+        active = np.arange(3)
+        cov = ConstraintCovariance(terms, 6, blocks=self.blocks, active=active)
+        d2, ld = cov.stacked_distance(self.ctx)
+        r = (self.y - self.ym)[:3]
+        assert np.allclose((d2, ld), (r @ r / 0.09, 3 * np.log(0.09)))
+
+    def test_all_active_is_none(self):
+        cov = ConstraintCovariance(self.terms, 6, active=np.arange(6))
+        assert cov.active is None
+
+
 # ----------------------------------------------------------------------------
 # Factories
 # ----------------------------------------------------------------------------

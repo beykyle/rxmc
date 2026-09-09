@@ -170,6 +170,20 @@ class TestObservationTransform(unittest.TestCase):
         self.y = np.array([2.0, 4.0, 8.0])
         self.err = np.array([0.2, 0.4, 0.8])
 
+    def test_nonpositive_data_under_log_raises(self):
+        y = np.array([2.0, 0.0, -1.0])
+        with self.assertRaises(ValueError) as cm:
+            Observation(self.x, y, y_stat_err=self.err, transform=log, label="bad")
+        msg = str(cm.exception)
+        self.assertIn("'log'", msg)
+        self.assertIn("'bad'", msg)
+        self.assertIn("2 active data point(s)", msg)
+        # inactive points may be non-positive: the guard is active-point scoped
+        obs = Observation(
+            self.x, y, y_stat_err=self.err, transform=log, mask=[True, False, False]
+        )
+        self.assertEqual(obs.n_active, 1)
+
     def test_raw_kept_and_y_transformed(self):
         obs = Observation(self.x, self.y, y_stat_err=self.err, transform=log)
         np.testing.assert_allclose(obs.y_raw, self.y)
@@ -188,6 +202,9 @@ class TestObservationTransform(unittest.TestCase):
     def test_log_jacobian(self):
         obs = Observation(self.x, self.y, transform=log)
         self.assertAlmostEqual(obs.log_jacobian, -np.sum(np.log(self.y)))
+        # respects the mask
+        obs2 = obs.masked([True, False, True])
+        self.assertAlmostEqual(obs2.log_jacobian, -np.log(2.0) - np.log(8.0))
 
     def test_parametric_transform_rejected(self):
         from rxmc.transforms import scale
@@ -217,6 +234,42 @@ class TestObservationTransform(unittest.TestCase):
         # fractional normalisation in log space is a constant offset eta
         eta = 0.1 * ym_raw * (1.0 / ym_raw)
         np.testing.assert_allclose(S, np.outer(omega, omega) + np.outer(eta, eta))
+
+
+class TestObservationMask(unittest.TestCase):
+    def setUp(self):
+        self.x = np.array([1.0, 2.0, 3.0, 4.0])
+        self.y = np.array([1.0, 2.0, 3.0, 4.0])
+
+    def test_default_all_active(self):
+        obs = Observation(self.x, self.y)
+        self.assertEqual(obs.n_active, 4)
+        self.assertTrue(obs.mask.all())
+
+    def test_masked_is_shallow_copy(self):
+        obs = Observation(self.x, self.y, label="a")
+        m = obs.masked([True, True, False, False], label="a-fwd")
+        self.assertEqual(m.n_active, 2)
+        self.assertEqual(m.n_data_pts, 4)
+        self.assertEqual(m.label, "a-fwd")
+        self.assertIs(m.y, obs.y)
+        self.assertEqual(obs.n_active, 4)  # original untouched
+
+    def test_masked_where(self):
+        obs = Observation(self.x, self.y)
+        m = obs.masked_where(lambda x: x < 2.5)
+        np.testing.assert_array_equal(m.mask, [True, True, False, False])
+
+    def test_bad_mask_shape_raises(self):
+        with self.assertRaises(ValueError):
+            Observation(self.x, self.y, mask=[True, False])
+        with self.assertRaises(ValueError):
+            Observation(self.x, self.y).masked([True])
+
+    def test_num_pts_within_interval_respects_mask(self):
+        obs = Observation(self.x, self.y, mask=[True, False, True, False])
+        n = obs.num_pts_within_interval(self.y - 0.1, self.y + 0.1)
+        self.assertEqual(n, 2)
 
 
 if __name__ == "__main__":
