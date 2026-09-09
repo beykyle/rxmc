@@ -50,15 +50,15 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
         Parameters
         ----------
         U_p_coulomb : callable
-            ``f(r, args) -> complex`` — proton Coulomb potential.
+            ``f(r, *args) -> np.ndarray`` (on the radial grid ``r``) — proton Coulomb potential.
         U_p_central : callable
-            ``f(r, args) -> complex`` — proton central potential.
+            ``f(r, *args) -> np.ndarray`` (on the radial grid ``r``) — proton central potential.
         U_p_spin_orbit : callable
-            ``f(r, args) -> complex`` — proton spin-orbit potential.
+            ``f(r, *args) -> np.ndarray`` (on the radial grid ``r``) — proton spin-orbit potential.
         U_n_central : callable
-            ``f(r, args) -> complex`` — neutron central potential.
+            ``f(r, *args) -> np.ndarray`` (on the radial grid ``r``) — neutron central potential.
         U_n_spin_orbit : callable
-            ``f(r, args) -> complex`` — neutron spin-orbit potential.
+            ``f(r, *args) -> np.ndarray`` (on the radial grid ``r``) — neutron spin-orbit potential.
         calculate_params : callable
             ``f(workspace, *params) -> (args_p_coulomb, args_p_central,
             args_p_spin_orbit, args_n_central, args_n_spin_orbit)``
@@ -78,6 +78,27 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
         self.calculate_params = calculate_params
 
         super().__init__(params)
+
+    def _xs(self, ws, params) -> np.ndarray:
+        """Evaluate the five potentials on ``ws.radial_grid()`` and solve (b/sr)."""
+        (
+            args_p_coulomb,
+            args_p_central,
+            args_p_spin_orbit,
+            args_n_central,
+            args_n_spin_orbit,
+        ) = self.calculate_params(ws, *params)
+        r = ws.radial_grid()
+        return (
+            ws.xs(
+                self.U_p_coulomb(r, *args_p_coulomb),
+                self.U_p_central(r, *args_p_central),
+                self.U_p_spin_orbit(r, *args_p_spin_orbit),
+                self.U_n_central(r, *args_n_central),
+                self.U_n_spin_orbit(r, *args_n_spin_orbit),
+            )
+            / 1000
+        )
 
     def evaluate(
         self,
@@ -100,30 +121,7 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
             Predicted (p,n) IAS differential cross section in b/sr on
             ``observation.constraint_workspace.angles``.
         """
-        ws = observation.constraint_workspace
-        (
-            args_p_coulomb,
-            args_p_central,
-            args_p_spin_orbit,
-            args_n_central,
-            args_n_spin_orbit,
-        ) = self.calculate_params(ws, *params)
-        xs = (
-            ws.xs(
-                self.U_p_coulomb,
-                self.U_p_central,
-                self.U_p_spin_orbit,
-                self.U_n_central,
-                self.U_n_spin_orbit,
-                args_p_coulomb=args_p_coulomb,
-                args_p_central=args_p_central,
-                args_p_spin_orbit=args_p_spin_orbit,
-                args_n_central=args_n_central,
-                args_n_spin_orbit=args_n_spin_orbit,
-            )
-            / 1000
-        )
-        return xs
+        return self._xs(observation.constraint_workspace, params)
 
     def visualizable_model_prediction(
         self,
@@ -146,27 +144,4 @@ class IsobaricAnalogPNXSModel(PhysicalModel):
             Predicted (p,n) IAS differential cross section in b/sr on
             ``observation.visualization_workspace.angles``.
         """
-        ws = observation.visualization_workspace
-        (
-            args_p_coulomb,
-            args_p_central,
-            args_p_spin_orbit,
-            args_n_central,
-            args_n_spin_orbit,
-        ) = self.calculate_params(ws, *params)
-        xs = (
-            ws.xs(
-                self.U_p_coulomb,
-                self.U_p_central,
-                self.U_p_spin_orbit,
-                self.U_n_central,
-                self.U_n_spin_orbit,
-                args_p_coulomb=args_p_coulomb,
-                args_p_central=args_p_central,
-                args_p_spin_orbit=args_p_spin_orbit,
-                args_n_central=args_n_central,
-                args_n_spin_orbit=args_n_spin_orbit,
-            )
-            / 1000
-        )
-        return xs
+        return self._xs(observation.visualization_workspace, params)
