@@ -5,6 +5,7 @@ for the design and ``docs/recipes.md`` for the supported use cases.
 """
 
 from . import constraint as constraint
+from . import covariance as covariance
 from . import data as data
 from . import likelihood as likelihood
 from . import model as model
@@ -32,6 +33,7 @@ __all__ = [
     "Parameter",
     "polynomial",
     "constraint",
+    "covariance",
     "data",
     "likelihood",
     "model",
