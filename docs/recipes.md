@@ -701,7 +701,8 @@ errors and scaled with the average of datum and prediction.*
 ```python
 delta = {t: rx.Parameter(f"delta_{t}", prior=stats.halfnorm(scale=s0[t])) for t in ("dxs", "ay", "sig_tot")}
 comps = [rx.Comparison(d, omp_for(d)) for d in datasets]
-terms = [T.model_error(delta[d.meta["type"]], averaging=True, on=comp) for d, comp in zip(datasets, comps)]
+terms = [T.model_error(delta[d.meta["type"]], averaging=True, log=False, on=comp)
+         for d, comp in zip(datasets, comps)]   # log=False: delta is the fraction itself
 c = rx.Constraint(comps, terms=terms)          # statistical=True: reported errors are a floor
 
 # KDUQ additionally scales the whole log-likelihood by k/N ("democratic"), or
@@ -755,10 +756,13 @@ c_t0 = rx.Constraint([comp], terms=[rx.Term(d.norm_err * comp.space(t0), kind="m
 Expected behaviour:
 
 - With the data-built mode, a fit of a constant to `n` points with fractional
-  normalisation error `s` is biased low by the factor `1 / (1 + n s²)`,
-  growing without bound in `n`.  This is D'Agostini's bias and the origin of
-  Peelle's Pertinent Puzzle.  With the prediction-built mode the estimate is
-  unbiased; an additive offset mode has no such bias either way.
+  normalisation error `s` is biased low, by an amount that grows with `n`
+  and hardly depends on the statistical error (two points at 1.5 and 1.0
+  with `s = 0.2` fit *below both*).  This is D'Agostini's bias and the
+  origin of Peelle's Pertinent Puzzle.  The prediction-built mode removes
+  that bias; what remains is a smaller pull from the log-determinant, which
+  grows with the fitted value, and the `t0` refit removes that too.  An
+  additive offset mode has no such bias either way.
 - `normalization()` reads `c.ym`, so the default spelling is the safe one.
   A free `log_eta` (recipe 4) also multiplies the prediction.
 - The `t0` mode makes the covariance constant, so it is factored once;
