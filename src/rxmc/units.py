@@ -1,40 +1,91 @@
 """
-The one unit registry and the unit contract.
+The unit contract, without a unit library.
 
-``pint`` refuses to combine quantities from different registries, so every
-module that touches units imports :data:`ureg` from here.  The contract:
-cross sections are stored internally in b/sr (:data:`XS_UNIT`); ``jitr``
+Cross sections are stored internally in b/sr (:data:`XS_UNIT`); ``jitr``
 reports cross sections and the Rutherford cross section in mb/sr
 (:data:`RUTHERFORD_UNIT`), so model outputs are divided by :data:`MB_PER_B`.
 Angles are stored in radians.
+
+Measurement unit labels come from a small fixed vocabulary: ``x4i3`` converts
+every EXFOR cross section to barns while parsing and ``exfor_tools`` labels the
+result ``"barns/ster"``, ``"b"`` or ``"unitless"``.  :func:`parse_unit` maps
+that vocabulary (plus the obvious spellings) to a factor into the internal
+unit and a quantity kind, and rejects anything else loudly.
 """
 
+from __future__ import annotations
+
 import numpy as np
-from pint import UnitRegistry
 
 __all__ = [
-    "ureg",
     "DEFAULT_LMAX",
     "XS_UNIT",
     "RUTHERFORD_UNIT",
     "MB_PER_B",
+    "parse_unit",
     "check_angle_grid",
 ]
-
-#: The one unit registry for the package.
-ureg = UnitRegistry()
 
 #: Default maximum partial wave for the reaction solvers.
 DEFAULT_LMAX = 20
 
 #: Internal cross-section unit: every ``y`` in b/sr.
-XS_UNIT = ureg.barn / ureg.steradian
+XS_UNIT = "b/sr"
 
 #: Unit ``jitr`` reports cross sections (and the Rutherford cross section) in.
-RUTHERFORD_UNIT = ureg.millibarn / ureg.steradian
+RUTHERFORD_UNIT = "mb/sr"
 
 #: Millibarn per barn; divides ``jitr`` output to land in :data:`XS_UNIT`.
-MB_PER_B = float((1 * ureg.barn).to(ureg.millibarn).magnitude)
+MB_PER_B = 1000.0
+
+# label (lower case, no spaces) -> (factor into the internal unit, kind)
+_UNITS = {
+    # differential cross sections, internal unit b/sr
+    "barns/ster": (1.0, "differential"),
+    "barn/steradian": (1.0, "differential"),
+    "b/sr": (1.0, "differential"),
+    "millibarn/steradian": (1e-3, "differential"),
+    "mb/sr": (1e-3, "differential"),
+    "microbarn/steradian": (1e-6, "differential"),
+    "micro-b/sr": (1e-6, "differential"),
+    "ub/sr": (1e-6, "differential"),
+    # integral cross sections, internal unit b
+    "barns": (1.0, "integral"),
+    "barn": (1.0, "integral"),
+    "b": (1.0, "integral"),
+    "millibarn": (1e-3, "integral"),
+    "mb": (1e-3, "integral"),
+    "microbarn": (1e-6, "integral"),
+    "micro-b": (1e-6, "integral"),
+    "ub": (1e-6, "integral"),
+    # ratios and analysing powers
+    "no-dim": (1.0, "dimensionless"),
+    "unitless": (1.0, "dimensionless"),
+    "dimensionless": (1.0, "dimensionless"),
+    "": (1.0, "dimensionless"),
+}
+
+
+def parse_unit(label: str) -> tuple[float, str]:
+    """``(factor, kind)`` for a measurement unit label.
+
+    ``factor`` multiplies a value in ``label`` to give the internal unit of its
+    ``kind``: b/sr for ``"differential"``, b for ``"integral"``, and 1 for
+    ``"dimensionless"``.  Matching ignores case and spaces.
+
+    Raises
+    ------
+    ValueError
+        For a label outside the vocabulary, listing what is accepted.
+    """
+    key = "".join(str(label).split()).lower()
+    try:
+        return _UNITS[key]
+    except KeyError:
+        raise ValueError(
+            f"unknown unit label {label!r}; accepted labels are "
+            f"{sorted(k for k in _UNITS if k)}"
+        ) from None
 
 
 def check_angle_grid(angles_rad: np.ndarray, name: str) -> None:

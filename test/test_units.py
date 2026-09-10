@@ -1,4 +1,4 @@
-"""The unit contract: one registry, consistent constants."""
+"""The unit contract: a fixed vocabulary of labels, consistent constants."""
 
 import numpy as np
 import pytest
@@ -9,21 +9,44 @@ from rxmc.units import (
     RUTHERFORD_UNIT,
     XS_UNIT,
     check_angle_grid,
-    ureg,
+    parse_unit,
 )
 
 
 def test_unit_constants_agree():
     assert MB_PER_B == 1000.0
-    assert (1 * RUTHERFORD_UNIT).to(XS_UNIT).magnitude == pytest.approx(1e-3)
-    assert (1 * XS_UNIT).to(RUTHERFORD_UNIT).magnitude == pytest.approx(MB_PER_B)
+    assert parse_unit(RUTHERFORD_UNIT)[0] == pytest.approx(1.0 / MB_PER_B)
+    assert parse_unit(XS_UNIT) == (1.0, "differential")
     assert DEFAULT_LMAX == 20
 
 
-def test_registry_is_shared():
-    # quantities built from the constants combine without a registry error
-    q = (2 * ureg.millibarn / ureg.steradian) + 1 * XS_UNIT
-    assert q.to(XS_UNIT).magnitude == pytest.approx(1.002)
+@pytest.mark.parametrize(
+    "label, factor, kind",
+    [
+        ("barns/ster", 1.0, "differential"),  # what exfor_tools emits
+        ("b/Sr", 1.0, "differential"),
+        ("MB/SR", 1e-3, "differential"),  # raw EXFOR spelling
+        ("barn / steradian", 1.0, "differential"),
+        ("millibarn / steradian", 1e-3, "differential"),
+        ("MICRO-B/SR", 1e-6, "differential"),
+        ("barns", 1.0, "integral"),
+        ("mb", 1e-3, "integral"),
+        ("no-dim", 1.0, "dimensionless"),
+        ("unitless", 1.0, "dimensionless"),
+        ("NO-DIM", 1.0, "dimensionless"),
+    ],
+)
+def test_parse_unit_vocabulary(label, factor, kind):
+    f, k = parse_unit(label)
+    assert f == pytest.approx(factor)
+    assert k == kind
+
+
+def test_parse_unit_rejects_unknown_label():
+    with pytest.raises(ValueError, match="unknown unit label 'fm\\^2'"):
+        parse_unit("fm^2")
+    with pytest.raises(ValueError, match="accepted labels"):
+        parse_unit("MeV")
 
 
 def test_check_angle_grid():

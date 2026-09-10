@@ -132,10 +132,14 @@ composed onto a `Model`, and the coordinates a `Term` is evaluated in.
 ### 2.3 `units.py` and `data.py`
 
 ```python
-# units.py — the one pint registry and the unit contract
-ureg = UnitRegistry()
-XS_UNIT = ureg.barn / ureg.steradian          # every cross section stored in b/sr
-RUTHERFORD_UNIT = ureg.millibarn / ureg.steradian   # what jitr reports
+# units.py — the unit contract, without a unit library
+XS_UNIT = "b/sr"                              # every cross section stored in b/sr
+RUTHERFORD_UNIT = "mb/sr"                     # what jitr reports
+MB_PER_B = 1000.0
+def parse_unit(label) -> tuple[float, str]    # (factor into the internal unit, kind)
+# x4i3 converts every EXFOR cross section to barns while parsing and exfor_tools
+# labels the result "barns/ster", "b" or "unitless"; parse_unit maps that fixed
+# vocabulary (plus the obvious spellings) and rejects anything else loudly.
 MB_PER_B = 1000.0
 DEFAULT_LMAX = 20
 def check_angle_grid(angles_rad, name) -> None
@@ -162,7 +166,7 @@ workspace, no identity key.
 `from_measurement` is the single EXFOR adapter.  It reads the
 `exfor_tools.Distribution` fields (`x, y, Einc, quantity, y_units,
 statistical_err, systematic_norm_err, systematic_offset_err, subentry`),
-converts units once through `ureg`, divides every dimensionful error by the
+converts units once through `parse_unit`, divides every dimensionful error by the
 conversion factor `norm`, passes the fractional normalisation error through
 untouched, converts angles to radians, and fills `meta` with `reaction`,
 `Elab`, `quantity`, `k` (and `ExIAS` for the (p,n) channel).  The
@@ -757,7 +761,7 @@ What comes across from `src/rxmc` on `api_generalisation`, by file.
 | `transforms.py` | `Transform` (minus `contextual`, `_unpack`), `as_transform`, `identity`, `log`, `exp`, `_safe_log`, `_reciprocal`, `scale` | `transforms.py` |
 | `likelihood_model.py` | `Likelihood`, `GaussianLikelihood`→`Gaussian`, `StudentT`, `Chi2`, `log_likelihood` | `likelihood.py` |
 | `covariance.py` | `TermContext`, `chol_logdet`, `as_2d`, bases `ones`, `ym`, `averaging`, `x_basis`, `exp_growth`, `constant_amplitude`, `exp_growth_amplitude`; helpers `_masked`, `_full`, `_coefficient`, `_scaled_term`, `_kernel_params`; factories `statistical_term`, `offset_term`, `normalization_term`, `noise_term`, `noise_fraction_term`, `model_error_term`, `systematic_term`, `kernel_term` (drop the `_term` suffix, `support=`→`on=`) | `terms.py` |
-| `observation_from_measurement.py` | `ureg`, `XS_UNIT`, `RUTHERFORD_UNIT`, `MB_PER_B`, `DEFAULT_LMAX`, `check_angle_grid`, `measurement_kwargs` | `units.py`, `data.py` |
+| `observation_from_measurement.py` | `XS_UNIT`, `RUTHERFORD_UNIT`, `MB_PER_B`, `DEFAULT_LMAX`, `check_angle_grid`, `measurement_kwargs`; the pint registry is replaced by a fixed label table | `units.py`, `data.py` |
 | `elastic_diffxs_observation.py` | `set_up_solver`, the `calculate_normalization` conversion table, `momentum_transfer` | `reactions/elastic.py`, `data.py` |
 | `ias_pn_observation.py` | `set_up_solver` | `reactions/ias.py` |
 | `elastic_diffxs_model.py` | `_xs` body, `extract_dXS_dA`, `extract_dXS_dRuth`, `extract_Ay` | `reactions/elastic.py` |
@@ -852,7 +856,7 @@ examples/        9 notebooks (§7)
 docs/            design.md rewritten from this document once the code lands
 ```
 
-Runtime dependencies: `numpy`, `scipy`, `pint`, `jitr>=3.0`,
+Runtime dependencies: `numpy`, `scipy`, `jitr>=3.0`,
 `exfor-tools`.  `pandas` and `scikit-learn` leave `requirements.txt`
 (neither is imported; kernels stay duck-typed and sklearn moves to the
 `examples` extra).  Extras: `examples` (emcee, dynesty, corner, matplotlib,
