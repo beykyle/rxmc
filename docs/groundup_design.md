@@ -1,536 +1,1105 @@
 # A ground-up rxmc: declare, then compile
 
-This document sketches what `rxmc` would look like if rewritten from scratch
-around one principle, compares it with the current `api_generalisation`
-design (`design.md`), and lays out an incremental path from one to the other.
-It is a design proposal, not a plan of record.
+This document guides a rewrite of `rxmc` from a blank repository.  It is the
+plan of record for that rewrite, not a comparison with the current code: the
+current `api_generalisation` branch stays where it is as the reference
+implementation, and `design.md` / `bugs_found.md` remain the record of how
+it was designed and what was found wrong with it.  `recipes.md` is the
+companion: one short user story per use case the rewrite must support,
+each with the spelling below and the behaviour a user should expect.
 
-The conclusion first: the *concepts* in `design.md` survive intact.  Evidence
-over independent constraints, constraint as the maximal correlated block, one
-`Term` with three kinds, likelihood as a functional of `(d2, logdet, n)`,
-comparison space owned by the data side, masks as part of support, and the
-case A / case B distinction are all things this design keeps.  What changes
-is the *mechanics*: how parameters are routed, how the covariance is
-represented, where solver state lives, and when validation happens.
+The *concepts* of `design.md` survive unchanged: evidence as a weighted sum
+over independent constraints; a constraint as the maximal block of mutually
+correlated data; one `Term` type with three kinds; the likelihood as a
+functional of `(d2, logdet, n)`; the comparison space owned by the data side;
+masks as part of support; and the case A (couple the data) / case B (share
+a parameter) distinction.  The *mechanics* are rebuilt around one rule:
 
-## 1. The principle
+> **Everything the user constructs is an immutable declaration.
+> `Problem` is the only compile step.**
 
-**Everything the user constructs is an immutable declaration.  One compile
-step turns the declaration into evaluators.**
+Three goals drive every choice below, in this order:
 
-Today the same objects do both jobs.  A `Term` is authored by the user and
-then binds its support, caches coordinate transforms, and refuses to be reused
-in a second constraint.  An `Observation` is "pure data" and also carries a
-jitr workspace, a comparison transform, a mask, and an identity key that
-`per_observation_scaling` routes on.  `Constraint.__init__` is the compile
-step for one constraint, `Evidence.__init__` re-validates across constraints,
-and `CalibrationConfig` / `Walker` each compile the flat parameter vector
-again.  Every lifecycle rule in the current docs ("one Term belongs to one
-constraint", "masked views share terms", "parameters are constraint-scoped",
-"the same Parameter object across constraints is an error") is a consequence
-of declaration and evaluation being fused.
+1. **The maintainer.**  The smallest implementation that covers every
+   capability the current notebooks and tests demonstrate, with no
+   lifecycle rules to remember.  Budget: about 2,300 lines of package code
+   in 14 modules, down from 6,199 in 23.
+2. **The user.**  Declaring a problem, including each statistical modelling
+   choice in it, reads as a statement of the model.  A reviewer should be
+   able to read the declaration and write down the likelihood.
+3. **External samplers only.**  emcee, dynesty and the `black-box-bayes`
+   CLI are the calibration drivers.  The in-package Gibbs walker and its
+   samplers are not carried over.
 
-Separating them gives:
+## 1. Rules for the maintainer
 
-- one place where parameters get slots, names get checked, supports get
-  resolved, constant pieces get factored, and singular covariances get
-  reported;
-- specs that are reusable, comparable, and serialisable because they hold no
-  caches;
-- a single flat parameter vector that both samplers, model comparison, and
-  plotting read from through one index instead of ten positional splits.
+These are the review checklist for every change in the new repository.
 
-## 2. Components
+1. **Specs hold no caches and no solver state.**  `Parameter`, `Dataset`,
+   `Model`, `Term`, `Comparison`, `Constraint` are frozen dataclasses with
+   `eq=False`: identity is the equality, for every spec, not only
+   `Parameter`.  (A generated `__eq__` would try to compare the arrays
+   they hold and raise.)  Anything expensive or grid-dependent lives in
+   the objects `Problem` builds.
+2. **Exactly one function walks the parameter graph:** `Problem.__init__`.
+   Nothing else assigns slots, checks names, resolves supports, or decides
+   which prior covers which slot.
+3. **Gather, never split.**  Every callable node receives one integer
+   gather array at compile time and is evaluated as `node(*theta[gather])`.
+   There is no `n_model_params`, no `indices[:-1]`, no `split_params`.
+4. **Every user-supplied callable has one shape:** `fn(context, *values)`,
+   where `context` is the grid `x` (models, transforms) or a `TermContext`
+   (terms, bases, amplitudes) and `values` are the sampled values of the
+   parameters the node declares, in declaration order.
+5. **Sharing is spelled by passing the same `Parameter` object.**  Inside a
+   term, between terms, between a model and a term, across constraints.
+   There is no second identity notion and no value-equality anywhere.
+6. **One factorisation path.**  `StructuredCovariance` is the only way a
+   covariance is factored.  The dense matrix exists as a display method
+   and as the reference in tests.
+7. **Fail at compile, and name the dataset.**  Singular constant
+   covariance, duplicate parameter names, a slot no prior covers, an `on=`
+   that references a block outside its constraint, a non-finite value in
+   comparison space: all raised by `Problem`, never mid-chain.
+8. **Nothing is folded into a covariance silently.**  A dataset's reported
+   systematics become terms only when the user asks
+   (`block.reported_terms()`).
+9. **A `Problem` pickles with `dill`.**  `black-box-bayes` ships it to every
+   MPI rank by path.  A round-trip test on a reaction problem is part of
+   the suite.
+10. **Correctness lives in tests that pin numbers**, not in defensive
+    branches: the closed-form Student-t, delta-method errors under `log`,
+    the regression log-likelihood `1.195784087817536`, dense-versus-
+    structured equality on every error-model form.  **Every recipe in
+    `recipes.md` is a test** under `test/recipes/`, one file per recipe
+    named `test_recipe_NN_<slug>.py`, whose docstring quotes the recipe's
+    intent and whose assertions are its *Expected behaviour* bullets.  A
+    CI check fails when a `## NN.` heading in `recipes.md` has no test
+    file, or a test file has no heading.
 
-The declarative layer, bottom up.
+## 2. The API skeleton
 
-### 2.1 `Parameter`
+Read top to bottom.  Module names are the package layout of §6.  Type hints
+are the documentation; the prose says only what the signature cannot.
+
+### 2.1 `params.py`
 
 ```python
 @dataclass(eq=False, frozen=True)
 class Parameter:
     name: str
     bounds: tuple[float, float] = (-inf, inf)
+    prior: object | None = None      # frozen scipy univariate: logpdf, cdf, ppf, rvs
     unit: str = ""
     latex: str | None = None
-    prior: Distribution | None = None   # optional 1-D marginal
 ```
 
-- Identity **is** the object.  `eq=False` keeps the default identity hash, so
-  parameters are hashable and can key dicts and sets.  This replaces the
-  current `__eq__`-without-`__hash__` and every `id(p)` table.
-- Sharing a parameter anywhere in the graph means passing the same object.
-  There is one rule and it holds across constraints too.  (Today: identity
-  inside a constraint, value-equality for model parameters across
-  constraints, and a hard error for covariance parameters across
-  constraints.)
-- A parameter may carry its own marginal prior.  Joint priors over several
-  parameters (e.g. a multivariate normal over the optical-potential set) are
-  attached at the `Problem` level (§2.8).
+`eq=False` keeps identity hashing: a parameter *is* its object, and it can
+key a dict.  A parameter may carry its own marginal prior.  The rules, enforced
+once at compile:
 
-### 2.2 `Dataset`
+| declared | prior used |
+|---|---|
+| `prior=dist` | `dist` truncated to `bounds` (log-density `-inf` outside; `ppf` rescaled between `cdf(lo)` and `cdf(hi)`) |
+| finite `bounds`, no `prior` | uniform on `bounds` |
+| neither | must be covered by a joint prior given to `Problem`, else a compile error naming the parameter |
 
-Pure data, nothing else.
+This replaces `IndependentPrior`, `TruncatedNormalPrior`, `as_prior` and the
+list-of-scipy-distributions form with no classes at all.
+
+### 2.2 `transforms.py`
+
+Harvested from the current module minus `per_observation_scaling` and the
+`contextual` flag.
 
 ```python
-@dataclass(frozen=True)
-class Dataset:
-    x: ndarray
-    y: ndarray
-    y_err: ndarray                  # statistical, physical units
-    meta: Mapping = field(default_factory=dict)
-    # meta holds: label, units, kinematics (reaction, Elab, ...),
-    # reported systematics (norm fraction, offset), provenance (subentry)
+class Transform:
+    fn: Callable                       # fn(a, *values) -> array
+    params: tuple[Parameter, ...]
+    derivative: Callable | None        # d fn / d a, elementwise; finite difference fallback
+    inverse: Transform | None          # parameter-free transforms only
+    def __call__(self, a, *values) -> ndarray
+    def __or__(self, other) -> Transform      # (f | g)(a) = g(f(a)); params f + g
+
+identity, log, exp                     # parameter-free singletons
+def scale(parameter=None, log=True) -> Transform   # rho * a; default Parameter("log_rho")
+def as_transform(t) -> Transform       # None -> identity; callable -> parameter-free Transform
 ```
 
-- No comparison transform, no mask, no solver workspace, no identity key.
-- `from_measurement` becomes a free function that reads an EXFOR-style
-  measurement, converts units once (one shared `UnitRegistry`), and returns a
-  `Dataset` with `meta` filled.  The current `ElasticDifferentialXSObservation`
-  and `IsobaricAnalogPNObservation` classes disappear; what they store beyond
-  data moves into `meta`, and the solver they build moves into `bind` (§2.3).
+One type, three roles: the comparison space of a `Comparison`, a mean transform
+composed onto a `Model`, and the coordinates a `Term` is evaluated in.
 
-### 2.3 `Model` and `Predictor`
+### 2.3 `units.py` and `data.py`
 
-A model is a spec of "how to compute observables from parameters".  A
-predictor is that model **bound to a grid**.
+```python
+# units.py — the one pint registry and the unit contract
+ureg = UnitRegistry()
+XS_UNIT = ureg.barn / ureg.steradian          # every cross section stored in b/sr
+RUTHERFORD_UNIT = ureg.millibarn / ureg.steradian   # what jitr reports
+MB_PER_B = 1000.0
+DEFAULT_LMAX = 20
+def check_angle_grid(angles_rad, name) -> None
+```
+
+```python
+# data.py
+@dataclass(frozen=True)
+class Dataset:
+    x: ndarray                                  # angles in radians for reaction data
+    y: ndarray                                  # physical units (b/sr, dimensionless, ...)
+    y_err: ndarray                              # statistical, physical units
+    norm_err: float | ndarray | None = None     # reported fractional normalisation
+    offset_err: float | ndarray | None = None   # reported absolute offset, physical units
+    label: str = ""
+    meta: Mapping = field(default_factory=dict) # kinematics: reaction, Elab, ExIAS, quantity, k, ...
+
+def from_measurement(measurement, *, reaction=None, quantity=None, ExIAS=None) -> Dataset
+```
+
+`Dataset` is pure data.  No comparison transform, no mask, no solver
+workspace, no identity key.
+
+`from_measurement` is the single EXFOR adapter.  It reads the
+`exfor_tools.Distribution` fields (`x, y, Einc, quantity, y_units,
+statistical_err, systematic_norm_err, systematic_offset_err, subentry`),
+converts units once through `ureg`, divides every dimensionful error by the
+conversion factor `norm`, passes the fractional normalisation error through
+untouched, converts angles to radians, and fills `meta` with `reaction`,
+`Elab`, `quantity`, `k` (and `ExIAS` for the (p,n) channel).  The
+`dXS/dA` ↔ `dXS/dRuth` conversions need the Rutherford cross section on
+the data grid.  In jitr that is a closed form of the kinematics,
+`10 * eta**2 / (4 * k**2 * sin(theta/2)**4)` mb/sr
+(`DifferentialWorkspace.rutherford_xs`), so `from_measurement` computes it
+from `reaction.kinematics(Elab)` with no workspace.  A per-angle `norm`
+array is the result in those cases, exactly as today.
+
+### 2.4 `model.py`
+
+A model is a spec of "observables from parameters".  A predictor is that
+model bound to a grid.
 
 ```python
 class Model:
     params: tuple[Parameter, ...]
-    def bind(self, grid_or_dataset) -> Predictor: ...
+    def __init__(self, fn, params): ...             # fn(x, *values) -> y, physical space
+    def bind(self, x, meta=None) -> Predictor: ...  # generic: closes over x
+    def __or__(self, transform) -> Model: ...       # mean transform; its params appended
+    def __add__(self, other) -> Model: ...          # additive mean discrepancy; params concatenated
+    def __mul__(self, other) -> Model: ...          # multiplicative x-dependent correction; scale() is its constant case
 
 class Predictor:
-    params: tuple[Parameter, ...]       # model params (+ transform params)
-    grid: ndarray
-    def __call__(self, *values) -> ndarray: ...   # physical space, on grid
-    def __or__(self, transform) -> Predictor: ... # compose a mean transform
+    params: tuple[Parameter, ...]
+    x: ndarray
+    def __call__(self, *values) -> ndarray          # physical space, on x
+
+def polynomial(order) -> Model                      # a_0 + a_1 x + ... ; params a0..an
 ```
 
-- `bind` is where expensive, grid-dependent state is built.  For a plain
-  function model it closes over `x`.  For a reaction model it builds the
-  jitr workspace from `dataset.meta["kinematics"]` and the grid, and caches
-  it keyed on `(reaction, Elab, lmax, grid)` so that two datasets at the same
-  energy solve the basis once.  The model owns its solver; the data does not.
-- Binding to a bare array gives the plotting predictor every notebook
-  currently hand-writes as `model.y(x, ...)`, and replaces
-  `visualization_workspace` / `visualizable_model_prediction`.
-- A Kennedy–O'Hagan scale is a transform composed onto a predictor:
-  `model.bind(d) | scale(rho)`.  Because a predictor is per block, per-dataset
-  scales are just distinct `rho_i` objects on distinct predictors.  The
-  contextual transform, `_root`, and `per_observation_scaling`'s id table are
-  gone.
-- The generic model is `Model(params, fn)` with `fn(grid, *values)`, matching
-  the "one class + callables" style of `Term` and `Transform`.  Reaction
-  models subclass only to override `bind`.
+- `Model.__or__` composes at the model level, so `omp | scale(rho_1)` is a
+  model whose parameters are `omp.params + (rho_1,)`; `bind` composes the
+  bound predictor with the transform.  Per-dataset Kennedy–O'Hagan scales
+  are distinct `rho_i` objects on distinct comparisons.  No routing table.
+- `Model.__add__` is the explicit mean discrepancy: `omp + delta` with
+  `delta = Model(lambda x, *phi: ..., phi_params)` predicts
+  `omp(x) + delta(x)` in physical space, with parameters
+  `omp.params + delta.params` (a parameter object in both is shared, as
+  everywhere).  `bind` binds both sides to the same grid and sums.  This is
+  the Kennedy–O'Hagan *sampled* discrepancy, in contrast to `kernel`, which
+  marginalises it into the covariance; the two may be used together.  A
+  reaction model and a plain-function model add without special cases
+  because addition happens on the bound predictors.  Composition is
+  left-to-right: `(omp + delta) | scale(rho)` scales the sum,
+  `(omp | scale(rho)) + delta` scales only the model.
+- `Model.__mul__` is the multiplicative counterpart: `omp * g` with
+  `g = Model(lambda x, *phi: ..., phi)` predicts `omp(x) · g(x)`.  An
+  additive discrepancy in log space is exactly this, and `scale(rho)` is
+  the constant case `omp * Model(lambda x, r: np.exp(r), [rho])`, kept as
+  a helper.  `+` and `*` share one binary-composition implementation; the
+  parametric use of `|` remains for non-separable transforms only.
+- Plotting on a fine grid is `omp.bind(x_fine, d.meta)(*values)`.  This
+  replaces `visualization_workspace` and `visualizable_model_prediction`.
+- Reaction models subclass `Model` and override only `bind`.
 
-### 2.4 `Block`
+```python
+# reactions/elastic.py
+class ElasticXS(Model):
+    def __init__(self, quantity, central, spin_orbit, args_from_params, params,
+                 coulomb=None, *, lmax=DEFAULT_LMAX, wavelengths_beyond_range=2.0,
+                 zeros_per_node=5): ...
+    def bind(self, x, meta) -> Predictor
+        # reads meta["reaction"], meta["Elab"];
+        # builds the jitr IntegralWorkspace + DifferentialWorkspace on x
+        # (set_up_solver, harvested); returns a Predictor that evaluates the
+        # potentials on ws.radial_grid(), solves, and extracts dXS/dA | dXS/dRuth | Ay
 
-A block is the unit the residual is formed on: one dataset, one predictor,
-one comparison space, one point mask.
+def momentum_transfer(x, k) -> ndarray             # q = 2 k sin(x/2), for coords=
+
+# reactions/ias.py
+class IsobaricAnalogPN(Model):
+    def __init__(self, U_p_coulomb, U_p_central, U_p_spin_orbit, U_n_central,
+                 U_n_spin_orbit, args_from_params, params, *, lmax=..., ...): ...
+    def bind(self, x, meta) -> Predictor          # reads reaction, Elab, ExIAS
+```
+
+The model owns its solver; the data does not.  A masked view, a copy, or an
+unpickled problem cannot lose a workspace, because nothing routes on the
+identity of a data object.  The predictor is a pure function of the
+potential: there is no `compound_correction` hook.  A compound-elastic
+contribution is subtracted from `data.y` as preprocessing (recipe 20),
+which keeps the model free of data-side state and works on any grid.  Optional, not in v0: cache the
+`IntegralWorkspace` on the model instance keyed on
+`(Elab, lmax, wavelengths_beyond_range, zeros_per_node)` so two datasets at
+one energy solve the basis once.
+
+### 2.5 `terms.py`
 
 ```python
 @dataclass(frozen=True)
-class Block:
-    data: Dataset
-    predictor: Predictor
-    space: Transform = identity       # parameter-free comparison transform
-    mask: ndarray | None = None       # active points
+class TermContext:
+    x: ndarray            # coords(x) on the support
+    y: ndarray            # data on the support, comparison space
+    ym: ndarray | None    # prediction on the support; None while factoring constant parts
+    def __len__(self) -> int
+    def meta(self, key) -> ndarray   # the owning block's data.meta[key], one value per point;
+                                     # for a term spanning blocks, the per-point concatenation
 
-    n: int; n_active: int
-    y: ndarray                        # space(data.y)
-    y_err: ndarray                    # |space'(data.y)| * data.y_err
-    log_jacobian: float
-    def predict(self, *values) -> ndarray      # space(predictor(*values))
-    def masked(self, mask) / masked_where(pred) -> Block   # shares data+predictor
-    def reported_terms(self) -> list[Term]     # from data.meta, delta-method propagated
-```
-
-- The comparison transform lives here, not on `Dataset`, because it is a
-  modelling choice (a Gaussian in log space is a different distribution from
-  a Gaussian in linear space, not merely a different covariance).  Terms are
-  still authored in comparison space, exactly as today.
-- `masked` returns a new `Block` sharing the dataset and predictor.  No
-  `identity` attribute is needed: anything that wants "the same dataset"
-  compares `block.data`.
-
-### 2.5 `Term`
-
-Unchanged in spirit; changed in what it holds.
-
-```python
 @dataclass(frozen=True)
 class Term:
-    fn: Callable | ndarray             # fn(c, *values) -> vector or matrix
+    fn: Callable | ndarray                 # fn(c: TermContext, *values) -> vector | matrix
     params: tuple[Parameter, ...] = ()
     kind: Literal["diag", "mode", "matrix"] = "matrix"
-    on: Block | Sequence[Block] | None = None   # None = all blocks of the constraint
-    coords: Transform = identity
-    constant: bool = False
+    on: Comparison | Dataset | Sequence[Comparison | Dataset] | None = None   # None = whole constraint
+    coords: Transform = identity           # applied to x before fn sees it; its params appended
+    constant: bool = False                 # fn reads neither ym nor parameters
 ```
 
-- **Support is a block reference, not stacked integer indices.**  `on=obs1`
-  places the term on that block, `on=[obs1, obs2]` spans both (case A), and
-  `on=None` means the whole constraint.  Compile resolves these to indices.
-  `stacked_supports` and the `support=np.arange(...)` ceremony in the
-  notebooks disappear.
-- A term holds no state.  No `bind`, no `_x_cache`, no `_bound_N`.  The
-  same term object can be placed in two constraints; each compile resolves it
-  independently.
-- The factory helpers (`noise_term`, `normalization_term`, `kernel_term`, …)
-  keep their signatures with `support=` renamed `on=`.
+| `kind` | `fn` returns | contribution |
+|---|---|---|
+| `"diag"` | standard-deviation vector `v` | `Σ_ii += v_i²` |
+| `"mode"` | vector `v` | `Σ += v vᵀ` |
+| `"matrix"` | symmetric block `M` | `Σ_block += M` |
 
-### 2.6 `Constraint`
+- **Support is a reference, not integer indices.**  `on=b1` places the term
+  on that block, `on=[b1, b2]` spans both (case A), `on=None` is the whole
+  constraint.  `on=` also accepts a block's `Dataset`, and compile resolves
+  `block is target or block.data is target`, so a term written against a
+  block still resolves after `masked`/`complement` rebuild the constraint.
+  `stacked_supports` and `support=np.arange(...)` are gone.
+- **A term is stateless.**  No `bind`, no cache.  The same object may be
+  placed in two constraints.
 
-A container of blocks and terms plus the likelihood functional and weight.
+The factory helpers keep their bodies and signatures with `support=` renamed
+`on=`:
+
+```python
+statistical(y_err, on=None)
+offset(magnitude=None, parameter=None, mask=None, log=True, on=None)
+normalization(magnitude=None, parameter=None, mask=None, log=True, on=None)
+noise(parameter, log=True, basis=None, basis_params=(), on=None, coords=None)
+noise_fraction(parameter, log=True, on=None)
+model_error(parameter, averaging=True, log=True, on=None)
+systematic(parameter, basis, log=True, basis_params=(), on=None, coords=None)
+kernel(kernel, coords=None, amplitude=None, amplitude_params=(), jitter=1e-10,
+       prefix="discrepancy", params=None, on=None)
+# params=: the hyperparameter Parameter objects, one per free element in kernel.theta order;
+#          None derives fresh ones named f"{prefix}_{name}".  Pass the same objects to share
+#          hyperparameters between per-block kernels.  Two kernel terms with derived
+#          names and the same prefix fail compile on the duplicate name; the error says
+#          to pass prefix= (distinct kernels) or params= (one shared kernel).
+# bases and amplitudes: ones, ym, averaging, x_basis(scale), exp_growth(scale, base=ones),
+#                       constant_amplitude, exp_growth_amplitude(scale)
+```
+
+**Hierarchy is sharing plus `meta`.**  A hyperparameter shared by several
+datasets is one `Parameter` object placed in one term per block; anything
+dataset-specific the term needs (energy, excitation energy, a flag) comes
+from `c.meta(key)`.  A discrepancy correlated *across* datasets, such as a
+GP over energy and angle, is one `matrix` term spanning the blocks whose
+`fn` builds its inputs from `c.meta("Elab")` and `c.x`.  It takes the dense
+path; there is no Kronecker structure because real data share no angle
+grid.  Recipes 22–24 spell all three out.
+
+### 2.6 `likelihood.py`
+
+Harvested.  A likelihood is a functional of `(d2, logdet, n, *values)` with
+optional parameters that are ordinary nodes in the index.
+
+```python
+class Likelihood:
+    params: tuple[Parameter, ...] = ()
+    def log_likelihood(self, d2, logdet, n, *values) -> float
+    def chi2(self, d2, logdet, n, *values) -> float      # d2
+
+class Gaussian(Likelihood): ...
+class StudentT(Likelihood):        # StudentT(nu=None) -> Parameter("nu", bounds=(1, inf))
+                                   # two constraints with the default each derive a "nu";
+                                   # compile fails on the duplicate name and says to pass nu=
+class Chi2(Likelihood): ...        # -0.5 d2, no log-determinant
+```
+
+### 2.7 `constraint.py`
+
+A block is the unit the residual is formed on: one dataset, one model, one
+comparison space.  A constraint is a tuple of comparisons plus the terms,
+the likelihood functional, the tempering weight, and the active-point
+masks.  Each comparison is one block of the stacked covariance (§2.9), so
+"block" below and in §2.9 means that.
 
 ```python
 @dataclass(frozen=True)
+class Comparison:
+    data: Dataset
+    model: Model                         # bound at construction: model.bind(data.x, data.meta)
+    space: Transform = identity          # parameter-free comparison transform
+    # derived, computed once in __post_init__ / cached_property:
+    predictor: Predictor
+    y: ndarray                           # space(data.y)
+    y_err: ndarray                       # |space'(data.y)| * data.y_err   (delta method)
+    log_jacobian_all: ndarray            # log |space'(data.y)| per point
+    def reported_terms(self) -> list[Term]   # offset then normalisation modes from data.norm_err /
+                                             # data.offset_err, delta-method propagated, on=self
+
+@dataclass(frozen=True)
 class Constraint:
-    blocks: tuple[Block, ...]
+    comparisons: tuple[Comparison, ...]
     terms: tuple[Term, ...] = ()
     likelihood: Likelihood = Gaussian()
-    weight: float = 1.0
-    statistical: bool = True          # add each block's y_err diagonal
-    def complement(self) -> Constraint
+    weight: float = 1.0                  # tempering; multiplies the log-likelihood only
+    statistical: bool = True             # add each block's y_err diagonal
+    masks: tuple[ndarray, ...] | None = None   # active points per block; None = all active
+    def masked(self, masks) -> Constraint
+    def masked_where(self, predicate) -> Constraint     # masks = [predicate(comp.data.x) for comp in comparisons]
+    def complement(self) -> Constraint                  # every inactive point active, and vice versa
 ```
 
-- Eager checks only on things that do not need the parameter graph: blocks
-  are distinct, every `on=` references a block in this constraint, an
-  array-valued term has the right shape.
-- `weight` moves here from `Evidence(weights=)` and subsumes
-  `CalibrationConfig.likelihood_scaling`: one tempering knob, applied to the
-  likelihood only, honoured by every driver.
+- The comparison transform lives on the block because it is a modelling
+  choice: a Gaussian in log space is a different distribution from one in
+  linear space.  Terms are authored in comparison space, as today.
+- **Masks live on the constraint, not on the block or the data.**
+  `masked`, `masked_where`, `complement` return a `Constraint` with the same
+  `Comparison`, `Term`, and `Parameter` objects and new masks.  No `copy.copy`,
+  no identity key.  A held-out problem built from `complement()` shares
+  every parameter with the fit, so a posterior sample scores it directly.
+- `weight` subsumes both `Evidence(weights=)` and
+  `CalibrationConfig.likelihood_scaling`: one knob, honoured by every driver.
+- Eager checks here need nothing from the parameter graph: comparisons are
+  distinct, an array-valued term has the right shape for its `on`, the
+  comparison space is finite on every active point (named block).
 
-### 2.7 `Evidence`
+### 2.7b How the pieces thread
 
-A tuple of independent constraints.  It no longer validates anything; it
-exists so that "the calibration problem" has one name.  (It could be a plain
-list; keeping the class gives a place for the `compile` entry point.)
+There are exactly two parametric entry points.  Everything else is a
+constant fixed when the comparison is built.
 
-### 2.8 `Problem` — the compile step
+| stage | space | what enters | parametric |
+|---|---|---|---|
+| 1. `Predictor` | physical | `f(x; θ)` on the data grid | model parameters |
+| 2. mean modifications, composed on the `Model` | physical | `\| scale(ρ)`, `* g(x; φ)`, `+ δ(x; φ)` | ρ, φ |
+| 3. `space` | physical → comparison | `y = space(data.y)`, `ym = space(step 2)`, `y_err = \|space'\| · data.y_err`, `log_jacobian` | none |
+| 4. `Term`s, seeing `TermContext(x, y, ym)` | comparison | statistical diagonal; experimental terms (noise, reported modes, USU); model-discrepancy terms (kernel, EFT truncation) | term parameters, and `ym` |
+| 5. `Likelihood` | comparison | functional of `y − ym` and Σ | Student-t ν only |
+
+Two rules follow.  Experimental and model-discrepancy covariance terms
+are one mechanism; the difference is what the user means, not what the
+code does.  A term that reads `ym` sees the prediction *after* the mean
+modifications and *after* `space`, which is right: a reported
+normalisation error applies to the measured scale, so its mode is
+`η · ρ f`, and `Comparison.reported_terms()` gets that for free.  And:
+mean-side discrepancy is physical-space and `x`-aware; covariance-side
+discrepancy is comparison-space and `ym`-aware; neither sees the other.
+That is why the normalisation stays on the mean rather than dividing the
+data: dividing the data would make `space` parametric, with a
+ρ-dependent Jacobian and ρ-dependent error propagation, and in linear
+space it is the data-side normalisation that Peelle's Pertinent Puzzle
+warns about (recipe 27).
+
+### 2.8 `problem.py` — the compile step
 
 ```python
-problem = Problem(evidence, priors=[(omp.params, mvn), (log_eps, halfnormal)])
+class Problem:
+    def __init__(self, constraints, priors=()):    # priors: [(params, joint), ...]
+    index: ParameterIndex                # slot(p), slots(ps), names, bounds, ndim
+    constraints: tuple[CompiledConstraint, ...]
+    priors: tuple                        # the (params, joint) pairs as given; reuse for a held-out Problem
+    ndim: int
+    names: list[str]
+    bounds: ndarray                      # (ndim, 2)
+
+    def log_prior(self, theta) -> float
+    def log_likelihood(self, theta) -> float          # sum_c c.weight * c.log_likelihood(theta)
+    def log_posterior(self, theta) -> float           # prior first; -inf short-circuits the forward model
+    def prior_transform(self, u) -> ndarray           # unit cube -> theta (dynesty, bbb)
+    def sample_prior(self, n, rng=None) -> ndarray    # (n, ndim)
+    def predict(self, theta, physical=False) -> list[list[ndarray]]   # per constraint, per block
+    def chi2(self, theta) -> float
+    def log_jacobian(self) -> float                   # sum over constraints, active points
+    def columns(self, params) -> ndarray              # chain columns of these parameters
+
+    # black-box-bayes spellings of the same six things
+    NDIM, parameter_names, starting_location(n), log_posterior_batch(thetas)
 ```
 
-`Problem.__init__` is the only place in the package that walks the graph.
-It produces:
+`Problem.__init__` is the only place that walks the graph.  It produces
+`index`, the compiled constraints, and the assembled prior.  Compile the
+same declarations twice and you get two independent problems; nothing
+user-facing is mutated.
 
-- `problem.index: ParameterIndex` — the unique `Parameter` objects in
-  first-seen order (blocks' predictors, then terms, then likelihoods,
-  constraint by constraint), each with a slot.  `index.slot(p)`,
-  `index.slots(ps)`, `index.names`, `index.bounds`, `index.ndim`.  Name
-  uniqueness is checked once, here.
-- `problem.constraints: tuple[CompiledConstraint, ...]` (§3).
-- `problem.prior` — assembled from per-parameter marginals and the joint
-  priors passed in; every slot must be covered exactly once, checked here.
-- The flat interface external samplers want, which is what
-  `CalibrationConfig` exposes today:
-  `ndim`, `names`, `log_likelihood(theta)`, `log_prior(theta)`,
-  `log_posterior(theta)`, `prior_transform(u)`, `starting_location(n)`.
-- `problem.groups` — named slot groups for Gibbs drivers: `"model"` (all
-  predictor slots) and one group per constraint's nuisance slots.  Any other
-  partition is a list of slot arrays.
-- `problem.predict(theta) -> list[ndarray]` per block, in comparison or
-  physical space.
+```python
+def compile(constraints, priors):
+    index = ParameterIndex()                         # ordered: Parameter -> slot, first seen
+    compiled = []
+    for c in constraints:
+        y, y_err, offsets = stack(c.comparisons)     # comparison space, one slice per comparison
+        active = concatenate(offsets[i][mask_i] for each block)
+        preds = [(offsets[i], index.add_all(b.predictor.params), b.predictor) for i, b in ...]
+        terms = ([statistical(comp.y_err, on=comp) for comp in c.comparisons] if c.statistical else []) + list(c.terms)
+        resolved = [(resolve(t.on, c.comparisons, offsets), index.add_all(t.params), t) for t in terms]
+        like_gather = index.add_all(c.likelihood.params)
+        cov = StructuredCovariance(resolved, offsets, active, blocks=c.comparisons)
+        cov.factor_constant_parts()                  # eager; names the block on failure
+        compiled.append(CompiledConstraint(...))
+    index.check_names_unique()
+    prior = assemble_prior(index, priors)            # every slot covered exactly once
+    return index, tuple(compiled), prior
+```
 
-Nothing user-facing is mutated by compiling.  Compile the same evidence twice
-and you get two independent problems.
+`index.add_all(params)` returns the gather array for a node, adding unseen
+parameters in first-seen order (block predictors, then terms, then the
+likelihood, constraint by constraint).  That is the whole routing story.
 
-### 2.9 Likelihood
+**Prior assembly.**  Each slot is covered by its parameter's marginal
+(§2.1) or by exactly one joint block from `priors`.  A joint block is
+`(params, joint)` where `joint` is any object with `logpdf(values)` over
+those parameters in that order, optionally `prior_transform(u)` and
+`rvs(n)`; `scipy.stats.multivariate_normal` qualifies.  A hyperprior is a
+joint block that *includes its hyperparameter*: the children carry no
+marginal, the block's `logpdf` is `sum_i log p(child_i | hyper) + log p(hyper)`,
+and its `prior_transform` draws the hyperparameter first (recipe 24).  `log_prior` sums
+marginal log-densities and joint `logpdf`s.  `prior_transform` maps each
+marginal slot through its rescaled `ppf`; a joint `scipy.stats.multivariate_normal`
+block is whitened, `theta = mu + L Φ⁻¹(u)` with `L Lᵀ = cov`; any other joint
+must expose `prior_transform(u)` or `Problem.prior_transform` raises a clear
+error naming it.  A parameter with finite `bounds` inside a joint block is
+truncated in `log_prior` only (`-inf` outside the bounds); a truncated joint
+has no unit-cube map, so `prior_transform` raises for that problem and names
+the parameter.  `sample_prior` draws marginals and joints and scatters them
+into columns.
 
-Unchanged.  A `Likelihood` is a functional of `(d2, logdet, n, *values)` with
-optional parameters (`StudentT.nu`).  Those parameters are ordinary nodes in
-the index like every other.
-
-## 3. The compiled constraint
-
-`CompiledConstraint` is what today's `Constraint` + `ConstraintCovariance`
-are, minus the parameter splitting.
+**`CompiledConstraint`** is today's `Constraint` plus `ConstraintCovariance`
+minus the parameter splitting:
 
 ```python
 class CompiledConstraint:
-    x, y, y_err: ndarray               # stacked, comparison space
-    offsets: tuple[slice, ...]         # one per block
-    active: ndarray                    # stacked indices of active points
+    y, y_err, x: ndarray                 # stacked, comparison space, all points
+    offsets: tuple[slice, ...]
+    active: ndarray
     predictors: list[(slice, gather, Predictor)]
     covariance: StructuredCovariance
     likelihood: Likelihood; like_gather: ndarray
     weight: float
-
-    def ym(self, theta) -> ndarray           # memoised on theta[predictor slots]
+    log_jacobian: float
+    def ym(self, theta) -> ndarray
     def log_likelihood(self, theta) -> float
-    def matrix(self, theta) -> ndarray       # dense, for display only
+    def chi2(self, theta) -> float
+    def matrix(self, theta) -> ndarray   # dense, active rows; display and tests
 ```
 
-Two things are worth spelling out.
-
-**Gather, never split.**  Every callable node received a gather array at
-compile time.  Evaluation is `node(*theta[gather])`.  The ten positional
-splits in the current code (`PhysicalModel.split_params`,
-`Constraint._split`, the term's fn/coords split, `_scaled_term`'s
-coefficient/basis split, `kernel_term`'s kernel/amplitude split,
-`Transform.__or__`, `CalibrationConfig.split_parameters` and its
-`prior_transform` cursor, `model_comparison.split_samples`, and
-`predictive.total_predictive_band`'s `n_model_params`) all become reads of
-`problem.index`.  Composite nodes (`f | g`, coefficient times basis) still
-concatenate their children's parameters, but they do so once at construction
-and the compile step assigns one gather for the composite.
-
-**Memoised forward model.**  `ym(theta)` caches the last prediction keyed on
-the values of the predictor slots.  A Gibbs sweep over the nuisance group
-changes no predictor slot, so it never re-solves the reaction model.  This one
-mechanism replaces `Constraint.marginal_log_likelihood`,
-`Constraint.predict`-then-closure in `Walker.run_likelihood_batches`,
-`Evidence.weighted_marginal_log_likelihood`, `CalibrationConfig.predict_parametric`
-and `CalibrationConfig.conditional_posterior`.
-
-## 4. The structured covariance
-
-This is the one change that is a dramatic simplification *and* a speed-up,
-and it needs no API change.
+### 2.9 `covariance.py` — the structured covariance
 
 The three term kinds already describe a decomposition:
 
 ```
-Sigma = D + sum_b M_b + U U^T (+ dense fallback)
+Σ = diag(D) + blockdiag(M_b) + U Uᵀ        (+ dense fallback)
 ```
 
-- `D` is a length-`N` vector: the sum of squares of every `"diag"` term.
-- `M_b` is one dense block per observation block: the sum of `"matrix"` terms
-  whose support lies inside block `b`.
-- `U` is `N x r`: one column per `"mode"` term, the mode vector scattered onto
-  its support and zero elsewhere.  A mode spanning several blocks (case A) is
-  just a column with entries in several blocks.
-- A `"matrix"` term that crosses block boundaries (a GP kernel over the union
-  of two datasets) forces the dense path for that constraint.  Everything
-  else stays structured.
+- `D`: length-`N` vector, the sum of squares of every `"diag"` term.
+- `M_b`: one dense block per observation block, the sum of `"matrix"`
+  terms whose support lies inside block `b`.
+- `U`: `N × r`, one column per `"mode"` term, scattered onto its support
+  and zero elsewhere.  A mode spanning several blocks (case A) is a column
+  with entries in several blocks.
+- A `"matrix"` term that crosses block boundaries (a GP kernel over the
+  union of two datasets) forces the dense path for that constraint.
 
 With `B = blockdiag(M_b + diag(D_b))` and per-block Cholesky `L_b`:
 
 ```
-z   = L^{-1} r                     (block by block)
-W   = L^{-1} U                     (block by block, N x r)
-S   = I_r + W^T W                  (r x r)
-d2  = z^T z - (W^T z)^T S^{-1} (W^T z)
-logdet Sigma = sum_b logdet B_b + logdet S
+z  = L⁻¹ r                  (block by block)
+W  = L⁻¹ U                  (block by block, N × r)
+S  = I_r + Wᵀ W             (r × r)
+d2 = zᵀz − (Wᵀz)ᵀ S⁻¹ (Wᵀz)
+logdet Σ = Σ_b logdet B_b + logdet S
 ```
 
-Cost is `O(sum_b n_b^3 + N r^2 + r^3)` instead of `O(N^3)`.  For the
-motivating cases (two or three datasets sharing a normalisation mode,
-`r = 1`) the cross-block coupling is essentially free.
+Cost `O(Σ_b n_b³ + N r² + r³)` instead of `O(N³)`.  Consequences:
 
-Consequences:
-
-- **All three "known limitations" in `design.md` go away.**  There is no
-  dense `N x N` assembly for non-constant block-diagonal covariances, the
-  low-rank path exists, and masking is slicing rows out of `D`, `U`, and
-  `M_b` rather than assembling and then restricting.
-- **The block path is the only path.**  `uses_block_path`, `block_diagonal`,
-  `cholesky` versus `block_cholesky`, and the dispatch in `stacked_distance`
-  collapse into one routine.
-- **Constant pieces are still cached.**  Each of `D`, `U`, `M_b` is the sum of
-  a constant part (evaluated once) and a parametric part.  When everything is
-  constant the factors are cached exactly as now.
-- **Constraint boundaries carry less weight.**  Today a constraint is the
-  unit of dense factorisation, so the design must forbid sharing across
-  constraints and push cross-dataset systematics into one constraint.  With
-  Woodbury the cost of a coupling mode is independent of `N`, so the choice
-  of where to draw constraint boundaries becomes about the likelihood
-  functional and the weight, not about cost.
-- `B` must be positive definite.  A block covered by modes alone (no
-  statistical diagonal, no noise term) is singular in `B` even if `Sigma` is
-  not.  Compile catches this as today's eager singular check does, and the
-  remedy list is the same; a dense fallback for that constraint is the
-  escape hatch.
-
-## 5. Drivers
-
-### 5.1 External samplers
-
-`Problem` *is* the interface `black-box-bayes`, `emcee`, and `dynesty` want.
-`CalibrationConfig` and `ParameterConfig` are not needed.  The prior list
-form, `IndependentPrior`, and `TruncatedNormalPrior` collapse into
-"a `Parameter` carries a marginal, or a group of parameters carries a joint".
-
-### 5.2 In-package Gibbs
+- All three "known limitations" of `design.md` are gone: no dense assembly
+  for block-diagonal covariances, a low-rank path exists, and masking is
+  slicing rows out of `D`, `U`, and `M_b` before assembly.
+- The block path is the only path.  `uses_block_path`, `block_diagonal`,
+  `cholesky` versus `block_cholesky`, and the dispatch in
+  `stacked_distance` do not exist.
+- Each of `D`, `U`, `M_b` is a constant part (evaluated once at compile)
+  plus a parametric part.  When everything is constant the factors are
+  cached.
+- A constraint boundary is now about the likelihood functional and the
+  weight, not about cost: a coupling mode across blocks is essentially free.
+- `B` must be positive definite.  A block covered only by modes is singular
+  in `B` even when `Σ` is not; compile reports it with the comparison's label
+  and the remedies (reported terms, a noise term, `statistical=True`).
 
 ```python
-walker = Walker(problem, groups=problem.groups, samplers={...}, rng=rng)
-walker.walk(n_steps, burnin, batch_size)
-walker.chain                 # (n, ndim), columns named by problem.index.names
+class StructuredCovariance:
+    def __init__(self, resolved_terms, offsets, active, blocks): ...
+    def factor_constant_parts(self) -> None
+    def distance(self, y, ym, theta) -> tuple[float, float]     # (d2, logdet) on active rows
+    def matrix(self, y, ym, theta) -> ndarray                    # dense, active rows
 ```
 
-- A sector is a slot group.  The walker alternates over groups, holding the
-  others fixed, calling `problem.log_posterior` each time.  The forward-model
-  memo makes the nuisance sweeps cheap without special methods.
-- There is one chain.  The two-sector `model_sampler.chain` /
-  `likelihood_samplers[i].chain` and the `np.hstack` in every notebook go
-  away, as does the duplicated validation between `Walker` and
-  `CalibrationConfig`.
+### 2.10 `diagnostics.py` and `predictive.py`
 
-### 5.3 Model comparison and prediction
-
-`model_comparison` and `predictive` take `(problem, chain)` and select
-columns through `problem.index`.  `split_samples` is not needed;
-`total_predictive_band` gets its kernel columns from
-`index.slots(term.params)` instead of a caller-supplied integer.
-`Constraint.complement()` works on blocks exactly as it does on observations
-today, and the held-out problem shares `Parameter` objects with the fit, so a
-posterior sample scores it directly.
-
-## 6. Worked example
-
-The α+Ca study shape: two datasets without reported errors, compared in log
-space, a noise level shared between them (case B), a normalisation mode
-coupling them (case A), one latent scale per dataset, one held out below a
-cut, nested sampling.
+Harvested statistics with the entry points retargeted to `(problem,
+samples)`, where `samples` has shape `(n, ndim)` in `problem.index` order.
+That is what emcee's `get_chain(flat=True)`, dynesty's `samples_equal()`,
+and bbb's `InferenceData["theta"]` all give.  Column selection goes through
+`problem.columns(...)`; `split_samples`, `n_model_params`, `theta_cols` are
+gone.
 
 ```python
-import numpy as np, rxmc as rx
+# diagnostics.py
+predictive_draws(problem, samples, constraint=0, *, n_rep=1, rng=None, model_only=False)
+coverage_curve(draws, y, levels=None); coverage_error(draws, y, levels=None)
+sharpness(draws, percentiles=(16, 84), transform=None)
+heldout_log_predictive(heldout_problem, samples)          # Problem([fit.complement()], priors=...)
+log_posterior_predictive(logp_samples, logw=None)
+logz_summary(logz, logzerr); compare_logz(a, b, sigma=2.0)
+
+# predictive.py
+gp_posterior_predictive(kernel, theta, X_train, residuals, X_pred, *, train_noise_var=None, jitter=1e-10)
+predictive_band(draws, levels=(16, 50, 84))
+total_predictive_band(problem, term, predictor, x_pred, samples, *, noise_std=0.0,
+                      train_noise_var=None, levels=(16, 84), n_draws=400, rng=None)
+# term is the kernel Term; its columns and the predictor's come from problem.columns
+```
+
+## 3. Worked example: the α+Ca study shape
+
+Two datasets without reported errors, compared in log space, one noise
+magnitude shared between them (case B), one normalisation mode coupling them
+(case A), one latent scale per dataset, one held out below an angular cut,
+nested sampling, then held-out scoring.
+
+```python
+import numpy as np, dynesty, rxmc as rx
 from rxmc import terms as T, transforms as tf
+from scipy import stats
 
-d1 = rx.from_measurement(m1)             # Dataset, meta filled, units converted
-d2 = rx.from_measurement(m2)
+d1 = rx.from_measurement(m1, reaction=reaction, quantity="dXS/dA")
+d2 = rx.from_measurement(m2, reaction=reaction, quantity="dXS/dA")
 
-omp = MyOpticalModel(params=[...])       # Model; bind() builds jitr workspaces
-rho1, rho2 = rx.Parameter("log_rho_1"), rx.Parameter("log_rho_2")
-b1 = rx.Block(d1, omp.bind(d1) | tf.scale(rho1), space=tf.log)
-b2 = rx.Block(d2, omp.bind(d2) | tf.scale(rho2), space=tf.log)
+omp = rx.reactions.ElasticXS("dXS/dA", central, spin_orbit, args_from_params, params=omp_params)
+rho1 = rx.Parameter("log_rho_1", prior=stats.norm(0, 0.1))
+rho2 = rx.Parameter("log_rho_2", prior=stats.norm(0, 0.1))
+comp1 = rx.Comparison(d1, omp | tf.scale(rho1), space=tf.log)
+comp2 = rx.Comparison(d2, omp | tf.scale(rho2), space=tf.log)
 
-log_eps = rx.Parameter("log_eps", prior=halfnormal)
-log_eta = rx.Parameter("log_eta", prior=halfnormal)
+log_eps = rx.Parameter("log_eps", prior=stats.norm(-2, 1))
+log_eta = rx.Parameter("log_eta", prior=stats.norm(-2, 1))
 c = rx.Constraint(
-    blocks=[b1, b2],
+    comparisons=[comp1, comp2],
     terms=[
-        T.noise(log_eps, on=b1),           # case B: one magnitude, two blocks
-        T.noise(log_eps, on=b2),
-        T.normalization(log_eta, on=[b1, b2]),   # case A: one mode across both
+        T.noise(log_eps, on=comp1),              # case B: one magnitude, two comparisons
+        T.noise(log_eps, on=comp2),
+        T.normalization(log_eta, on=[comp1, comp2]),   # case A: one mode across both
     ],
     likelihood=rx.StudentT(),
+    statistical=False,                           # no reported errors: the noise term is the diagonal
 )
-fit  = c.masked_where(lambda x: x < cut)
+fit = c.masked_where(lambda x: x < cut)
 held = fit.complement()
 
-problem = rx.Problem([fit], priors=[(omp.params, mvn_prior)])
+problem = rx.Problem([fit], priors=[(omp.params, stats.multivariate_normal(mu, cov))])
 sampler = dynesty.NestedSampler(problem.log_likelihood, problem.prior_transform, problem.ndim)
-...
-heldout = rx.Problem([held], priors=problem.prior)     # same Parameter objects
-lp = rx.model_comparison.heldout_log_predictive(heldout, chain)
+sampler.run_nested()
+res = sampler.results
+samples = res.samples_equal()
+
+heldout = rx.Problem([held], priors=problem.priors)          # same Parameter objects
+lp = rx.diagnostics.heldout_log_predictive(heldout, samples)
+score = rx.diagnostics.log_posterior_predictive(lp)
+logz = rx.diagnostics.logz_summary(res.logz[-1], res.logzerr[-1])
+# to compare with a linear-space fit of the same data: logz_raw = logz + problem.log_jacobian()
 ```
 
-Compare with the current version of the same study: `Observation(...,
-transform=log)` per dataset, `stacked_supports` to place the terms,
-`per_observation_scaling([obs1, obs2])` on the model with `obs` passed to
-three places, `Constraint(...)`, `Evidence([...])`, `ParameterConfig` twice,
-`CalibrationConfig`, and `split_samples` to read the chain back.
-
-## 7. Compile, in pseudo-code
+The same problem under emcee:
 
 ```python
-def compile(evidence, priors):
-    index = ParameterIndex()                     # ordered dict Parameter -> slot
-    compiled = []
-    for c in evidence:
-        offsets, x, y, err = stack(c.blocks)     # comparison space
-        active = concatenate(offset[b.mask] for each block)
-        preds = [(offsets[i], index.add_all(b.predictor.params), b.predictor)
-                 for i, b in enumerate(c.blocks)]
-        terms = list(c.terms)
-        if c.statistical:
-            terms = [T.statistical(b.y_err, on=b) for b in c.blocks] + terms
-        resolved = [(resolve(t.on, c.blocks, offsets), index.add_all(t.params), t)
-                    for t in terms]
-        like_gather = index.add_all(c.likelihood.params)
-        cov = StructuredCovariance(resolved, N=len(y), offsets, active)
-        cov.factor_constant_parts()              # eager; names the block on failure
-        compiled.append(CompiledConstraint(...))
-    index.check_names_unique()
-    prior = assemble_prior(index, priors)        # every slot covered exactly once
-    return Problem(index, compiled, prior)
+import emcee
+p0 = problem.sample_prior(32, rng=np.random.default_rng(1))
+sampler = emcee.EnsembleSampler(32, problem.ndim, problem.log_posterior)
+sampler.run_mcmc(p0, 5000)
+samples = sampler.get_chain(discard=1000, thin=10, flat=True)
+band = rx.predictive.predictive_band(
+    [omp.bind(x_fine, d1.meta)(*s[problem.columns(omp.params)]) for s in samples[::20]]
+)
 ```
 
-`index.add_all(params)` returns the gather array for that node, adding new
-parameters in first-seen order.  That is the whole routing story.
+And under `black-box-bayes`, which needs a pickle and a six-line module:
 
-## 8. Mapping from the current code
+```python
+# make_problem.py
+import dill
+with open("problem.pkl", "wb") as f:
+    dill.dump(problem, f)
 
-| today | ground-up | note |
+# posterior.py
+import dill
+def init_posterior(path):
+    global P, NDIM, parameter_names
+    P = dill.load(open(path, "rb")); NDIM = P.ndim; parameter_names = P.names
+def starting_location(n):  return P.sample_prior(n)
+def log_posterior(theta):   return P.log_posterior(theta)
+def log_likelihood(theta):  return P.log_likelihood(theta)
+def prior_transform(u):     return P.prior_transform(u)
+```
+
+Compare with the current spelling of the same study: `Observation(...,
+transform=log)` per dataset, `stacked_supports` to place the terms,
+`per_observation_scaling([obs1, obs2])` with `obs` passed to three places,
+`Constraint(...)`, `Evidence([...])`, `ParameterConfig` twice with a
+`TruncatedNormalPrior` because the MVN prior has no unit-cube map,
+`CalibrationConfig`, and `split_samples` to read the chain back.
+
+## 4. Capability map
+
+Every statistical capability a current notebook or test demonstrates, and
+its spelling in the new API.  This table is the acceptance list for the
+rewrite: a capability is done when its row has a test.
+
+| capability (where it is demonstrated today) | new spelling | pinned by |
 |---|---|---|
-| `Parameter` (`__eq__`, no hash) | `Parameter` (identity, hashable, optional prior) | one identity notion |
-| `Observation` | `Dataset` + `Block` | data vs. modelling choices |
-| `ElasticDifferentialXSObservation`, `IsobaricAnalogPNObservation` | `from_measurement` → `Dataset`; solver in `Model.bind` | classes removed |
-| `PhysicalModel(params, transform)` | `Model.bind(grid) -> Predictor`; `predictor \| transform` | per-block mean transforms |
-| `per_observation_scaling`, `_root`, `identity` | `omp.bind(d_i) \| scale(rho_i)` | no routing table |
-| `Term(support=indices)` + `bind` + caches | `Term(on=blocks)`, stateless | resolved at compile |
-| `stacked_supports` | not needed | |
-| `Constraint.__init__` + `ConstraintCovariance` | `Constraint` (spec) + `CompiledConstraint` | |
-| `ConstraintCovariance.matrix/cholesky/block_cholesky/stacked_distance` | `StructuredCovariance` | Woodbury, one path |
-| `Evidence(weights=)` + `likelihood_scaling` | `Constraint.weight` | one knob |
-| `Evidence._validate_constraint_params`, `Constraint._validate_parameter_names` | `ParameterIndex.check_names_unique` | once |
-| `ParameterConfig`, `CalibrationConfig` | `Problem` | |
-| `IndependentPrior`, `TruncatedNormalPrior`, list priors | `Parameter.prior` + joint priors on `Problem` | |
-| `Walker(model_sampler, likelihood_samplers)` | `Walker(problem, groups)` | one chain |
-| `marginal_log_likelihood`, `predict_parametric`, `conditional_posterior`, `weighted_marginal_log_likelihood` | `CompiledConstraint.ym` memo | |
-| `split_samples`, `n_model_params`, `theta_cols` | `problem.index.slots(...)` | |
+| user-defined model `y = m x + b` (linear_calibration_demo) | `Model(lambda x, m, b: m*x + b, [m, b])` | test_model |
+| `Polynomial(order)` (normalization_inference) | `polynomial(order)` | test_model |
+| statistical diagonal only; `chi2 / n` (linear_calibration_demo) | default `Constraint`; `problem.chi2(theta)` | test_problem |
+| unknown fractional / constant noise (systematic_err_demo, sampling_algos) | `noise_fraction(log_eps)`, `noise(log_eps)` | test_terms::TestFactories |
+| inferred noise *replacing* reported statistics (prose today) | `Constraint(statistical=False, terms=[noise(...)])` | test_constraint |
+| reported normalisation / offset as fixed modes (measurement_to_calibration) | `block.reported_terms()`; `normalization(magnitude=)`, `offset(magnitude=)` | test_constraint::reported_terms, regression number |
+| free normalisation / offset nuisance (systematic_err_demo) | `normalization(parameter=log_eta)`, `offset(parameter=log_omega)` | test_terms |
+| fixed dense covariance; fixed diagonal (systematic_err_demo, normalization_inference gallery) | `Term(C, on=b)`, `Term(sig, kind="diag", on=b)` | test_terms::TestTermKinds |
+| case B: one parameter, two block-local terms (systematic_err_demo, correlated_observations) | `noise_fraction(log_eps, on=b1), noise_fraction(log_eps, on=b2)`; or two constraints sharing `log_eps` | test_problem::sharing |
+| case A: one mode across blocks (correlated_observations) | `normalization(log_eta, on=[b1, b2])` | test_covariance::case_a, regression |
+| per-dataset Kennedy–O'Hagan scale ρᵢ (normalization_inference) | `Comparison(d_i, omp \| scale(rho_i))` | test_model, test_constraint |
+| single global ρ (test only) | `omp \| scale(rho)` on every block | test_model |
+| sampled mean discrepancy `y = f(x; θ) + δ(x; φ)` (new) | `omp + Model(delta_fn, phi)`; alone or alongside `kernel` | test_model (params order, shared parameter, `\|` precedence) |
+| multiplicative `x`-dependent correction, i.e. an additive discrepancy in log space (new) | `omp * Model(g_fn, phi)`; `scale(rho)` is the constant case | test_model (`omp * const(rho)` equals `omp \| scale(rho)`) |
+| hyperparameters shared across datasets, per-dataset values from `meta` (new) | one term per block with the same `Parameter` objects; `c.meta("Elab")`; `kernel(params=)` | test_terms (`meta` on one block and on a union), test_problem (one slot per shared object) |
+| discrepancy correlated across energies: GP over (E, θ) (new) | one `matrix` `Term` with `on=comps` building inputs from `c.meta` and `c.x`; dense path | test_covariance (dense fallback equals hand-built product kernel) |
+| unaccounted-for model error per data type, KDUQ (new, reference) | `model_error(delta_T, averaging=True, on=b)` with one `delta_T` per type; the `k/N` democratic and per-type federal scalings are `Constraint(weight=)`; recipe 26 | test_terms (shared object gives one column per type) |
+| Peelle's Pertinent Puzzle avoidance (new, reference) | `normalization()` reads `c.ym`; the `t0` variant as a constant `mode`; recipe 27 | test_terms (data-built mode reproduces the `1/(1+n s²)` bias; prediction-built does not) |
+| EFT truncation-error GP with known convergence pattern, BUQEYE (new, reference) | `matrix` `Term` from `c.meta("y_ref")`, `c.meta("Q")`, `c.x`; rank-one form via `systematic`; recipe 28 | test_covariance (dense equals the closed-form covariance) |
+| Bayesian model averaging / mixing, domain correction (new, reference) | one `Problem` per model, `logz_summary`, mixed `predictive_draws`; mean mixing as a `Model`; recipe 29 | test_diagnostics |
+| stacking by leave-one-dataset-out (new, reference) | `Constraint.masked` dropping a block, `heldout_log_predictive`; recipe 30 | test_diagnostics |
+| cut / modular posterior by multiple imputation (new, reference) | stage-1 `Problem`, per-draw stage-2 `Problem` with the module fixed by closure; per-module `weight`; recipe 31 | test_problem (stage-1 marginal unchanged) |
+| leave-one-experiment-out prediction (new, reference) | block masks, `complement`, `predictive_draws`, `coverage_curve`; recipe 32 | test_diagnostics |
+| posterior predictive check with realised discrepancy (new, reference) | `problem.chi2` at each draw vs replicated data; recipe 33 | test_diagnostics |
+| prior / likelihood power-scaling sensitivity (new, reference) | importance weights from `log_prior`, `log_likelihood` on existing samples; recipe 34 | test_problem (`log_prior` on samples) |
+| simulation-based calibration of the sampler (new, reference) | `sample_prior`, `predictive_draws`, `dataclasses.replace(d, y=)`; recipe 35 | test_problem (rank uniformity on the linear problem) |
+| emulator as `Model`, emulator variance as a `diag` term sharing the model's parameters (new, reference) | recipe 36 | test_terms (a term declaring model parameters receives them) |
+| MAP + Laplace (new, reference) | `scipy.optimize` on `log_posterior`, `problem.bounds`; recipe 37 | test_problem |
+| global error scale and USU modes (new, reference) | `diag` term scaling `c.meta("y_err")` with `statistical=False`; `offset(parameter=, on=blocks_of_technique)`; recipe 38 | test_terms |
+| energy-dependent parameters (new, reference) | per-block `Model` instances closing over `meta`, shared coefficient objects; recipe 39 | test_model |
+| discrepancy on a physical basis, Legendre (new, reference) | `systematic` modes or `omp + Model(basis_sum)`; recipe 40 | test_terms |
+| correlated systematics between observables of one measurement (new, reference) | two blocks, one constraint, spanning mode; recipe 41 | test_covariance |
+| classic normal hierarchical model, BDA3 ch. 5 (new, reference) | marginalised as `noise(log_tau)`, non-centred as a `Model` over `[mu, log_tau, *etas]`, centred as a joint block; recipe 42 | test_problem (marginalised and non-centred agree on `mu, tau`; a parameter on a fully masked block is sampled from its prior) |
+| SafeBayes: learn the tempering exponent (new, reference) | driver loop over `replace(c, weight=η)` and `c.masked(prefix)`; next-point density as a log-likelihood difference; recipe 25 | test_problem (`replace` keeps names; `ll(prefix i+1) − ll(prefix i)` equals the Gaussian conditional) |
+| hyperprior: per-dataset parameters with a sampled spread (new) | joint block `(children + [hyper], obj)` with `logpdf` and `prior_transform` | test_problem (children uncovered without the block; `prior_transform` round trip) |
+| GP discrepancy in x / in momentum transfer with amplitude (gp_discrepancy, TestStudyForms) | `kernel(k, on=b, coords=lambda x: momentum_transfer(x, k), amplitude=..., amplitude_params=...)` | test_terms::TestStudyForms |
+| angle-growing noise, mode ∝ θ, `exp_growth`, `x_basis` (TestStudyForms) | same helpers with `on=` | test_terms::TestStudyForms |
+| direct two-parameter `Term` escape hatch (TestStudyForms) | `Term(lambda c, e, l: ..., (e, l), kind="diag")` | test_terms |
+| Student-t with bounded ν; `Chi2` (robust_likelihoods) | `StudentT(nu=Parameter("nu", bounds=(1, 100)))`; `Chi2()` | test_likelihood closed forms |
+| log-space comparison, delta-method errors, `log_jacobian` (tests) | `Comparison(d, m, space=log)`; `problem.log_jacobian()` | test_constraint::TestComparisonSpace |
+| masks, `masked_where`, `complement`, held-out scoring (tests) | `Constraint.masked_where`, `.complement()`; `heldout_log_predictive` | test_constraint::TestMask (partition, `ll(fit)+ll(held)==ll(full)`) |
+| tempering, two spellings (overconfidence) | `Constraint(weight=)` only | test_problem |
+| joint MVN prior over the optical set (most notebooks) | `Problem(..., priors=[(omp.params, mvn)])` | test_problem::priors |
+| truncated-normal / bounded independent priors (calibration_config_emcee_dynesty) | `Parameter(prior=stats.norm(...), bounds=(lo, hi))` | test_problem::priors |
+| nested-sampling `prior_transform`, now including joint MVN | `problem.prior_transform` | test_problem (round trip, finite at 0 and 1) |
+| emcee, dynesty, black-box-bayes drivers | flat interface on `Problem`; dill round trip | test_problem::drivers |
+| EXFOR → dataset with unit conversion; per-angle Rutherford `norm` (measurement_to_calibration, tests) | `from_measurement(m, reaction=, quantity=)` | test_data (both conversion directions) |
+| elastic `dXS/dA`, `dXS/dRuth`, `Ay` | `ElasticXS(quantity, ...)`; a compound-elastic contribution is subtracted from the data as preprocessing | test_reactions |
+| (p,n) IAS channel (tests) | `IsobaricAnalogPN(...)` | test_reactions (Lane term) |
+| solver settings reach jitr | `ElasticXS(..., lmax=, wavelengths_beyond_range=, zeros_per_node=)` | test_reactions |
+| singular-covariance guard naming the dataset (measurement_to_calibration) | compile-time in `Problem` | test_problem |
+| duplicate-name / same-object validation | `ParameterIndex.check_names_unique`; sharing across constraints is legal | test_problem |
+| covariance heat-maps (normalization_inference, correlated_observations) | `problem.constraints[i].matrix(theta)` | test_covariance dense equality |
+| predictive draws, coverage, sharpness, evidence bookkeeping (tests) | `diagnostics.*` | test_diagnostics |
+| GP conditioning; total predictive band (gp_discrepancy) | `predictive.*` | test_predictive vs sklearn |
+| fine-grid plotting (every reaction notebook) | `omp.bind(x_fine, d.meta)(*s[problem.columns(omp.params)])` | test_model |
 
-## 9. What stays the same
+Four rows are new rather than ported.  The sampled mean discrepancy: today a
+model-side correction that depends on `x` cannot be written, because the
+model transform sees only the prediction.  The three hierarchical rows:
+today a term cannot read its dataset's metadata, `kernel_term` cannot share
+hyperparameters between calls, and a prior cannot depend on a sampled
+hyperparameter.
 
-- The hierarchy: evidence → constraint → block → point.
-- `Term` with `kind in {"diag", "mode", "matrix"}`, the factory helpers, bases
-  and amplitudes as callables of a local context.
-- `Transform` as one type with derivative, inverse, and `|` composition,
-  serving comparison space, mean transforms, and term coordinates.
-- Terms authored in comparison space; delta-method propagation of reported
-  errors; `log_jacobian` for cross-space evidence comparison.
-- Likelihood as a functional of `(d2, logdet, n)`; `Gaussian`, `StudentT`,
-  `Chi2`.
-- Masks as part of support; `complement()` sharing parameters with the fit.
-- Fail fast on singular constant covariances with a named dataset.
-- Tempering applies to the likelihood only.
+**Dropped, deliberately:** `Walker`, `MetropolisHastingsSampler`,
+`AdaptiveMetropolisSampler`, `BatchedAdaptiveMetropolisSampler`, `proposal`,
+`marginal_log_likelihood`, `conditional_posterior`, `predict_parametric`,
+`weighted_marginal_log_likelihood`, `CalibrationConfig`, `ParameterConfig`,
+`Evidence`, `per_observation_scaling`, `identity` keys, `stacked_supports`,
+`split_samples`, `likelihood_scaling`, `IndependentPrior`,
+`TruncatedNormalPrior`, the two `Observation` subclasses, `n_dof`.
 
-## 10. Incremental path
+## 5. Harvest table
 
-None of this requires a rewrite.  In order of payoff per unit of risk:
+What comes across from `src/rxmc` on `api_generalisation`, by file.
 
-1. **`StructuredCovariance` inside `ConstraintCovariance`.**  Replace the
-   internals of `matrix`, `cholesky`, `block_cholesky`, and
-   `stacked_distance`; keep `matrix()` as the dense view.  No public API
-   change.  The existing dense-versus-block equivalence tests are the
-   acceptance tests.  This alone removes every "known limitation".
-2. **Make `Parameter` hashable** (drop `__eq__` or add `__hash__`).
-3. **`support=` accepts observation objects** and is resolved in
-   `Constraint`.  Keep integer supports working.
-4. **`ParameterIndex` built by `Evidence`**, exposing
-   `log_likelihood(theta_flat)` alongside the nested form.  Point
-   `CalibrationConfig.split_parameters`, `model_comparison.split_samples`,
-   `predictive`, and `Walker`'s validation at it.  Lift the cross-constraint
-   sharing ban.  This is the step that unifies the two drivers and fixes the
-   inconsistencies in `bugs_found.md` §5–7.
-5. **`Problem`** as the single compile entry point; `CalibrationConfig`
-   becomes a thin alias, `Walker` takes a `Problem` and slot groups, one
-   chain.
-6. **Bind-time predictors.**  Move workspaces off the reaction observations
-   into `Model.bind`, fold the two observation subclasses into
-   `from_measurement`.  Do this after the α+Ca study lands, since it
-   touches the classes that study uses.
+### Lift verbatim (about 1,100 lines)
 
-Steps 1–3 are local and safe.  Step 4 is the structural one.  Steps 5–6 are
-cleanup that the earlier steps make small.
+| current file | pieces | destination |
+|---|---|---|
+| `transforms.py` | `Transform` (minus `contextual`, `_unpack`), `as_transform`, `identity`, `log`, `exp`, `_safe_log`, `_reciprocal`, `scale` | `transforms.py` |
+| `likelihood_model.py` | `Likelihood`, `GaussianLikelihood`→`Gaussian`, `StudentT`, `Chi2`, `log_likelihood` | `likelihood.py` |
+| `covariance.py` | `TermContext`, `chol_logdet`, `as_2d`, bases `ones`, `ym`, `averaging`, `x_basis`, `exp_growth`, `constant_amplitude`, `exp_growth_amplitude`; helpers `_masked`, `_full`, `_coefficient`, `_scaled_term`, `_kernel_params`; factories `statistical_term`, `offset_term`, `normalization_term`, `noise_term`, `noise_fraction_term`, `model_error_term`, `systematic_term`, `kernel_term` (drop the `_term` suffix, `support=`→`on=`) | `terms.py` |
+| `observation_from_measurement.py` | `ureg`, `XS_UNIT`, `RUTHERFORD_UNIT`, `MB_PER_B`, `DEFAULT_LMAX`, `check_angle_grid`, `measurement_kwargs` | `units.py`, `data.py` |
+| `elastic_diffxs_observation.py` | `set_up_solver`, the `calculate_normalization` conversion table, `momentum_transfer` | `reactions/elastic.py`, `data.py` |
+| `ias_pn_observation.py` | `set_up_solver` | `reactions/ias.py` |
+| `elastic_diffxs_model.py` | `_xs` body, `extract_dXS_dA`, `extract_dXS_dRuth`, `extract_Ay` | `reactions/elastic.py` |
+| `ias_pn_model.py` | `_xs` body | `reactions/ias.py` |
+| `predictive.py` | `gp_posterior_predictive`, `_gp_condition`, `_gp_posterior_mean_var`, `_train_noise_matrix`, `predictive_band` | `predictive.py` |
+| `model_comparison.py` | `_psd_factor`, `_rows`, `coverage_curve`, `coverage_error`, `sharpness`, `log_posterior_predictive`, `logz_summary`, `compare_logz` | `diagnostics.py` |
+| `priors.py` | `clip_unit_cube` | `problem.py` |
 
-## 11. Open questions
+### Lift with edits
 
-- **Joint priors and `prior_transform`.**  Nested sampling needs a
-  unit-cube map.  Independent marginals have one; a multivariate normal
-  needs a whitening transform.  Same situation as today; `Problem` should
-  reject `prior_transform` for joints without a `ppf`-like method rather
-  than guess.
+| current | change |
+|---|---|
+| `Observation.systematic_terms` | → `Comparison.reported_terms`; same delta-method logic (offset at `y_raw`, normalisation at `ym_raw`), `on=self` |
+| `Observation.__init__` transform handling and `_check_finite` | → `Comparison.__post_init__`; error names `data.label` |
+| `Constraint._validate_constant_covariance` message | → compile error raised by `StructuredCovariance.factor_constant_parts`, remedies updated to the new spellings |
+| `model_comparison.predictive_draws`, `heldout_log_predictive` | take `(problem, samples)`; read `CompiledConstraint.ym`, `.matrix`, `.log_likelihood` |
+| `predictive.total_predictive_band` | take `(problem, term, predictor, ...)`; columns from `problem.columns` |
+| `ParameterConfig.prior_transform` cursor | → per-slot map in `assemble_prior` |
+| `ElasticDifferentialXSObservation.from_measurement`, `IsobaricAnalogPNObservation.from_measurement` | one free `from_measurement`; Rutherford from kinematics |
+| `PhysicalModel.Polynomial` | → `polynomial(order)` factory |
+
+### Rewrite
+
+`params.py` (identity semantics, `prior`), the `Term` class body (state
+removed), `ConstraintCovariance` → `StructuredCovariance`, `constraint.py`,
+`evidence.py` + `config.py` → `problem.py`, `physical_model.py` →
+`model.py`, the two observation classes → `from_measurement` + `Model.bind`.
+
+### Drop
+
+`walker.py`, `param_sampling.py`, `metropolis_hastings.py`,
+`adaptive_metropolis.py`, `proposal.py`, `IndependentPrior`,
+`TruncatedNormalPrior`, `as_prior`.
+
+### Tests to port by body
+
+The bodies below encode behaviour, not API, and port with renamed calls:
+
+- `test_covariance.py`: `TestTermKinds`, `TestTermCoords`, `TestFactories`
+  (including `test_old_observation_covariance_equivalence`),
+  `TestKernelTerm`, `TestStudyForms` (every α+Ca error-model form against
+  a hand-built dense matrix), `test_custom_term_direct`.
+- `test_likelihood_model.py`: the closed-form Student-t and `Chi2` values.
+- `test_constraint.py`: `TestComparisonSpaceTransform` (delta method,
+  `log_jacobian == -Σ log y`, `-inf` likelihood and `+inf` chi2 for a
+  non-positive prediction), `TestMask` (complement partition,
+  `ll(fit) + ll(held) == ll(full)`, shared parameters), `TestSingularCovarianceGuard`,
+  `TestSharedParameterCaseB`, `TestStackedConstraint` (case A differs from
+  the independent spelling).
+- `test_observation.py`: `test_systematic_terms_propagated_by_delta_method`,
+  offset-then-normalisation order, zero magnitudes skipped.
+- `test_regression.py`: all three pins, including `1.195784087817536`.
+- `test_model_comparison.py`, `test_predictive.py` (GP matches sklearn's
+  `GaussianProcessRegressor`).
+- `test_reaction_observation.py`: both Rutherford conversion directions,
+  `TestSolverSettingsForwarding`, `TestSharedUnits`.
+- `test_reaction_models.py`: finite non-negative cross sections through
+  real jitr solves; the Lane-term note for the IAS test.
+- `test_config.py::test_black_box_bayes_interface`,
+  `test_priors.py::TestUnitCubeClipping`.
+
+New tests the old suite could not have: dense-versus-structured equality on
+every `TestStudyForms` form, with masks, with a cross-block kernel (dense
+fallback), and with a mode-only block (singular `B`); a parameter shared
+across two constraints; a `dill` round trip of an elastic `Problem` with
+equal `log_posterior`; MVN `prior_transform` round trip and finiteness at
+exactly 0 and 1; `Constraint.weight` scaling the likelihood only.
+
+The ported bodies are unit tests of modules.  The recipe tests under
+`test/recipes/` are the acceptance suite, and §9 lists which recipes each
+milestone unlocks.  Recipe tests use synthetic data and the generic `Model`
+wherever the recipe does not require a reaction model, so they stay fast;
+reaction recipes patch `set_up_solver` as the current
+`test_reaction_observation.py` does, except for one real-solve smoke test.
+
+## 6. Repository layout and budget
+
+```
+rxmc/
+  __init__.py            re-exports; nothing else
+  params.py       ~40    transforms.py   ~230   units.py         ~60
+  data.py        ~180    model.py        ~120   terms.py        ~380
+  likelihood.py   ~90    constraint.py   ~170   covariance.py   ~260
+  problem.py     ~320    diagnostics.py  ~250   predictive.py   ~200
+  reactions/
+    __init__.py
+    elastic.py   ~170    ias.py          ~120
+test/            unit tests, one file per module, plus test_regression.py
+test/recipes/    one file per recipe in docs/recipes.md (~42), the acceptance suite;
+                 oracle.py holds the closed-form linear-Gaussian posterior used by the fast tier
+examples/        9 notebooks (§7)
+docs/            design.md rewritten from this document once the code lands
+```
+
+Runtime dependencies: `numpy`, `scipy`, `pint`, `jitr>=3.0`,
+`exfor-tools`.  `pandas` and `scikit-learn` leave `requirements.txt`
+(neither is imported; kernels stay duck-typed and sklearn moves to the
+`examples` extra).  Extras: `examples` (emcee, dynesty, corner, matplotlib,
+scikit-learn, dill, jupyter), `validation` (examples + pytest, nbmake,
+ruff, black, isort).  Python ≥ 3.12.  Validation is the current contract:
+ruff/black/isort on `src test`, nbqa on `examples`, `pytest test`, then
+`pytest --nbmake examples`.  `pyproject` registers the `slow` marker and
+deselects it by default (`addopts = -m "not slow"`, §9).
+
+## 7. Notebooks
+
+Nine notebooks, each naming the current one it inherits.  Every notebook
+is driven by emcee or dynesty.
+
+| notebook | inherits | driver | new content |
+|---|---|---|---|
+| `linear_calibration` | linear_calibration_demo | emcee | prior predictive, posterior, predictive band with `problem.columns` |
+| `error_models` | systematic_err_demo | emcee | the five-model ladder; two-constraint section with case B via shared `Parameter` |
+| `normalization_and_covariance_structure` | normalization_inference | emcee | ρᵢ as `omp \| scale(rho_i)`; the four-case gallery via `matrix(theta)` |
+| `correlated_observations` | correlated_observations | emcee | case A vs B, toy and n+⁴⁰Ca |
+| `gp_discrepancy` | gp_discrepancy | emcee | `kernel` term; `total_predictive_band(problem, term, ...)`; the same defect fit with a sampled `omp + delta` mean correction for contrast |
+| `robust_likelihoods` | robust_likelihoods | emcee | Student-t vs Gaussian; ν bounded on the `Parameter` |
+| `measurement_to_calibration` | measurement_to_calibration + 30s_optical_potential_calibration + the tempering/coverage section of overconfidence | dynesty | `from_measurement`, `reported_terms`, the singular-covariance error, `Constraint(weight=)`, `coverage_curve` |
+| `alpha_ca_error_model_comparison` | **new** (the `design.md` recipe table) | dynesty | log space, `Parameter(prior=)`, masks, `complement`, `heldout_log_predictive`, `logz_summary` / `compare_logz` with `log_jacobian`, shared noise (B) and coupled normalisation (A) across two datasets, the bbb shim shown but not run |
+| `hierarchical_calibration` | **new** (recipes 24, 39, 42) | dynesty | hierarchy on the physics parameters; see below |
+
+**`hierarchical_calibration` in detail.**  The truth is
+`y = a0(E) + a1(E) x + a2(E) x²`, measured by J synthetic datasets at known
+energies `E_j` (in `meta`) plus one held-out dataset at a new energy.  The
+true coefficient mappings `a_k(E)` are a smooth trend plus non-monotonic
+bumps.  Three fits of the same data:
+
+1. the correct mapping form with global `φ`;
+2. a misspecified smooth mapping `a_k(E; φ) = φ_k0 + φ_k1 E` with global `φ`;
+3. the same smooth mapping plus a per-dataset deviation vector in parameter
+   space, non-centred `δ_j = τ ⊙ η_j`, `η_jk ~ N(0, 1)`,
+   `τ_k ~ HalfNormal`, so the inter-dataset covariance is diagonal with a
+   learned spread (a full covariance through an LKJ-style joint block is
+   the named extension).
+
+Mechanics: one `Model` per block closing over `E_j` (recipe 39).  The
+held-out block is fully masked, so its `η_new` is sampled from the prior
+only, driven by `τ`; `complement()`, `predictive_draws` and
+`heldout_log_predictive` then score the new energy with no extra code.  The
+notebook states this design property explicitly.  Plots: the coefficient
+mappings against `E` with the truth; per-dataset residuals for case 2;
+empirical coverage curves in-sample and on the held-out energy for all
+three cases; sharpness; the posterior of `τ`; the held-out log predictive
+per case.  Expected: case 1 covers in and out of sample; case 2
+under-covers both and shows structured per-dataset residuals; case 3
+recovers coverage with wider, longer-tailed bands at the new energy (a
+scale mixture over `τ`), a `τ` posterior away from zero, and the best
+held-out score of the misspecified pair.  Caveat stated in the notebook:
+with few datasets `φ` and `δ_j` trade off, and the hyperprior on `τ` is
+what resolves it.
+
+Dropped: `sampling_algos` (in-package samplers), `calibration_config_emcee_dynesty`
+(every notebook is now this), `overconfidence` as a standalone.
+
+## 8. Gaps: what exists nowhere today
+
+- **G1 `ParameterIndex` and compile** (`problem.py`): first-seen slot
+  assignment, `on=` resolution against comparisons and datasets, `masks` →
+  `active`, name uniqueness, prior coverage.  About 120 lines.
+- **G2 Prior assembly**: marginal truncation to `bounds`, uniform default,
+  the joint-block protocol including hyperprior blocks,
+  joint blocks, `log_prior`, `prior_transform` (rescaled `ppf`; MVN
+  whitening; other joints must supply their own), `sample_prior`.  About
+  100 lines.
+- **G3 `StructuredCovariance`**: new linear algebra.  Verified against the
+  dense matrix on every `TestStudyForms` case, with masks, with a
+  cross-block kernel, and with a mode-only block.  About 260 lines.
+- **G4 Stateless `Term`, `Comparison`, `Constraint` masks**: including
+  `reported_terms` under a comparison transform and the complement
+  partition property.
+- **G5 Rutherford in `from_measurement`**: resolved, it is a closed form of
+  `reaction.kinematics(Elab)`; no workspace needed.
+- **G6 `dill` picklability**: a test round-trips an elastic `Problem` and
+  compares `log_posterior`.  If a jitr workspace does not pickle,
+  `Predictor.__reduce__` rebuilds it from `(model, x, meta)`; the factory
+  closures in `terms.py` pickle under `dill` as they are.
+- **G7 Analysis on `(problem, samples)`**: `predictive_draws`,
+  `heldout_log_predictive`, `total_predictive_band` selecting columns via
+  `problem.columns`.
+- **G8 The α+Ca and hierarchical notebooks** and the bbb `posterior.py` shim.
+- **G9 Docs**: `design.md` rewritten from this document; API reference
+  regenerated; README quickstart in the new spelling.
+
+## 9. Milestones
+
+Each step is testable on its own in the new repository.  Every milestone
+lists the modules it delivers, the unit tests it ports, and the recipe
+tests it unlocks: a recipe test lands in the first milestone where every
+object it uses exists.  A milestone is done when its unit tests and every
+recipe test it unlocks pass.
+
+0. **Bootstrap.**  A branch `rewrite` of *this* repository, cut from
+   `main` after the 0.x close-out (§11), developed in a git worktree at
+   `~/el/rxmc-ng` with its own virtual environment (`jitr>=3.0` from PyPI,
+   Python ≥ 3.12).  Its first commit removes `src/`, `test/` and
+   `examples/` and keeps `docs/` (this document and `recipes.md` are the
+   plan of record) and the configuration.  Files that move mostly intact
+   (`transforms`, `likelihood`, `units`, the term factories) come over by
+   `git mv` in a commit of their own before any edit, so blame survives
+   the harvest.  Then: a `pyproject` in the current shape with the `slow`
+   marker registered and deselected by default; ruff, black and isort
+   configuration carried over; the CI workflow (fast tier on pull
+   requests, `pytest -m slow` and nbmake on a schedule); a trusted-
+   publishing workflow that uploads to PyPI on tag push.
+1. **`params`, `transforms`, `units`, `likelihood`, `terms`** (verbatim
+   harvest plus the stateless `Term`).  Ported: `TestTermKinds`,
+   `TestTermCoords`, `TestFactories`, `TestKernelTerm`, `TestStudyForms`
+   (term values against hand-built matrices), the closed-form Student-t
+   and `Chi2`, `TestUnitCubeClipping`, `TestSharedUnits`.  Recipe tests
+   unlocked: none end to end (there is no `Problem` yet).  The term-level
+   halves of recipes 19 (fixed-array shape and symmetry checks, a custom
+   callable) and 27 (a `normalization` mode evaluates from `c.ym`, a
+   data-built mode from `c.y`) are written here as unit tests and reused
+   by those recipe tests later.
+2. **`data`** (without `from_measurement`), **`model`** (generic and
+   `polynomial`), **`constraint`** (`Comparison`, `Constraint`, masks,
+   `reported_terms`).  Ported: `TestComparisonSpaceTransform` at block
+   level, delta-method `reported_terms`, `TestMask` construction and the
+   `complement` partition of active sets, name and shape validation.
+   Recipe tests unlocked: none (no likelihood without the covariance).
+3. **`covariance`.**  New: dense-versus-structured equality on every
+   `TestStudyForms` form, with masks, with a cross-block kernel (dense
+   fallback), and with a mode-only block (singular `B` error).  No recipe
+   tests yet.
+4. **`problem`**: index, compile, priors, flat interface; emcee and
+   dynesty smoke tests on the linear problem; `dill` round trip.  The
+   acceptance suite starts here, all on synthetic data with generic
+   models.  Recipe tests unlocked:
+   - core: 1, 2, 4, 5, 6, 8, 9, 10, 11, 12, 13, 16, 19, 20, 21;
+   - hierarchy and sharing: 22, 23, 24, 42;
+   - driver loops needing only `log_likelihood`, `log_prior`,
+     `sample_prior`: 25 (SafeBayes), 26 (KDUQ weights), 27 (Peelle), 31
+     (cut posterior), 34 (power-scaling), 36 (an emulator term sees the
+     model's parameters), 37 (MAP and Laplace), 38, 39, 40;
+   - 28 (the BUQEYE covariance from `c.meta`) with synthetic `y_ref`, `Q`.
+
+   Regression pins carried here: `1.195784087817536`, the old-covariance
+   equivalence, `ll(fit) + ll(held) == ll(full)`, and "a parameter on a
+   fully masked block is sampled from its prior", which recipe 42 and the
+   hierarchical notebook rely on.
+5. **`reactions/elastic`, `reactions/ias`, `from_measurement`.**  Ported:
+   both Rutherford conversion directions, `TestSolverSettingsForwarding`,
+   real-solve smoke tests, the Lane-term IAS check.  Recipe tests
+   unlocked: 3, 14, 15, 41; the reaction variants of 7 and 22
+   (momentum-transfer coordinates, an energy-running amplitude) run
+   against a patched solver.
+6. **`diagnostics`, `predictive`.**  Ported: GP-versus-sklearn,
+   `predictive_draws` covariance recovery, `heldout_log_predictive`,
+   `logz_summary` and `compare_logz`.  Recipe tests unlocked: 7
+   (`total_predictive_band` finds the kernel columns itself), 17, 18, 29,
+   30, 32, 33, 35.
+7. **CI wiring.**  The heading-to-file check between `recipes.md` and
+   `test/recipes/`; `pytest test` runs both suites; the fast tier must
+   finish in a few minutes on a laptop (patched solvers, small `J` and
+   `n`).
+8. **Notebooks 1–9.**  Each notebook names the recipes it is the tutorial
+   for: `linear_calibration` (1, 17); `error_models` (2, 4, 5, 19);
+   `normalization_and_covariance_structure` (3, 6, 27);
+   `correlated_observations` (5, 41); `gp_discrepancy` (7, 8, 40);
+   `robust_likelihoods` (9, 38); `measurement_to_calibration` (12, 14,
+   15, 16, 21, 26); `alpha_ca_error_model_comparison` (10, 11, 13, 18,
+   25); `hierarchical_calibration` (22, 24, 39, 42, and 32 for the
+   held-out energy).  A recipe without a notebook is fine; a notebook must
+   cite at least one recipe.
+9. **`design.md` and README** rewritten from this document.
+
+### Fast and converged tiers
+
+Recipe tests must be fast in CI, but some expected behaviours only hold
+for a converged sampler.  The resolution is two tiers with a strong
+preference for assertions that need no sampler at all.
+
+- **Prefer sampler-free assertions.**  Most expected-behaviour bullets are
+  structural or analytic: names and columns, a covariance equal to a
+  hand-built matrix, `chi2` identities, `ll(fit) + ll(held) == ll(full)`,
+  a mode built from `c.ym`, `prior_transform` round trips, compile-time
+  errors.  These are exact and form the core of every recipe test.
+- **Linear-Gaussian oracle.**  `test/recipes/oracle.py` computes the
+  closed-form posterior and predictive of any recipe instantiated with a
+  linear model and Gaussian terms.  Tests compare `log_posterior` and
+  `predictive_draws` statistics against it without sampling.  This covers
+  the coverage-type claims of recipes 1, 6, 12, 17, 26 and the
+  marginalised form of 42 exactly.
+- **Seeded short chains, qualitative assertions.**  Ordering claims ("case
+  2 under-covers and case 3 recovers"; "the Student-t covers the truth
+  and the Gaussian does not") use a seeded 16-walker, few-hundred-step
+  emcee run on a toy problem and assert only the ordering, with a wide
+  margin.
+- **Converged tier.**  Tests marked `slow` hold the numeric claims
+  (coverage within 0.05 of nominal, `τ` recovered within its interval,
+  evidence differences), record the seed, R-hat and effective sample
+  size so a failure is diagnosable, and run the notebooks through nbmake.
+  They are deselected by default; pull-request CI runs the fast tier and a
+  scheduled job runs `pytest -m slow`.
+- **Rules.**  The fast tier has a budget of a few minutes and zero
+  tolerated flakiness.  A flaky fast assertion is demoted to `slow`, never
+  loosened until it passes.  Every recipe test file has at least one fast
+  test; a slow test is optional and holds the numbers.  Which tier pins
+  each bullet is decided per recipe as the implementation lands.
+
+## 10. Open questions
+
+- **Term-level partial masks.**  The factories accept `mask=` for a partial
+  support today.  `on=(block, point_mask)` would make it a first-class
+  support form; whether that is worth the extra spelling is a matter of
+  taste.  v0 keeps `mask=` on the factories.
+- **Workspace caching across datasets at one energy.**  Correct without
+  it; a factor of a few in setup time with it.  Not in v0.
 - **Cross-constraint modes.**  `U` is per constraint so that constraints
   stay independent and weights stay meaningful.  A mode that couples two
   constraints is, as today, a reason to merge them.
-- **`n_dof`.**  With sharing across constraints allowed, count unique
-  slots, not the sum of per-constraint counts.
-- **Term-level masks.**  Today the factories accept `mask=` for partial
-  support.  With `on=(block, point_mask)` that becomes a first-class support
-  form; whether it is worth the extra spelling is a matter of taste.
+- **Known non-goals.**  The closing section of `recipes.md`, "What this API
+  does not express", lists the calibration classes the skeleton rules out
+  (non-elliptical likelihoods, chain-dependent masks, per-point latents,
+  per-point likelihood factors, mixture likelihoods) with the size of the
+  addition each would need.  Revisit when a study needs one.
+
+## 11. Release path: from 0.x to 1.0 in the same repository
+
+The GitHub repository, its pull-request history, collaborator branches and
+Pages documentation are kept.  `rxmc` is not on PyPI, so the name is free
+and version history there starts at 1.0.
+
+1. **Close out 0.x.**  Merge `api_generalisation` into `main` by pull
+   request.  Tag the merge `v0.1.0` and add a branch `legacy/0.x` at the
+   same commit: the last state of the old design, with this plan in its
+   tree, reachable by name forever.
+2. **Rewrite on a branch.**  `rewrite` is cut from that `main` (§9,
+   milestone 0).  History stays linear; no orphan branch and no force
+   push.  The README on `main` carries a one-line banner pointing at the
+   branch while the rewrite is in progress.
+3. **Pre-releases by tag.**  setuptools_scm reads the version from tags.
+   Tag `v1.0.0a1` after milestone 4, `v1.0.0b1` after milestone 6,
+   `v1.0.0rc1` after milestone 8; each tag push publishes to PyPI as a
+   pre-release (installable with `pip install --pre rxmc`).  Publishing
+   `a1` early claims the PyPI name; try TestPyPI once first.
+4. **Release.**  Pull request `rewrite` into `main`, ordinary merge, tag
+   `v1.0.0`, GitHub Release, PyPI publish, Pages rebuild from `main`.  The
+   README then notes that 0.x lives at `v0.1.0` and `legacy/0.x`.
+5. **Old branches.**  Collaborators' branches are left alone; superseded
+   ones may be deleted after 1.0.
