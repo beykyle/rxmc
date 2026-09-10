@@ -134,6 +134,12 @@ class StructuredCovariance:
         self._cache = None
         if self.is_constant:
             self._factor(self._D0, self._U0, self._M0, self._X0)
+        elif not self.dense and all(
+            e.term.is_constant for e in self.entries if e.term.kind != "mode"
+        ):
+            # modes never enter B, so B is constant even with parametric modes:
+            # fail now, by label, rather than at the first likelihood call
+            self._check_blocks(self._D0, self._M0)
 
     # -- assembly -------------------------------------------------------------
 
@@ -243,6 +249,15 @@ class StructuredCovariance:
         if self.is_constant:
             self._cache = factors
         return factors
+
+    def _check_blocks(self, D, M):
+        try:
+            for b, pos in enumerate(self.block_pos):
+                if pos.size:
+                    B = np.diag(D[pos]) + (0.0 if M[b] is None else M[b])
+                    sla.cholesky(B, lower=True)
+        except np.linalg.LinAlgError as err:
+            raise ValueError(self._singular_message(D)) from err
 
     def _singular_message(self, D):
         offenders = [

@@ -448,8 +448,14 @@ class Problem:
                 raise TypeError(f"constraints must be Constraint objects, got {c!r}")
         self.index = ParameterIndex()
         self.constraints = tuple(CompiledConstraint(c, self.index) for c in constraints)
-        self.index.check_names_unique()
         self.priors = tuple(priors)
+        # a hyperprior block may introduce a parameter no model or term uses (its
+        # hyperparameter); it gets a slot after every constraint's parameters
+        for entry in self.priors:
+            params = entry[0] if not isinstance(entry, Parameter) else entry
+            params = [params] if isinstance(params, Parameter) else list(params)
+            self.index.add_all(params)
+        self.index.check_names_unique()
         self._prior = _Prior(self.index, self.priors)
 
     # -- structure ----------------------------------------------------------

@@ -259,13 +259,17 @@ class TestConstantAndSingular:
         cov, _ = build(terms, self.x, self.y, self.offsets, rows=[np.arange(6)] * 2)
         assert cov.is_constant
 
-    def test_parametric_covariance_is_not_checked_at_construction(self):
-        terms = [
-            offset(parameter=Parameter("w"))
-        ]  # singular B at every theta, but parametric
-        cov, _ = build(terms, self.x, self.y, self.offsets)
+    def test_modes_alone_fail_at_construction_even_when_parametric(self):
+        # modes never enter the block factor B, so B is constant and checkable
         with pytest.raises(ValueError, match="singular"):
-            cov.distance(self.ym, [0.0])
+            build([offset(parameter=Parameter("w"))], self.x, self.y, self.offsets)
+
+    def test_parametric_diagonal_defers_the_check(self):
+        # B depends on theta here: nothing to check until the first evaluation
+        cov, _ = build([noise(Parameter("e"))], self.x, self.y, self.offsets)
+        assert not cov.is_constant
+        d2, logdet = cov.distance(self.ym, [np.log(0.3)])
+        assert np.isfinite(d2) and np.isfinite(logdet)
 
 
 def test_chol_logdet_on_a_diagonal():

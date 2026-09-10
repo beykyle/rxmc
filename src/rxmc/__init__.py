@@ -20,6 +20,7 @@ from .model import Model as Model
 from .model import polynomial as polynomial
 from .params import Parameter as Parameter
 from .problem import Problem as Problem
+from .terms import Term as Term
 
 try:
     from .__version__ import __version__ as __version__
@@ -34,6 +35,7 @@ __all__ = [
     "Model",
     "Parameter",
     "Problem",
+    "Term",
     "polynomial",
     "constraint",
     "covariance",
