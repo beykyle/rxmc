@@ -755,14 +755,17 @@ c_t0 = rx.Constraint([comp], terms=[rx.Term(d.norm_err * comp.space(t0), kind="m
 
 Expected behaviour:
 
-- With the data-built mode, a fit of a constant to `n` points with fractional
-  normalisation error `s` is biased low, by an amount that grows with `n`
-  and hardly depends on the statistical error (two points at 1.5 and 1.0
-  with `s = 0.2` fit *below both*).  This is D'Agostini's bias and the
-  origin of Peelle's Pertinent Puzzle.  The prediction-built mode removes
-  that bias; what remains is a smaller pull from the log-determinant, which
-  grows with the fitted value, and the `t0` refit removes that too.  An
-  additive offset mode has no such bias either way.
+- With the data-built mode, a fit of a constant `t` to `n` points with
+  statistical error `σ` and fractional normalisation error `s` has the
+  exact closed form `t = ȳ / (1 + (s/σ)² Σ(yᵢ − ȳ)²)`: the fluctuations
+  feed back into the covariance and pull the estimate low, by
+  `1 / (1 + (n − 1) s²)` in leading-order expectation, independent of `σ`
+  (two points at 1.5 and 1.0 with `s = 0.2` fit *below both*).  This is
+  D'Agostini's bias and the origin of Peelle's Pertinent Puzzle.  The
+  prediction-built mode removes that bias; what remains is a smaller pull
+  from the log-determinant, which grows with the fitted value, and the
+  `t0` refit removes that too.  An additive offset mode has no such bias
+  either way.
 - `normalization()` reads `c.ym`, so the default spelling is the safe one.
   A free `log_eta` (recipe 4) also multiplies the prediction.
 - The `t0` mode makes the covariance constant, so it is factored once;

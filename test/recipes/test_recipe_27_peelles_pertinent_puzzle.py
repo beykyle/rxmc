@@ -45,11 +45,29 @@ def test_data_built_mode_is_biased_low_and_prediction_built_is_not():
     assert y.min() < c_ok < y.max()
 
 
+def test_data_built_fit_has_the_exact_closed_form():
+    # GLS with Sigma = sigma^2 I + s^2 y y^T collapses (Sherman-Morrison) to
+    #   t = ybar / (1 + (s / sigma)^2 * sum (y_i - ybar)^2)
+    # exact per dataset; the (n - 1) s^2 factor is its leading-order expectation
+    rng = np.random.default_rng(0)
+    val, s, sigma = 2.0, 0.3, 0.2
+    for n in (4, 12):
+        y = val + rng.normal(0, sigma, n)
+        t_hat = constant_fit(y, s, "data", stat=sigma)
+        closed = y.mean() / (1 + (s / sigma) ** 2 * np.sum((y - y.mean()) ** 2))
+        assert t_hat == pytest.approx(closed, rel=1e-4)
+        assert t_hat < val  # biased low
+    # the fluctuations drive the bias: identical points give no bias at all
+    flat = np.full(6, val)
+    assert constant_fit(flat, s, "data", stat=sigma) == pytest.approx(val, rel=1e-4)
+
+
 def test_the_three_spellings_order_as_the_recipe_says():
     # seeded replicates of n noisy points around a constant.  The data-built
-    # mode biases the fit low (D'Agostini); the live prediction-built mode
-    # removes that but its log-determinant still pulls the mode down; the t0
-    # refit (mode frozen at a reference prediction) is unbiased.
+    # mode biases the fit low (D'Agostini), roughly by 1 / (1 + (n - 1) s^2);
+    # the live prediction-built mode removes that but its log-determinant still
+    # pulls the mode down; the t0 refit (mode frozen at a reference prediction)
+    # is unbiased.
     rng = np.random.default_rng(0)
     val, s, sigma = 2.0, 0.3, 0.2
     means = {}
@@ -68,4 +86,6 @@ def test_the_three_spellings_order_as_the_recipe_says():
         data_built, live, t0 = means[n]
         assert data_built < live < val
         assert abs(t0 - val) < 0.1
+        # leading-order expectation, above it by Jensen's inequality
+        assert val / (1 + (n - 1) * s**2) < data_built < val
     assert means[12][0] < means[4][0]  # the data-built bias grows with n
