@@ -9,6 +9,7 @@ from . import covariance as covariance
 from . import data as data
 from . import likelihood as likelihood
 from . import model as model
+from . import problem as problem
 from . import terms as terms
 from . import transforms as transforms
 from . import units as units
@@ -18,6 +19,7 @@ from .data import Dataset as Dataset
 from .model import Model as Model
 from .model import polynomial as polynomial
 from .params import Parameter as Parameter
+from .problem import Problem as Problem
 
 try:
     from .__version__ import __version__ as __version__
@@ -31,12 +33,14 @@ __all__ = [
     "Dataset",
     "Model",
     "Parameter",
+    "Problem",
     "polynomial",
     "constraint",
     "covariance",
     "data",
     "likelihood",
     "model",
+    "problem",
     "terms",
     "transforms",
     "units",
