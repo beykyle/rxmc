@@ -696,21 +696,17 @@ rewrite: a capability is done when its row has a test.
 | discrepancy correlated across energies: GP over (E, θ) (new) | one `matrix` `Term` with `on=comps` building inputs from `c.meta` and `c.x`; dense path | test_covariance (dense fallback equals hand-built product kernel) |
 | unaccounted-for model error per data type, KDUQ (new, reference) | `model_error(delta_T, averaging=True, on=b)` with one `delta_T` per type; the `k/N` democratic and per-type federal scalings are `Constraint(weight=)`; recipe 26 | test_terms (shared object gives one column per type) |
 | Peelle's Pertinent Puzzle avoidance (new, reference) | `normalization()` reads `c.ym`; the `t0` variant as a constant `mode`; recipe 27 | test_terms (data-built mode reproduces the `1/(1+n s²)` bias; prediction-built does not) |
-| EFT truncation-error GP with known convergence pattern, BUQEYE (new, reference) | `matrix` `Term` from `c.meta("y_ref")`, `c.meta("Q")`, `c.x`; rank-one form via `systematic`; recipe 28 | test_covariance (dense equals the closed-form covariance) |
-| Bayesian model averaging / mixing, domain correction (new, reference) | one `Problem` per model, `logz_summary`, mixed `predictive_draws`; mean mixing as a `Model`; recipe 29 | test_diagnostics |
-| stacking by leave-one-dataset-out (new, reference) | `Constraint.masked` dropping a block, `heldout_log_predictive`; recipe 30 | test_diagnostics |
-| cut / modular posterior by multiple imputation (new, reference) | stage-1 `Problem`, per-draw stage-2 `Problem` with the module fixed by closure; per-module `weight`; recipe 31 | test_problem (stage-1 marginal unchanged) |
-| leave-one-experiment-out prediction (new, reference) | block masks, `complement`, `predictive_draws`, `coverage_curve`; recipe 32 | test_diagnostics |
-| posterior predictive check with realised discrepancy (new, reference) | `problem.chi2` at each draw vs replicated data; recipe 33 | test_diagnostics |
-| prior / likelihood power-scaling sensitivity (new, reference) | importance weights from `log_prior`, `log_likelihood` on existing samples; recipe 34 | test_problem (`log_prior` on samples) |
-| simulation-based calibration of the sampler (new, reference) | `sample_prior`, `predictive_draws`, `dataclasses.replace(d, y=)`; recipe 35 | test_problem (rank uniformity on the linear problem) |
-| emulator as `Model`, emulator variance as a `diag` term sharing the model's parameters (new, reference) | recipe 36 | test_terms (a term declaring model parameters receives them) |
-| MAP + Laplace (new, reference) | `scipy.optimize` on `log_posterior`, `problem.bounds`; recipe 37 | test_problem |
-| global error scale and USU modes (new, reference) | `diag` term scaling `c.meta("y_err")` with `statistical=False`; `offset(parameter=, on=blocks_of_technique)`; recipe 38 | test_terms |
-| energy-dependent parameters (new, reference) | per-block `Model` instances closing over `meta`, shared coefficient objects; recipe 39 | test_model |
-| discrepancy on a physical basis, Legendre (new, reference) | `systematic` modes or `omp + Model(basis_sum)`; recipe 40 | test_terms |
-| correlated systematics between observables of one measurement (new, reference) | two blocks, one constraint, spanning mode; recipe 41 | test_covariance |
-| classic normal hierarchical model, BDA3 ch. 5 (new, reference) | marginalised as `noise(log_tau)`, non-centred as a `Model` over `[mu, log_tau, *etas]`, centred as a joint block; recipe 42 | test_problem (marginalised and non-centred agree on `mu, tau`; a parameter on a fully masked block is sampled from its prior) |
+| stacking by leave-one-dataset-out (new, reference) | `Constraint.masked` dropping a block, `heldout_log_predictive`; recipe 28 | test_diagnostics |
+| cut / modular posterior by multiple imputation (new, reference) | stage-1 `Problem`, per-draw stage-2 `Problem` with the module fixed by closure; per-module `weight`; recipe 29 | test_problem (stage-1 marginal unchanged) |
+| leave-one-experiment-out prediction (new, reference) | block masks, `complement`, `predictive_draws`, `coverage_curve`; recipe 30 | test_diagnostics |
+| simulation-based calibration of the sampler (new, reference) | `sample_prior`, `predictive_draws`, `dataclasses.replace(d, y=)`; recipe 31 | test_problem (rank uniformity on the linear problem) |
+| emulator as `Model`, emulator variance as a `diag` term sharing the model's parameters (new, reference) | recipe 32 | test_terms (a term declaring model parameters receives them) |
+| MAP + Laplace (new, reference) | `scipy.optimize` on `log_posterior`, `problem.bounds`; recipe 33 | test_problem |
+| global error scale and USU modes (new, reference) | `diag` term scaling `c.meta("y_err")` with `statistical=False`; `offset(parameter=, on=blocks_of_technique)`; recipe 34 | test_terms |
+| energy-dependent parameters (new, reference) | per-block `Model` instances closing over `meta`, shared coefficient objects; recipe 35 | test_model |
+| discrepancy on a physical basis, Legendre (new, reference) | `systematic` modes or `omp + Model(basis_sum)`; recipe 36 | test_terms |
+| correlated systematics between observables of one measurement (new, reference) | two blocks, one constraint, spanning mode; recipe 37 | test_covariance |
+| classic normal hierarchical model, BDA3 ch. 5 (new, reference) | marginalised as `noise(log_tau)`, non-centred as a `Model` over `[mu, log_tau, *etas]`, centred as a joint block; recipe 38 | test_problem (marginalised and non-centred agree on `mu, tau`; a parameter on a fully masked block is sampled from its prior) |
 | SafeBayes: learn the tempering exponent (new, reference) | driver loop over `replace(c, weight=η)` and `c.masked(prefix)`; next-point density as a log-likelihood difference; recipe 25 | test_problem (`replace` keeps names; `ll(prefix i+1) − ll(prefix i)` equals the Gaussian conditional) |
 | hyperprior: per-dataset parameters with a sampled spread (new) | joint block `(children + [hyper], obj)` with `logpdf` and `prior_transform` | test_problem (children uncovered without the block; `prior_transform` round trip) |
 | GP discrepancy in x / in momentum transfer with amplitude (gp_discrepancy, TestStudyForms) | `kernel(k, on=b, coords=lambda x: momentum_transfer(x, k), amplitude=..., amplitude_params=...)` | test_terms::TestStudyForms |
@@ -850,7 +846,7 @@ rxmc/
     __init__.py
     elastic.py   ~170    ias.py          ~120
 test/            unit tests, one file per module, plus test_regression.py
-test/recipes/    one file per recipe in docs/recipes.md (~42), the acceptance suite;
+test/recipes/    one file per recipe in docs/recipes.md (~38), the acceptance suite;
                  oracle.py holds the closed-form linear-Gaussian posterior used by the fast tier
 examples/        9 notebooks (§7)
 docs/            design.md rewritten from this document once the code lands
@@ -881,7 +877,7 @@ is driven by emcee or dynesty.
 | `robust_likelihoods` | robust_likelihoods | emcee | Student-t vs Gaussian; ν bounded on the `Parameter` |
 | `measurement_to_calibration` | measurement_to_calibration + 30s_optical_potential_calibration + the tempering/coverage section of overconfidence | dynesty | `from_measurement`, `reported_terms`, the singular-covariance error, `Constraint(weight=)`, `coverage_curve` |
 | `alpha_ca_error_model_comparison` | **new** (the `design.md` recipe table) | dynesty | log space, `Parameter(prior=)`, masks, `complement`, `heldout_log_predictive`, `logz_summary` / `compare_logz` with `log_jacobian`, shared noise (B) and coupled normalisation (A) across two datasets, the bbb shim shown but not run |
-| `hierarchical_calibration` | **new** (recipes 24, 39, 42) | dynesty | hierarchy on the physics parameters; see below |
+| `hierarchical_calibration` | **new** (recipes 24, 35, 38) | dynesty | hierarchy on the physics parameters; see below |
 
 **`hierarchical_calibration` in detail.**  The truth is
 `y = a0(E) + a1(E) x + a2(E) x²`, measured by J synthetic datasets at known
@@ -897,7 +893,7 @@ bumps.  Three fits of the same data:
    learned spread (a full covariance through an LKJ-style joint block is
    the named extension).
 
-Mechanics: one `Model` per block closing over `E_j` (recipe 39).  The
+Mechanics: one `Model` per block closing over `E_j` (recipe 35).  The
 held-out block is fully masked, so its `η_new` is sampled from the prior
 only, driven by `τ`; `complement()`, `predictive_draws` and
 `heldout_log_predictive` then score the new energy with no extra code.  The
@@ -991,28 +987,27 @@ recipe test it unlocks pass.
    acceptance suite starts here, all on synthetic data with generic
    models.  Recipe tests unlocked:
    - core: 1, 2, 4, 5, 6, 8, 9, 10, 11, 12, 13, 16, 19, 20, 21;
-   - hierarchy and sharing: 22, 23, 24, 42;
+   - hierarchy and sharing: 22, 23, 24, 38;
    - driver loops needing only `log_likelihood`, `log_prior`,
-     `sample_prior`: 25 (SafeBayes), 26 (KDUQ weights), 27 (Peelle), 31
-     (cut posterior), 34 (power-scaling), 36 (an emulator term sees the
-     model's parameters), 37 (MAP and Laplace), 38, 39, 40;
-   - 28 (the BUQEYE covariance from `c.meta`) with synthetic `y_ref`, `Q`.
+     `sample_prior`: 25 (SafeBayes), 26 (KDUQ weights), 27 (Peelle), 29
+     (cut posterior), 32 (an emulator term sees the model's parameters),
+     33 (MAP and Laplace), 34, 35, 36.
 
    Regression pins carried here: `1.195784087817536`, the old-covariance
    equivalence, `ll(fit) + ll(held) == ll(full)`, and "a parameter on a
-   fully masked block is sampled from its prior", which recipe 42 and the
+   fully masked block is sampled from its prior", which recipe 38 and the
    hierarchical notebook rely on.
 5. **`reactions/elastic`, `reactions/ias`, `from_measurement`.**  Ported:
    both Rutherford conversion directions, `TestSolverSettingsForwarding`,
    real-solve smoke tests, the Lane-term IAS check.  Recipe tests
-   unlocked: 3, 14, 15, 41; the reaction variants of 7 and 22
+   unlocked: 3, 14, 15, 37; the reaction variants of 7 and 22
    (momentum-transfer coordinates, an energy-running amplitude) run
    against a patched solver.
 6. **`diagnostics`, `predictive`.**  Ported: GP-versus-sklearn,
    `predictive_draws` covariance recovery, `heldout_log_predictive`,
    `logz_summary` and `compare_logz`.  Recipe tests unlocked: 7
-   (`total_predictive_band` finds the kernel columns itself), 17, 18, 29,
-   30, 32, 33, 35.
+   (`total_predictive_band` finds the kernel columns itself), 17, 18, 28,
+   30, 31.
 7. **CI wiring.**  The heading-to-file check between `recipes.md` and
    `test/recipes/`; `pytest test` runs both suites; the fast tier must
    finish in a few minutes on a laptop (patched solvers, small `J` and
@@ -1020,10 +1015,10 @@ recipe test it unlocks pass.
 8. **Notebooks 1–9.**  Each notebook names the recipes it is the tutorial
    for: `linear_calibration` (1, 17); `error_models` (2, 4, 5, 19);
    `normalization_and_covariance_structure` (3, 6, 27);
-   `correlated_observations` (5, 41); `gp_discrepancy` (7, 8, 40);
-   `robust_likelihoods` (9, 38); `measurement_to_calibration` (12, 14,
+   `correlated_observations` (5, 37); `gp_discrepancy` (7, 8, 36);
+   `robust_likelihoods` (9, 34); `measurement_to_calibration` (12, 14,
    15, 16, 21, 26); `alpha_ca_error_model_comparison` (10, 11, 13, 18,
-   25); `hierarchical_calibration` (22, 24, 39, 42, and 32 for the
+   25); `hierarchical_calibration` (22, 24, 35, 38, and 30 for the
    held-out energy).  A recipe without a notebook is fine; a notebook must
    cite at least one recipe.
 9. **`design.md` and README** rewritten from this document.
@@ -1044,7 +1039,7 @@ preference for assertions that need no sampler at all.
   linear model and Gaussian terms.  Tests compare `log_posterior` and
   `predictive_draws` statistics against it without sampling.  This covers
   the coverage-type claims of recipes 1, 6, 12, 17, 26 and the
-  marginalised form of 42 exactly.
+  marginalised form of 38 exactly.
 - **Seeded short chains, qualitative assertions.**  Ordering claims ("case
   2 under-covers and case 3 recovers"; "the Student-t covers the truth
   and the Gaussian does not") use a seeded 16-walker, few-hundred-step

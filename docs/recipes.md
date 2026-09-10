@@ -748,92 +748,7 @@ Neudecker, Leeb, *Peelle's Pertinent Puzzle and its solution*, EPJ Web Conf.
 27, 00008 (2012); Ball et al. (NNPDF), *Fitting parton distribution data
 with multiplicative normalization uncertainties*, JHEP 05 (2010) 075.
 
-## 28. EFT truncation error as a correlated GP with a known convergence pattern
-
-*My model is an order-`k` EFT prediction.  I know the expansion parameter
-`Q(x)` and a reference scale `y_ref(x)`, and I want the omitted orders as a
-correlated theory covariance added to the experimental one.*
-
-```python
-cbar = rx.Parameter("cbar", prior=stats.invgamma(3, scale=1))      # or fixed from lower orders
-ell  = rx.Parameter("ell", prior=stats.lognorm(0.5))
-
-def truncation(c, cbar, ell):
-    yr, Q = c.meta("y_ref"), c.meta("Q")
-    R = Matern(ell, nu=2.5)(c.x[:, None])
-    return cbar**2 * np.outer(yr, yr) * np.outer(Q, Q) ** (k + 1) / (1 - np.outer(Q, Q)) * R
-
-sig_th = rx.Term(truncation, (cbar, ell), kind="matrix", on=comp)
-c = rx.Constraint([comp], terms=[sig_th])                        # Σ = Σ_exp + Σ_th
-
-# the rank-one, next-order-only form (one naturalness-distributed coefficient)
-sig_next = T.systematic(log_c, basis=lambda c: c.meta("y_ref") * c.meta("Q") ** (k + 1), on=comp)
-```
-
-Expected behaviour:
-
-- Different observables are conditionally independent given the LECs, so
-  one constraint per observable and shared `cbar`, `ell` across them.
-- `cbar` and `ell` may be fixed at values learned from the known
-  lower-order coefficients, or sampled; with a conjugate prior on `cbar²`
-  the marginal over it is a Student-t process, which `rx.StudentT()` does
-  not reproduce exactly (it applies one radial factor to the whole
-  residual, including the experimental part).  Sampling `cbar` is the
-  faithful spelling.
-- The dense matrix equals the closed-form BUQEYE covariance; the pivoted
-  Cholesky and Mahalanobis diagnostics of the paper are recipe 33 applied to
-  this term.
-
-References: Melendez, Furnstahl, Phillips, Pratola, Wesolowski,
-*Quantifying correlated truncation errors in effective field theory*, Phys.
-Rev. C 100, 044001 (2019), arXiv:1904.10581; Phillips et al., *Get on the
-BAND wagon*, J. Phys. G 48, 072001 (2021) for the rank-one form.
-
-## 29. Bayesian model averaging and mixing across models
-
-*I have several models of the same observable.  I want evidence-weighted
-predictions, and I want to handle models that only cover part of the data.*
-
-```python
-problems = {name: rx.Problem([rx.Constraint([rx.Comparison(d, m)], terms=[T.noise(log_eps), gp])], priors)
-            for name, m in models.items()}
-runs = {name: run_dynesty(p) for name, p in problems.items()}
-logz = np.array([runs[n].logz[-1] for n in models])
-w = np.exp(logz - logz.max()); w /= w.sum()                      # p(M_k | y) with uniform prior
-draws = np.concatenate([rx.diagnostics.predictive_draws(problems[n], runs[n].samples_equal()[:int(w_k * N)])
-                        for n, w_k in zip(models, w)])           # the BMA predictive
-
-# domain correction for a model covering only a subset: score its uncovered
-# points under the other models' posteriors
-uncovered = rx.Problem([c.masked(cover_k).complement()], priors)
-lp = rx.diagnostics.log_posterior_predictive(rx.diagnostics.heldout_log_predictive(uncovered, samples_other))
-
-# input-dependent *mean* mixing is a Model
-mix = rx.Model(lambda x, a, b, *p: alpha(x, a, b) * f1(x, *p) + (1 - alpha(x, a, b)) * f2(x, *p), [a, b, *p])
-```
-
-Expected behaviour:
-
-- Each model is its own `Problem`; parameters shared across models by
-  object are one column in each chain and are not mixed across problems.
-- The BMA posterior-mean predictor has posterior mean squared error no
-  larger than any convex combination of the individual model means, with
-  equality at the evidence weights.
-- Setting the uncovered-data factor to one rewards models that withhold
-  predictions at hard points; the corrective factor above removes that.
-- Mixing weights that depend on `x` (Bayesian model mixing) are
-  expressible for the *mean*; a per-point two-component mixture
-  *likelihood* is not (see the closing section).
-
-References: Kejzlar, Neufcourt, Maiti, Viens, *Bayesian averaging of
-computer models with domain discrepancies: a nuclear physics perspective*,
-arXiv:1904.04793; Neufcourt, Cao, Nazarewicz, Olsen, Viens, *Neutron drip
-line in the Ca region from Bayesian model averaging*, Phys. Rev. Lett. 122,
-062502 (2019), arXiv:1901.07632; Semposki, Furnstahl, Phillips,
-*Interpolating between small- and large-g expansions using Bayesian model
-mixing*, Phys. Rev. C 106, 044002 (2022), arXiv:2206.04116.
-
-## 30. Stacking by leave-one-dataset-out
+## 28. Stacking by leave-one-dataset-out
 
 *Evidence weights assume the true model is among my candidates.  I would
 rather weight models by how well they predict each dataset when it is left
@@ -869,7 +784,7 @@ Bayesian predictive distributions*, Bayesian Analysis 13, 917 (2018);
 Vehtari, Gelman, Gabry, *Practical Bayesian model evaluation using
 leave-one-out cross-validation and WAIC*, Stat. Comput. 27, 1413 (2017).
 
-## 31. Cut (modular) posterior by multiple imputation
+## 29. Cut (modular) posterior by multiple imputation
 
 *One module of my model, say a systematic-error parameter or a GP
 hyperparameter, should be learned from its own data only and not be
@@ -909,7 +824,7 @@ References: Plummer, *Cuts in Bayesian graphical models*, Stat. Comput. 25,
 learning in models made of modules*, arXiv:1708.08719; Bayarri et al., *A
 framework for validation of computer models*, Technometrics 49, 138 (2007).
 
-## 32. Leave-one-experiment-out prediction
+## 30. Leave-one-experiment-out prediction
 
 *I want to know whether the calibrated model, with its discrepancy,
 predicts an experiment it was not fit to, and with what tolerance.*
@@ -938,67 +853,7 @@ References: Higdon, Gattiker, Williams, Rightley, *Computer model
 calibration using high-dimensional output*, J. Am. Stat. Assoc. 103, 570
 (2008); Bayarri et al., Technometrics 49, 138 (2007).
 
-## 33. Posterior predictive checks with a realised discrepancy
-
-*I want a goodness-of-fit measure that depends on the parameters, such as
-the chi-squared at each posterior draw, and a reference distribution for
-it.*
-
-```python
-d2_obs = np.array([problem.chi2(s) for s in samples])
-rep = rx.diagnostics.predictive_draws(problem, samples, n_rep=1)          # one replicate per draw
-d2_rep = np.array([chi2_of(problem, s, y_rep) for s, y_rep in zip(samples, rep)])
-p_value = np.mean(d2_rep >= d2_obs)
-```
-
-Expected behaviour:
-
-- `chi2_of` is `problem.chi2` evaluated with the replicate in place of the
-  data; write it as `dataclasses.replace(d, y=y_rep)` and a rebuilt
-  problem, or from the compiled constraint's factor.  A posterior p-value
-  near 0 or 1 flags misfit.
-- For a Gaussian constraint with a fixed covariance the replicated
-  chi-squared is `χ²(n)`; with sampled covariance parameters it is not, and
-  the posterior predictive reference is the point.
-- The pivoted Cholesky and Mahalanobis diagnostics of recipe 28 are this
-  check applied to a theory covariance.
-
-Reference: Gelman, Meng, Stern, *Posterior predictive assessment of model
-fitness via realized discrepancies*, Statistica Sinica 6, 733 (1996).
-
-## 34. Prior and likelihood sensitivity by power-scaling
-
-*I want to know whether my posterior is driven by the prior, by the
-likelihood, or by a conflict between them, without refitting.*
-
-```python
-lp = np.array([problem.log_prior(s) for s in samples])
-ll = np.array([problem.log_likelihood(s) for s in samples])
-def reweighted(alpha, which):
-    logw = (alpha - 1) * (lp if which == "prior" else ll)
-    w = np.exp(logw - logsumexp(logw))
-    return w                                            # smooth with PSIS before trusting
-for alpha in (0.99, 1.01):
-    for which in ("prior", "likelihood"):
-        w = reweighted(alpha, which)
-        shift = weighted_ecdf_distance(samples, w)     # per column
-```
-
-Expected behaviour:
-
-- Sensitivity to both indicates prior-data conflict; to the prior alone, an
-  uninformative likelihood; to the likelihood alone, the benign case.
-- In a hierarchical joint block only the hyperprior should be scaled.  The
-  user's joint object must expose that term separately; the opaque
-  `logpdf` alone is not enough for this diagnostic.
-- Weights are importance weights on existing draws; keep `alpha` close to
-  one and use Pareto-smoothed weights.
-
-Reference: Kallioinen, Paananen, Bürkner, Vehtari, *Detecting and
-diagnosing prior and likelihood sensitivity with power-scaling*, Stat.
-Comput. 34 (2024), arXiv:2107.14054.
-
-## 35. Simulation-based calibration of the sampler
+## 31. Simulation-based calibration of the sampler
 
 *Before trusting a chain, I want to check that the sampler recovers
 parameters drawn from the prior when the data are simulated from the
@@ -1023,13 +878,14 @@ Expected behaviour:
 - Chains must be thinned to roughly independent draws first, or spurious
   boundary spikes appear.
 - SBC validates the computation under the assumed model; it says nothing
-  about whether the model fits real data.  That is recipe 33.
+  about whether the model fits real data; that is the posterior predictive
+  coverage check of recipe 17.
 
 Reference: Talts, Betancourt, Simpson, Vehtari, Gelman, *Validating
 Bayesian inference algorithms with simulation-based calibration*,
 arXiv:1804.06788.
 
-## 36. Emulator as the model, emulator variance as a term
+## 32. Emulator as the model, emulator variance as a term
 
 *My model is too expensive to run in the chain.  I have a GP or PCA
 emulator trained on a design of runs, and I want its predictive variance
@@ -1047,7 +903,7 @@ Expected behaviour:
   receives the current `theta` and can evaluate the emulator variance
   there.  No special mechanism.
 - Bayarri et al. recommend fixing emulator hyperparameters at their
-  estimates from the design runs (recipe 31 with T = 1) because emulator
+  estimates from the design runs (recipe 29 with T = 1) because emulator
   uncertainty is usually dominated by calibration and bias uncertainty.
 - The only full-posterior nuclear EDF calibration to 2015 replaced the
   code by a GP response surface exactly this way.
@@ -1058,7 +914,7 @@ Schunck, Higdon, Sarich, Wild, Nazarewicz, Phys. Rev. Lett. 114, 122501
 nuclear density functional theory*, Eur. Phys. J. A 51, 169 (2015); Bayarri
 et al., Technometrics 49, 138 (2007).
 
-## 37. MAP and Laplace approximation
+## 33. MAP and Laplace approximation
 
 *I want a quick Gaussian approximation to the posterior, and to know when
 it is good enough.*
@@ -1085,7 +941,7 @@ References: Pruitt, Lovell, Hebborn, Nunes, *The role of the likelihood for
 elastic scattering uncertainty quantification*, arXiv:2403.00753; Schunck
 et al., Eur. Phys. J. A 51, 169 (2015).
 
-## 38. Global error scale factor and unrecognised sources of uncertainty
+## 34. Global error scale factor and unrecognised sources of uncertainty
 
 *Repeated measurements scatter more than their stated errors.  I want a
 global scale on the reported errors, or a fully correlated unknown
@@ -1121,7 +977,7 @@ physics*, AIP Conf. Proc. 954 (2007), arXiv:0712.0021; Capote et al.,
 *Unrecognized sources of uncertainties (USU) in experimental nuclear data*,
 Nucl. Data Sheets 163, 191 (2020), arXiv:1911.01825.
 
-## 39. Energy-dependent parameters and per-comparison model instances
+## 35. Energy-dependent parameters and per-comparison model instances
 
 *A potential depth depends on energy through a few coefficients I want to
 share across datasets at different energies.*
@@ -1143,13 +999,13 @@ Expected behaviour:
   it.  The same pattern gives energy-dependent systematic errors in a term
   through `c.meta("Elab")` (recipe 22).
 - A smooth energy dependence with more freedom is a discrepancy on a basis
-  (recipe 40) or a GP over energy (recipe 23).
+  (recipe 36) or a GP over energy (recipe 23).
 
 References: Schnabel, Capote, Koning, Brown, *Nuclear data evaluation with
 Bayesian networks*, arXiv:2110.10322; Pruitt, Escher, Rahman, Phys. Rev. C
 107, 014602 (2023).
 
-## 40. Discrepancy on a physically constrained basis
+## 36. Discrepancy on a physically constrained basis
 
 *I know the shape the model defect can take, say a few Legendre modes in
 angle, and want the discrepancy restricted to that basis.*
@@ -1179,7 +1035,7 @@ Expected behaviour:
 Reference: Higdon, Gattiker, Williams, Rightley, J. Am. Stat. Assoc. 103,
 570 (2008).
 
-## 41. Correlated systematics between observables of one measurement
+## 37. Correlated systematics between observables of one measurement
 
 *One experiment reports both a cross section and an analysing power, and
 they share a normalisation or an angle calibration.*
@@ -1206,7 +1062,7 @@ Reference: Neudecker, Frühwirth, Kawano, Leeb, *Adequate treatment of
 correlated experimental data in nuclear data evaluations*, Nucl. Data Sheets
 118, 364 (2014).
 
-## 42. The classic normal hierarchical model (eight schools)
+## 38. The classic normal hierarchical model (eight schools)
 
 *Several groups each report an estimate `y_j` with a known standard error
 `σ_j`.  I believe the group effects `θ_j` are drawn from a common
@@ -1295,7 +1151,7 @@ the size of the addition that would lift it.
   lines.
 - **Input-dependent mixture likelihoods.**  Bayesian model mixing with a
   per-point two-component Gaussian likelihood (Semposki et al. 2022).  Mean
-  mixing is a `Model` (recipe 29); the likelihood form is the first bullet.
+  mixing is a `Model` (`w(x; θ) f1 + (1 − w) f2`); the likelihood form is the first bullet.
 - **Correlation across constraints.**  By construction.  Merge the
   constraints.
 - **A sampled tempering exponent.**  `weight` is a float by type; a
