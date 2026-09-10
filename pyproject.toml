@@ -80,7 +80,7 @@ target-version = ["py312"]
 [tool.isort]
 profile = "black"
 line_length = 88
-src_paths = ["src", "test"]
+src_paths = ["src", "test", "test/recipes"]
 
 [tool.ruff]
 line-length = 88
@@ -92,7 +92,7 @@ select = ["F", "I"]
 [tool.ruff.lint.isort]
 # match isort's src_paths = ["src", "test"]: the shared test helpers module is
 # first-party too, so the two sorters agree
-known-first-party = ["rxmc", "helpers"]
+known-first-party = ["rxmc", "helpers", "common", "oracle"]
 
 [tool.pytest.ini_options]
 # bare `pytest` runs the fast tier: unit tests plus the sampler-free and

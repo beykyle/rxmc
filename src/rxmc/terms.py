@@ -358,11 +358,12 @@ def statistical(y_err, on=None) -> Term:
     return Term(np.asarray(y_err, dtype=float), kind="diag", on=on)
 
 
-def offset(magnitude=None, parameter=None, mask=None, log=True, on=None) -> Term:
+def offset(parameter=None, magnitude=None, mask=None, log=True, on=None) -> Term:
     """A correlated absolute-offset systematic ``outer(omega, omega)``.
 
-    With ``magnitude`` it is a fixed (data-given) rank-one mode; with ``parameter``
-    it is a free nuisance magnitude (``c = exp(theta)`` when ``log``).
+    With ``parameter`` (first, like every nuisance factory) it is a free
+    magnitude (``c = exp(theta)`` when ``log``); with ``magnitude=`` it is a
+    fixed, data-given rank-one mode.
     """
     if magnitude is None and parameter is None:
         raise ValueError("offset requires a magnitude and/or a parameter")
@@ -376,12 +377,12 @@ def offset(magnitude=None, parameter=None, mask=None, log=True, on=None) -> Term
     return _scaled_term("mode", parameter, log, basis, on=on)
 
 
-def normalization(magnitude=None, parameter=None, mask=None, log=True, on=None) -> Term:
+def normalization(parameter=None, magnitude=None, mask=None, log=True, on=None) -> Term:
     """A correlated normalisation systematic ``outer(eta * ym, eta * ym)``.
 
-    With ``magnitude`` it is a fixed fractional normalisation uncertainty; with
-    ``parameter`` the magnitude eta is a free nuisance (``c = exp(theta)`` when
-    ``log``).  In both cases the mode scales with the model *prediction* ``ym``,
+    With ``parameter`` (first, like every nuisance factory) the magnitude eta
+    is a free nuisance (``c = exp(theta)`` when ``log``); with ``magnitude=`` it
+    is a fixed fractional normalisation uncertainty.  In both cases the mode scales with the model *prediction* ``ym``,
     never with the data: that is what keeps the fit free of Peelle's Pertinent
     Puzzle (recipe 27).
     """
