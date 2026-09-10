@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel, Matern, WhiteKernel
 
-from helpers import assemble_dense
+from helpers import STUDY_LEGEND, assemble_dense, study_form
 from rxmc import Parameter
 from rxmc.terms import (
     Term,
@@ -350,142 +350,21 @@ class TestKernel:
 # ----------------------------------------------------------------------------
 
 
-class TestStudyForms:
-    """Each error model of the alpha+Ca study is one term list; compare to the
-    hand-rolled dense covariance from that study."""
-
-    def setup_method(self):
-        rng = np.random.default_rng(1)
-        n = 12
-        self.x = np.sort(rng.uniform(0.2, 3.0, n))  # radians
-        self.y = rng.uniform(0.1, 1.5, n)
-        self.ym = self.y + rng.normal(0.0, 0.1, n)
-        self.X = np.pi
-        self.log_err, self.log_slope = Parameter("log_err"), Parameter("log_err_slope")
-        self.log_sys, self.log_amp = Parameter("log_sys"), Parameter("log_amp")
-        self.err, self.slope, self.sys, self.amp = 0.05, 1.3, 0.04, 0.2
-        self.k = 2.7
-
-    def S(self, terms, values):
-        return dense(terms, self.x, self.y, self.ym, values)
-
-    def xdeg(self):
-        return self.x / self.X
-
-    def test_L0(self):
-        S = self.S([noise(self.log_err)], [(np.log(self.err),)])
-        assert np.allclose(S, self.err**2 * np.eye(len(self.x)))
-
-    def test_E0_linear_space(self):
-        S = self.S([noise_fraction(self.log_err)], [(np.log(self.err),)])
-        assert np.allclose(S, np.diag((self.err * self.ym) ** 2))
-
-    def test_L1(self):
-        t = noise(
-            self.log_err, basis=exp_growth(self.X), basis_params=(self.log_slope,)
-        )
-        S = self.S([t], [(np.log(self.err), self.slope)])
-        sigma = self.err * np.exp(self.slope * self.xdeg())
-        assert np.allclose(S, np.diag(sigma**2))
-
-    def test_L2_rank_one_over_theta(self):
-        terms = [noise(self.log_err), systematic(self.log_sys, basis=x_basis(self.X))]
-        S = self.S(terms, [(np.log(self.err),), (np.log(self.sys),)])
-        u = self.xdeg()
-        assert np.allclose(
-            S, self.err**2 * np.eye(len(u)) + self.sys**2 * np.outer(u, u)
-        )
-
-    def test_L2n_and_L2y(self):
-        v = [(np.log(self.err),), (np.log(self.sys),)]
-        S = self.S([noise(self.log_err), offset(parameter=self.log_sys)], v)
-        assert np.allclose(S, self.err**2 * np.eye(len(self.x)) + self.sys**2)
-        S = self.S([noise(self.log_err), normalization(parameter=self.log_sys)], v)
-        assert np.allclose(
-            S,
-            self.err**2 * np.eye(len(self.x))
-            + self.sys**2 * np.outer(self.ym, self.ym),
-        )
-
-    def test_L12(self):
-        terms = [
-            noise(
-                self.log_err, basis=exp_growth(self.X), basis_params=(self.log_slope,)
-            ),
-            systematic(self.log_sys, basis=x_basis(self.X)),
-        ]
-        S = self.S(terms, [(np.log(self.err), self.slope), (np.log(self.sys),)])
-        sigma = self.err * np.exp(self.slope * self.xdeg())
-        u = self.xdeg()
-        assert np.allclose(S, np.diag(sigma**2) + self.sys**2 * np.outer(u, u))
-
-    def test_Lgp_matern_in_theta(self):
-        ell = 0.3
-        gp = kernel(
-            Matern(1.0, nu=2.5),
-            coords=lambda x: x / self.X,
-            amplitude=constant_amplitude,
-            amplitude_params=(self.log_amp,),
-            jitter=0.0,
-            prefix="gp",
-        )
-        S = self.S(
-            [noise(self.log_err), gp],
-            [(np.log(self.err),), (np.log(ell), np.log(self.amp))],
-        )
-        u = self.xdeg()
-        K = self.amp**2 * Matern(ell, nu=2.5)(u[:, None])
-        assert np.allclose(S, self.err**2 * np.eye(len(u)) + K)
-
-    def test_Lgpn_angle_growing_amplitude(self):
-        ell = 0.3
-        gp = kernel(
-            Matern(1.0, nu=2.5),
-            coords=lambda x: x / self.X,
-            amplitude=exp_growth_amplitude(1.0),
-            amplitude_params=(self.log_amp, self.log_slope),
-            jitter=0.0,
-        )
-        S = self.S(
-            [noise(self.log_err), gp],
-            [(np.log(self.err),), (np.log(ell), np.log(self.amp), self.slope)],
-        )
-        u = self.xdeg()
-        a = self.amp * np.exp(self.slope * u)
-        K = np.outer(a, a) * Matern(ell, nu=2.5)(u[:, None])
-        assert np.allclose(S, self.err**2 * np.eye(len(u)) + K)
-
-    def test_LKp_kernel_in_momentum_transfer(self):
-        # b^2 I + s^2 11^T + a(q) a(q') RBF(|q - q'| / l_q), a = A q^(r/2)
-        log_b, log_s, r_pow = Parameter("log_b"), Parameter("log_s"), Parameter("r")
-        b, s, lq, r = 0.05, 0.05, 1.2, 0.8
-        q = 2.0 * self.k * np.sin(self.x / 2)
-        gp = kernel(
-            RBF(1.0),
-            coords=lambda x: 2.0 * self.k * np.sin(x / 2),
-            amplitude=lambda c, lA, r: np.exp(lA) * c.x ** (r / 2),
-            amplitude_params=(self.log_amp, r_pow),
-            jitter=0.0,
-            prefix="gpq",
-        )
-        S = self.S(
-            [noise(log_b), offset(parameter=log_s), gp],
-            [(np.log(b),), (np.log(s),), (np.log(lq), np.log(self.amp), r)],
-        )
-        a = self.amp * q ** (r / 2)
-        K = np.outer(a, a) * RBF(lq)(q[:, None])
-        ref = b**2 * np.eye(len(q)) + s**2 * np.ones((len(q), len(q))) + K
-        assert np.allclose(S, ref)
-
-    def test_custom_term_direct(self):
-        # anything the factories cannot say is a one-line Term
-        e, sl = Parameter("e"), Parameter("l")
-        t = Term(
-            lambda c, e, l: np.exp(e) * np.exp(l * c.x / np.pi), (e, sl), kind="diag"
-        )
-        S = self.S([t], [(np.log(self.err), self.slope)])
-        sigma = self.err * np.exp(self.slope * self.xdeg())
-        assert np.allclose(S, np.diag(sigma**2))
+@pytest.mark.parametrize("label", list(STUDY_LEGEND))
+def test_study_forms(label):
+    """Each error model of the motivating study (elastic alpha + Ca scattering
+    data with no reported uncertainties, compared in log space) is one term
+    list; the term values assemble to the hand-built dense covariance.  The
+    labels are defined in ``helpers.STUDY_LEGEND``."""
+    rng = np.random.default_rng(1)
+    n = 12
+    x = np.sort(rng.uniform(0.2, 3.0, n))  # radians
+    y = rng.uniform(0.1, 1.5, n)
+    ym_ = y + rng.normal(0.0, 0.1, n)
+    form = study_form(label, x, y, ym_)
+    assert form.description  # every label has a legend entry
+    S = dense(form.terms, x, y, ym_, form.values)
+    assert np.allclose(S, form.dense)
 
 
 # ----------------------------------------------------------------------------

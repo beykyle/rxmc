@@ -426,6 +426,10 @@ models = {
     "Lgp": rx.Constraint([comp_log], terms=[T.noise(log_eps), gp], statistical=False),
     "L0t": rx.Constraint([comp_log], terms=[T.noise(log_eps)], statistical=False, likelihood=rx.StudentT()),
 }
+# L0: constant noise in log space; E0: fractional noise in linear space;
+# L2y: L0 plus a free normalisation mode; Lgp: L0 plus a GP in angle;
+# L0t: L0 under a Student-t likelihood.  The full ladder and its legend live
+# in test/helpers.py (STUDY_LEGEND).
 logz = {}
 for name, c in models.items():
     p = rx.Problem([c.masked_where(lambda x: x < cut)], priors=priors)

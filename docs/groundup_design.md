@@ -802,7 +802,7 @@ The bodies below encode behaviour, not API, and port with renamed calls:
 
 - `test_covariance.py`: `TestTermKinds`, `TestTermCoords`, `TestFactories`
   (including `test_old_observation_covariance_equivalence`),
-  `TestKernelTerm`, `TestStudyForms` (every α+Ca error-model form against
+  `TestKernelTerm`, `TestStudyForms` (every form of the α+Ca error-model ladder, defined once with a legend in `test/helpers.py::STUDY_LEGEND`, against
   a hand-built dense matrix), `test_custom_term_direct`.
 - `test_likelihood_model.py`: the closed-form Student-t and `Chi2` values.
 - `test_constraint.py`: `TestComparisonSpaceTransform` (delta method,
