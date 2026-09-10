@@ -26,11 +26,38 @@ Prior classes that support this should implement::
 where ``u`` has shape ``(ndim,)`` with each element in ``[0, 1)`` and the
 return value is the corresponding physical parameter vector.  Both
 :class:`IndependentPrior` and :class:`TruncatedNormalPrior` provide this
-method via the ``ppf`` of each marginal distribution.
+method via the ``ppf`` of each marginal distribution; they clip ``u`` into
+the open unit cube first (:func:`clip_unit_cube`) so an exact ``0`` or ``1``
+never yields ``±inf``.
 """
 
 import numpy as np
 from scipy import stats
+
+
+def clip_unit_cube(u) -> np.ndarray:
+    """Coerce ``u`` to a float array clipped into the open unit cube.
+
+    Exact ``0.0`` / ``1.0`` map to ``±inf`` under an unbounded marginal's
+    ``ppf``; clipping to ``[eps, 1 - eps]`` keeps every ``prior_transform``
+    finite.  Shared by every prior transform in the package.
+    """
+    u = np.asarray(u, dtype=float)
+    eps = np.finfo(float).eps
+    return np.clip(u, eps, 1.0 - eps)
+
+
+def as_prior(prior):
+    """Coerce a list/tuple of frozen univariate distributions to an
+    :class:`IndependentPrior`; any other prior object is returned unchanged.
+
+    The single place where the "list of marginals" form is accepted, so
+    :class:`~rxmc.config.ParameterConfig` and
+    :class:`~rxmc.param_sampling.Sampler` agree on it.
+    """
+    if isinstance(prior, (list, tuple)):
+        return IndependentPrior(list(prior))
+    return prior
 
 
 class TruncatedNormalPrior:
@@ -149,7 +176,7 @@ class TruncatedNormalPrior:
             Physical parameter vector obtained by applying the component-wise
             percent-point function of each truncated normal.
         """
-        u = np.asarray(u, dtype=float)
+        u = clip_unit_cube(u)
         theta = np.empty_like(u)
         for j in range(self.dim):
             theta[j] = stats.truncnorm.ppf(
@@ -270,7 +297,7 @@ class IndependentPrior:
         ndarray, shape (ndim,)
             Physical parameter vector.
         """
-        u = np.asarray(u, dtype=float)
+        u = clip_unit_cube(u)
         theta = np.empty_like(u)
         for j, dist in enumerate(self.distributions):
             theta[j] = dist.ppf(u[j])

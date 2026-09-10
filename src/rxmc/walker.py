@@ -34,6 +34,10 @@ class Walker:
         One sampler per entry in ``evidence.parametric_constraints``.
     rng : np.random.Generator, optional
         Random number generator.  Defaults to ``default_rng(42)``.
+    likelihood_scaling : float, optional
+        Tempering factor applied to the log likelihood (never the prior) in
+        both the model block and the Gibbs conditionals, mirroring
+        :class:`~rxmc.config.CalibrationConfig`.  Defaults to ``1.0``.
 
     Raises
     ------
@@ -54,10 +58,14 @@ class Walker:
         evidence: Evidence,
         likelihood_samplers: list[Sampler] | None = None,
         rng: np.random.Generator | None = None,
+        likelihood_scaling: float | None = None,
     ):
         self.model_sampler = model_sampler
         self.likelihood_samplers = likelihood_samplers or []
         self.evidence = evidence
+        self.likelihood_scaling = (
+            1.0 if likelihood_scaling is None else float(likelihood_scaling)
+        )
         self.rng = rng if rng is not None else np.random.default_rng(42)
 
         self.gibbs_sampling = len(self.likelihood_samplers) > 0
@@ -75,7 +83,7 @@ class Walker:
             )
         for i, conf in enumerate(self.likelihood_samplers):
             constraint = self.evidence.parametric_constraints[i]
-            if constraint.likelihood.params != conf.params:
+            if list(constraint.params) != list(conf.params):
                 raise ValueError(
                     "Inconsistent likelihood model parameters "
                     f"between 'likelihood_samplers[{i}]' and "
@@ -122,27 +130,37 @@ class Walker:
         burn : bool, optional
             If ``True``, treat as burn-in (samples are not recorded).
         """
+        wmll = self.evidence.weighted_marginal_log_likelihood
+        scaling = self.likelihood_scaling
         for i, sampler in enumerate(self.likelihood_samplers):
             constraint = self.evidence.parametric_constraints[i]
-
             ym = constraint.predict(*model_params)
 
-            def log_posterior_lm(x):
-                lp = sampler.prior.logpdf(x) + constraint.marginal_log_likelihood(
-                    ym, *np.atleast_1d(x)
-                )
-                return float(np.squeeze(lp))
+            def log_posterior_lm(x, sampler=sampler, i=i, ym=ym):
+                # prior first: an out-of-support proposal never pays for the
+                # likelihood (matches CalibrationConfig.conditional_posterior)
+                lp = float(np.squeeze(sampler.prior.logpdf(x)))
+                if not np.isfinite(lp):
+                    return -np.inf
+                ll = float(np.squeeze(wmll(i, ym, *np.atleast_1d(x))))
+                return lp + scaling * ll
 
             x0 = starting_locations[i]
             sampler.sample(n_steps, x0, self.rng, log_posterior_lm, burn=burn)
 
     def log_likelihood(self, model_params, likelihood_params):
-        return self.evidence.log_likelihood(model_params, likelihood_params)
-
-    def log_posterior(self, model_params, likelihood_params):
-        return self.log_likelihood(model_params, likelihood_params) + self.log_prior(
+        """``likelihood_scaling * evidence.log_likelihood(...)``."""
+        return self.likelihood_scaling * self.evidence.log_likelihood(
             model_params, likelihood_params
         )
+
+    def log_posterior(self, model_params, likelihood_params):
+        """Log posterior; ``-inf`` without evaluating the likelihood (and
+        hence the physical model) when the prior is not finite."""
+        lp = self.log_prior(model_params, likelihood_params)
+        if not np.isfinite(lp):
+            return -np.inf
+        return lp + self.log_likelihood(model_params, likelihood_params)
 
     def log_prior(self, model_params, likelihood_params):
         """Log prior probability of model and likelihood parameters.
@@ -207,51 +225,48 @@ class Walker:
             burn_batches = []
 
         for i, steps_in_batch in enumerate(burn_batches):
-            self.run_model_batch(
-                steps_in_batch,
-                self.model_sampler.state,
-                [sampler.state for sampler in self.likelihood_samplers],
-                burn=True,
-            )
-
-            if self.gibbs_sampling:
-                self.run_likelihood_batches(
-                    steps_in_batch,
-                    [sampler.state for sampler in self.likelihood_samplers],
-                    self.model_sampler.state,
-                    burn=True,
-                )
-
+            self._run_batch(steps_in_batch, burn=True)
             if verbose:
-                print(
-                    f"Burn-in batch {i + 1}/{len(burn_batches)}"
-                    f" completed, {steps_in_batch} steps."
-                )
+                print(self._batch_message(i, len(burn_batches), steps_in_batch, True))
 
         for i, steps_in_batch in enumerate(batches):
-            self.run_model_batch(
-                steps_in_batch,
-                self.model_sampler.state,
+            self._run_batch(steps_in_batch, burn=False)
+            if verbose:
+                print(self._batch_message(i, len(batches), steps_in_batch, False))
+
+    def _run_batch(self, steps: int, burn: bool) -> None:
+        """One Gibbs sweep: the model block, then each likelihood block."""
+        self.run_model_batch(
+            steps,
+            self.model_sampler.state,
+            [sampler.state for sampler in self.likelihood_samplers],
+            burn=burn,
+        )
+        if self.gibbs_sampling:
+            self.run_likelihood_batches(
+                steps,
                 [sampler.state for sampler in self.likelihood_samplers],
+                self.model_sampler.state,
+                burn=burn,
             )
 
-            if self.gibbs_sampling:
-                self.run_likelihood_batches(
-                    steps_in_batch,
-                    [sampler.state for sampler in self.likelihood_samplers],
-                    self.model_sampler.state,
-                )
+    def _batch_message(self, index: int, n_batches: int, steps: int, burn: bool):
+        """Progress line for a batch.
 
-            if verbose:
-                msg = (
-                    f"Batch: {i + 1}/{len(batches)} completed, "
-                    f"{steps_in_batch} steps. "
-                    f"\n  Model parameter acceptance fraction: "
-                    f"{self.model_sampler.most_recent_batch_acceptance_fraction():.3f}"
-                )
-                if self.gibbs_sampling:
-                    msg += (
-                        f"\n  Likelihood parameter acceptance fractions: "
-                        f"{[sampler.most_recent_batch_acceptance_fraction() for sampler in self.likelihood_samplers]}"
-                    )
-                print(msg)
+        Burn-in batches are not recorded, so no acceptance fraction is
+        available for them and none is printed.
+        """
+        if burn:
+            return f"Burn-in batch {index + 1}/{n_batches} completed, {steps} steps."
+        msg = (
+            f"Batch: {index + 1}/{n_batches} completed, {steps} steps. "
+            f"\n  Model parameter acceptance fraction: "
+            f"{self.model_sampler.most_recent_batch_acceptance_fraction():.3f}"
+        )
+        if self.gibbs_sampling:
+            fractions = [
+                sampler.most_recent_batch_acceptance_fraction()
+                for sampler in self.likelihood_samplers
+            ]
+            msg += f"\n  Likelihood parameter acceptance fractions: {fractions}"
+        return msg

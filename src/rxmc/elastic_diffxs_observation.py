@@ -1,42 +1,39 @@
 """
 Observation class for elastic differential cross sections.
 
-:class:`ElasticDifferentialXSObservation` wraps a ``jitr``
-:class:`jitr.xs.elastic.DifferentialWorkspace` to pre-compute boundary
-conditions and Rutherford cross sections, then delegates covariance and
-residual computation to a chosen :class:`~rxmc.observation.Observation` subclass.
+:class:`ElasticDifferentialXSObservation` is an :class:`~rxmc.observation.Observation`
+that sets up a ``jitr`` :class:`jitr.xs.elastic.DifferentialWorkspace` to pre-compute
+boundary conditions and Rutherford cross sections.  It carries statistical error
+only; correlated systematics are composed as :class:`~rxmc.covariance.Term` s in the
+:class:`~rxmc.constraint.Constraint`.
 """
-
-from typing import Type
 
 import jitr
 import numpy as np
 from exfor_tools.distribution import Distribution
-from pint import UnitRegistry
 
 from .observation import Observation
-from .observation_from_measurement import (
+from .observation_from_measurement import (  # noqa: F401  (re-exported names)
+    DEFAULT_LMAX,
+    RUTHERFORD_UNIT,
+    XS_UNIT,
     check_angle_grid,
-    set_up_observation,
+    measurement_kwargs,
+    normalized_error_kwargs,
+    ureg,
 )
 
-# Create a unit registry
-ureg = UnitRegistry()
 
-
-DEFAULT_LMAX = 20
-
-
-class ElasticDifferentialXSObservation:
+class ElasticDifferentialXSObservation(Observation):
     """
     Observation for elastic differential cross sections.
 
-    This class dynamically inherits from `Observation` or any other
-    derived class of `Observation` based on the `ObservationClass`
-    parameter in the initializer. The default behavior is to inherit
-    from `Observation`, but users can specify a different subclass, such as
-    `FixedCovarianceObservation`, to precompute the covariance matrix inverse
-    in cases where the covariance is fixed.
+    This is an :class:`~rxmc.observation.Observation` (statistical error only): it
+    inherits ``statistical_term`` and ``num_pts_within_interval``.  Any correlated
+    systematic — the dataset's reported normalisation/offset, or a fixed
+    covariance block (an array-valued :class:`~rxmc.covariance.Term`) — is
+    composed explicitly as an
+    ``extra_terms`` entry in the :class:`~rxmc.constraint.Constraint`.
 
     It is designed to handle elastic differential cross section
     measurements, specifically absolute differential cross sections,
@@ -66,9 +63,9 @@ class ElasticDifferentialXSObservation:
         wavelengths_beyond_range=2.0,
         zeros_per_node=5,
         angles_vis: np.ndarray = np.linspace(0.01, 180, 100),
-        ObservationClass: Type[Observation] = Observation,
-        error_kwargs: dict = None,
         compound_correction: np.ndarray = None,
+        transform=None,
+        mask=None,
     ):
         """
         Parameters
@@ -89,10 +86,15 @@ class ElasticDifferentialXSObservation:
             Units of the supplied *y* values (e.g. ``"mb/sr"``).
         y_stat_err : np.ndarray, optional
             Statistical errors associated with *y*.
-        y_sys_err_normalization : float or array-like, optional
-            Systematic normalization error(s) associated with *y*.
-        y_sys_err_offset : float or array-like, optional
-            Systematic offset error(s) associated with *y*.
+        y_sys_err_normalization : float or np.ndarray, optional
+            Reported *fractional* (dimensionless) normalisation uncertainty.
+            Retained as inert metadata (see
+            :meth:`rxmc.observation.Observation.systematic_terms`); not divided
+            by the unit normalisation.
+        y_sys_err_offset : float or np.ndarray, optional
+            Reported *absolute* offset uncertainty in the same units as *y*.
+            Retained as inert metadata, converted to internal units (divided by
+            the unit normalisation, per-angle where applicable).
         dataset_label : str, optional
             Human-readable dataset identifier used in error messages.
         lmax : int, optional
@@ -106,20 +108,13 @@ class ElasticDifferentialXSObservation:
         angles_vis : np.ndarray, optional
             Angle grid in degrees for visualisation.  Defaults to
             ``np.linspace(0.01, 180, 100)``.
-        ObservationClass : type, optional
-            :class:`~rxmc.observation.Observation` subclass to use for
-            covariance and residual computations.  Supply
-            :class:`~rxmc.observation.FixedCovarianceObservation` to
-            pre-compute the inverse covariance.  Defaults to
-            :class:`~rxmc.observation.Observation`.
-        error_kwargs : dict, optional
-            Extra keyword arguments forwarded to *ObservationClass*.
         compound_correction : np.ndarray, optional
             Compound-nuclear contribution to dXS/dΩ in mb/sr, added to the
             calculated cross section before comparing to data.
+        transform, mask : optional
+            Comparison-space transform and active-point mask; see
+            :class:`~rxmc.observation.Observation`.
         """
-        if not issubclass(ObservationClass, Observation):
-            raise ValueError("ObservationClass must be a subclass of Observation")
         self.reaction = reaction
         self.quantity = quantity
         self.lmax = lmax
@@ -151,42 +146,32 @@ class ElasticDifferentialXSObservation:
         )
         self.constraint_workspace = constraint_ws
         self.visualization_workspace = vis_ws
+        self.kinematics = kinematics
 
         # Convert measurement to correct quantity and normalize to `b/sr`
         norm, normalized_y_units = self.calculate_normalization(
             measurement_quantity, y_units
         )
         self.y_units = normalized_y_units
+        # retained for provenance / manual term recomposition; a scalar, or a
+        # per-angle array in the Rutherford-conversion cases
+        self.norm = norm
 
-        # initialize the observation instance
-        args, kwargs, y_stat_err = set_up_observation(
-            ObservationClass,
-            x=angles_rad_constraint,
-            y=y,
-            y_stat_err=y_stat_err,
-            y_sys_err_normalization=y_sys_err_normalization,
-            y_sys_err_offset=y_sys_err_offset,
-            dataset_label=dataset_label,
-            normalization=norm,
-            **error_kwargs if error_kwargs is not None else {},
+        super().__init__(
+            angles_rad_constraint,
+            np.asarray(y) / norm,
+            label=dataset_label,
+            transform=transform,
+            mask=mask,
+            **normalized_error_kwargs(
+                norm, y_stat_err, y_sys_err_normalization, y_sys_err_offset
+            ),
         )
 
-        # Create an instance of the chosen ObservationClass
-        self._obs = ObservationClass(*args, **kwargs)
-
-        self.x = self._obs.x
-        self.y = self._obs.y
-        self.y_stat_err = y_stat_err
-        self.n_data_pts = self._obs.n_data_pts
-
-    def covariance(self, y):
-        return self._obs.covariance(y)
-
-    def residual(self, ym):
-        return self._obs.residual(ym)
-
-    def num_pts_within_interval(self, interval):
-        return self._obs.num_pts_within_interval(interval)
+    @property
+    def k(self) -> float:
+        """Entrance-channel wavenumber in fm^-1."""
+        return float(self.kinematics.k)
 
     @classmethod
     def from_measurement(
@@ -194,41 +179,27 @@ class ElasticDifferentialXSObservation:
         measurement: Distribution,
         reaction: jitr.reactions.Reaction,
         quantity: str,
-        lmax: int = DEFAULT_LMAX,
-        wavelengths_beyond_range=2.0,
-        zeros_per_node=5,
-        angles_vis: np.ndarray = np.linspace(0.01, 180, 100),
-        ObservationClass: Type[Observation] = Observation,
-        error_kwargs: dict = None,
-        compound_correction: np.ndarray = None,
+        **kwargs,
     ):
+        """Construct from an ``exfor_tools`` ``Distribution``.
+
+        ``**kwargs`` (solver settings, ``compound_correction``, ``transform``,
+        ``mask``, ...) are forwarded to the constructor.
+        """
         return cls(
-            x=measurement.x,
-            y=measurement.y,
-            Elab=measurement.Einc,
             reaction=reaction,
             quantity=quantity,
             measurement_quantity=measurement.quantity,
-            y_units=measurement.y_units,
-            y_stat_err=measurement.statistical_err,
-            y_sys_err_normalization=measurement.systematic_norm_err,
-            y_sys_err_offset=measurement.systematic_offset_err,
-            dataset_label=getattr(measurement, "subentry", None),
-            lmax=lmax,
-            wavelengths_beyond_range=wavelengths_beyond_range,
-            zeros_per_node=zeros_per_node,
-            angles_vis=angles_vis,
-            ObservationClass=ObservationClass,
-            error_kwargs=error_kwargs,
-            compound_correction=compound_correction,
+            **measurement_kwargs(measurement),
+            **kwargs,
         )
 
     def calculate_normalization(
         self, measurement_quantity: str, measurement_y_units: str
     ):
         # Determine the xs_unit based on self.quantity
-        xs_unit = ureg.barn / ureg.steradian
-        rutherford_unit = ureg.millibarn / ureg.steradian
+        xs_unit = XS_UNIT
+        rutherford_unit = RUTHERFORD_UNIT
         if self.quantity == "dXS/dA":
             y_unit = xs_unit
         elif self.quantity in {"dXS/dRuth", "Ay"}:
@@ -249,7 +220,8 @@ class ElasticDifferentialXSObservation:
             return self.constraint_workspace.rutherford * conversion_factor, y_unit
 
         elif self.quantity == "dXS/dA" and measurement_quantity == "dXS/dRuth":
-            conversion_factor = 1.0 / rutherford_unit.to(y_unit).magnitude
+            # rutherford is stored in mb/sr; convert one unit of it to b/sr
+            conversion_factor = 1.0 / (1 * rutherford_unit).to(y_unit).magnitude
             return conversion_factor / self.constraint_workspace.rutherford, y_unit
 
         elif self.quantity == "dXS/dA" and measurement_quantity == "dXS/dA":
@@ -273,10 +245,10 @@ class ElasticDifferentialXSObservation:
             return 1.0, y_unit
 
         else:
-            if self.quantity != measurement_quantity:
-                raise ValueError(
-                    f"Quantity mismatch: {self.quantity} != {measurement_quantity}"
-                )
+            raise ValueError(
+                f"Cannot convert measurement quantity '{measurement_quantity}' "
+                f"(units '{measurement_y_units}') to '{self.quantity}'"
+            )
 
 
 def set_up_solver(
@@ -343,3 +315,14 @@ def set_up_solver(
     )
 
     return constraint_ws, visualization_ws, kinematics
+
+
+def momentum_transfer(observation: ElasticDifferentialXSObservation) -> np.ndarray:
+    r"""Momentum transfer :math:`q = 2k\sin(\theta/2)` (fm^-1) on the data angles.
+
+    Returns the array of :math:`q` values, e.g. for plotting.  For a
+    :func:`~rxmc.covariance.kernel_term` in :math:`q`-space pass the same map
+    as the term's coordinate transform of the angle instead:
+    ``kernel_term(kernel, coords=lambda x: 2 * obs.k * np.sin(x / 2))``.
+    """
+    return 2.0 * observation.k * np.sin(np.asarray(observation.x, dtype=float) / 2.0)

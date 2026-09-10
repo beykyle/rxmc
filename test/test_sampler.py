@@ -1,38 +1,36 @@
+import io
 import unittest
+from contextlib import redirect_stdout
+from types import SimpleNamespace
 
 import numpy as np
 import scipy.stats
 
 from rxmc.adaptive_metropolis import adaptive_metropolis
 from rxmc.constraint import Constraint
+from rxmc.covariance import Term
 from rxmc.evidence import Evidence
-from rxmc.likelihood_model import ParametricLikelihoodModel
 from rxmc.observation import Observation
-from rxmc.param_sampling import AdaptiveMetropolisSampler, MetropolisHastingsSampler
+from rxmc.param_sampling import (
+    AdaptiveMetropolisSampler,
+    BatchedAdaptiveMetropolisSampler,
+    MetropolisHastingsSampler,
+)
 from rxmc.params import Parameter
 from rxmc.physical_model import Polynomial
+from rxmc.priors import IndependentPrior
 from rxmc.proposal import NormalProposalDistribution
 from rxmc.walker import Walker
 
 
-class TwoParameterLikelihood(ParametricLikelihoodModel):
-    def __init__(self):
-        super().__init__(
-            [
-                Parameter("log noise floor", float),
-                Parameter("log noise slope", float),
-            ]
-        )
-
-    def covariance(
-        self,
-        observation: Observation,
-        ym: np.ndarray,
-        log_noise_floor: float,
-        log_noise_slope: float,
-    ) -> np.ndarray:
-        sigma = np.exp(log_noise_floor) + np.exp(log_noise_slope) * np.abs(ym)
-        return np.diag(sigma**2)
+def floor_slope_noise_term(support=None):
+    """diag((exp(floor) + exp(slope)*|ym|)**2) — a two-parameter noise term."""
+    return Term(
+        lambda c, floor, slope: np.exp(floor) + np.exp(slope) * np.abs(c.ym),
+        (Parameter("log noise floor", float), Parameter("log noise slope", float)),
+        kind="diag",
+        support=support,
+    )
 
 
 class TestAdaptiveMetropolisSampler(unittest.TestCase):
@@ -97,16 +95,13 @@ class TestWalker(unittest.TestCase):
             y=np.array([1.0, 2.1, 3.2, 4.0, 5.1]),
             y_stat_err=np.array([0.1, 0.1, 0.1, 0.1, 0.1]),
         )
-        likelihood = TwoParameterLikelihood()
-        evidence = Evidence(
-            parametric_constraints=[
-                Constraint(
-                    observations=[observation],
-                    physical_model=model,
-                    likelihood_model=likelihood,
-                )
-            ]
+        noise_term = floor_slope_noise_term(np.arange(observation.n_data_pts))
+        constraint = Constraint(
+            observations=[observation],
+            physical_model=model,
+            extra_terms=[noise_term],
         )
+        evidence = Evidence(constraints=[constraint])
 
         model_sampler = MetropolisHastingsSampler(
             params=model.params,
@@ -115,7 +110,7 @@ class TestWalker(unittest.TestCase):
             proposal=NormalProposalDistribution(0.01 * np.eye(2)),
         )
         likelihood_sampler = MetropolisHastingsSampler(
-            params=likelihood.params,
+            params=list(constraint.params),
             prior=scipy.stats.multivariate_normal(mean=[-2.0, -2.0], cov=np.eye(2)),
             starting_location=np.array([-2.0, -2.0]),
             proposal=NormalProposalDistribution(0.01 * np.eye(2)),
@@ -133,6 +128,281 @@ class TestWalker(unittest.TestCase):
         self.assertEqual(walker.likelihood_samplers[0].chain.shape, (5, 2))
         self.assertEqual(walker.model_sampler.state.shape, (2,))
         self.assertEqual(walker.likelihood_samplers[0].state.shape, (2,))
+
+    def test_gibbs_conditional_applies_evidence_weight(self):
+        from types import SimpleNamespace
+
+        model = Polynomial(1)
+        observation = Observation(
+            x=np.array([0.0, 1.0, 2.0, 3.0, 4.0]),
+            y=np.array([1.0, 2.1, 3.2, 4.0, 5.1]),
+            y_stat_err=np.array([0.1, 0.1, 0.1, 0.1, 0.1]),
+        )
+        constraint = Constraint(
+            observations=[observation],
+            physical_model=model,
+            extra_terms=[floor_slope_noise_term(np.arange(observation.n_data_pts))],
+        )
+        weight = 2.5
+        evidence = Evidence(constraints=[constraint], weights=np.array([weight]))
+
+        prior = scipy.stats.multivariate_normal(mean=[-2.0, -2.0], cov=np.eye(2))
+
+        class CapturingSampler:
+            def __init__(self, params, prior):
+                self.params = params
+                self.prior = prior
+                self.captured = None
+
+            def sample(self, n_steps, x0, rng, log_posterior, burn=False):
+                self.captured = log_posterior
+
+        lm_sampler = CapturingSampler(list(constraint.params), prior)
+        walker = Walker(
+            model_sampler=SimpleNamespace(params=evidence.model_params, prior=prior),
+            evidence=evidence,
+            likelihood_samplers=[lm_sampler],
+        )
+
+        model_params = (0.9, 1.0)
+        walker.run_likelihood_batches(1, [np.array([-2.0, -2.0])], model_params)
+
+        x = np.array([-2.0, -2.0])
+        ym = constraint.predict(*model_params)
+        expected = float(
+            prior.logpdf(x) + weight * constraint.marginal_log_likelihood(ym, *x)
+        )
+        self.assertAlmostEqual(lm_sampler.captured(x), expected)
+
+
+class CapturingSampler:
+    """Records the conditional posterior a Walker hands it; never samples."""
+
+    def __init__(self, params, prior):
+        self.params = list(params)
+        self.prior = prior
+        self.captured = None
+
+    def sample(self, n_steps, x0, rng, log_posterior, burn=False):
+        self.captured = log_posterior
+
+
+class NegInfPrior:
+    def logpdf(self, x):
+        return -np.inf
+
+
+def parametric_setup(weight=1.0):
+    """A one-constraint Evidence with a two-parameter noise term."""
+    model = Polynomial(1)
+    observation = Observation(
+        x=np.array([0.0, 1.0, 2.0, 3.0, 4.0]),
+        y=np.array([1.0, 2.1, 3.2, 4.0, 5.1]),
+        y_stat_err=np.array([0.1, 0.1, 0.1, 0.1, 0.1]),
+    )
+    constraint = Constraint(
+        observations=[observation],
+        physical_model=model,
+        extra_terms=[floor_slope_noise_term(np.arange(observation.n_data_pts))],
+    )
+    evidence = Evidence(constraints=[constraint], weights=np.array([weight]))
+    return model, constraint, evidence
+
+
+class TestWalkerPosterior(unittest.TestCase):
+    """Parity with CalibrationConfig: prior-first short-circuit and tempering."""
+
+    def test_log_posterior_skips_likelihood_when_prior_neg_inf(self):
+        calls = []
+        evidence = SimpleNamespace(
+            model_params=[Parameter("a")],
+            parametric_constraints=[],
+            log_likelihood=lambda mp, lp: calls.append(mp) or 0.0,
+        )
+        walker = Walker(
+            model_sampler=SimpleNamespace(
+                params=evidence.model_params, prior=NegInfPrior()
+            ),
+            evidence=evidence,
+        )
+        self.assertEqual(walker.log_posterior((1.0,), []), -np.inf)
+        self.assertEqual(calls, [])
+
+    def test_gibbs_conditional_skips_likelihood_when_prior_neg_inf(self):
+        calls = []
+        lm_params = [Parameter("nu")]
+        constraint = SimpleNamespace(
+            params=lm_params, predict=lambda *mp: [np.zeros(3)]
+        )
+        evidence = SimpleNamespace(
+            model_params=[Parameter("a")],
+            parametric_constraints=[constraint],
+            weighted_marginal_log_likelihood=lambda i, ym, *x: calls.append(x) or 0.0,
+        )
+        lm_sampler = CapturingSampler(lm_params, NegInfPrior())
+        walker = Walker(
+            model_sampler=SimpleNamespace(
+                params=evidence.model_params, prior=NegInfPrior()
+            ),
+            evidence=evidence,
+            likelihood_samplers=[lm_sampler],
+        )
+        walker.run_likelihood_batches(1, [np.array([1.0])], (0.5,))
+        self.assertEqual(lm_sampler.captured(np.array([1.0])), -np.inf)
+        self.assertEqual(calls, [])
+
+    def test_log_posterior_applies_likelihood_scaling(self):
+        scaling = 0.25
+        model, constraint, evidence = parametric_setup()
+        model_prior = scipy.stats.multivariate_normal(mean=[0.0, 1.0], cov=np.eye(2))
+        lm_prior = scipy.stats.multivariate_normal(mean=[-2.0, -2.0], cov=np.eye(2))
+        walker = Walker(
+            model_sampler=SimpleNamespace(
+                params=evidence.model_params, prior=model_prior
+            ),
+            evidence=evidence,
+            likelihood_samplers=[CapturingSampler(constraint.params, lm_prior)],
+            likelihood_scaling=scaling,
+        )
+        mp, x = (0.9, 1.0), np.array([-2.0, -2.0])
+        expected = (
+            model_prior.logpdf(np.array(mp))
+            + lm_prior.logpdf(x)
+            + scaling * evidence.log_likelihood(mp, [x])
+        )
+        self.assertAlmostEqual(walker.log_posterior(mp, [x]), float(expected))
+        self.assertAlmostEqual(
+            walker.log_likelihood(mp, [x]), scaling * evidence.log_likelihood(mp, [x])
+        )
+
+    def test_gibbs_conditional_applies_likelihood_scaling_and_weight(self):
+        # mirrors test_config.py::test_conditional_posterior_tempering
+        scaling, weight = 0.5, 3.0
+        model, constraint, evidence = parametric_setup(weight=weight)
+        prior = scipy.stats.multivariate_normal(mean=[-2.0, -2.0], cov=np.eye(2))
+        lm_sampler = CapturingSampler(constraint.params, prior)
+        walker = Walker(
+            model_sampler=SimpleNamespace(params=evidence.model_params, prior=prior),
+            evidence=evidence,
+            likelihood_samplers=[lm_sampler],
+            likelihood_scaling=scaling,
+        )
+        mp = (0.9, 1.0)
+        walker.run_likelihood_batches(1, [np.array([-2.0, -2.0])], mp)
+
+        x = np.array([-2.0, -2.0])
+        ym = constraint.predict(*mp)
+        expected = prior.logpdf(
+            x
+        ) + scaling * weight * constraint.marginal_log_likelihood(ym, *x)
+        self.assertAlmostEqual(lm_sampler.captured(x), float(expected))
+
+    def test_burn_message_has_no_acceptance_fraction(self):
+        model = Polynomial(1)
+        observation = Observation(
+            x=np.array([0.0, 1.0, 2.0]),
+            y=np.array([1.0, 2.1, 3.2]),
+            y_stat_err=np.array([0.1, 0.1, 0.1]),
+        )
+        evidence = Evidence(
+            constraints=[Constraint(observations=[observation], physical_model=model)]
+        )
+        sampler = MetropolisHastingsSampler(
+            params=model.params,
+            prior=scipy.stats.multivariate_normal(mean=[0.0, 1.0], cov=np.eye(2)),
+            starting_location=np.array([0.9, 1.0]),
+            proposal=NormalProposalDistribution(0.01 * np.eye(2)),
+        )
+        walker = Walker(sampler, evidence, rng=np.random.default_rng(0))
+        out = io.StringIO()
+        with redirect_stdout(out):
+            walker.walk(n_steps=2, burnin=2, batch_size=2, verbose=True)
+        lines = out.getvalue().splitlines()
+        burn = [line for line in lines if line.startswith("Burn-in batch")]
+        self.assertEqual(len(burn), 1)
+        self.assertNotIn("acceptance", burn[0])
+        self.assertTrue(any("acceptance fraction" in line for line in lines))
+        self.assertEqual(walker.model_sampler.chain.shape, (2, 2))
+
+
+class TestSamplerPriors(unittest.TestCase):
+    def test_sampler_accepts_list_prior(self):
+        sampler = MetropolisHastingsSampler(
+            params=[Parameter("x"), Parameter("y")],
+            prior=[scipy.stats.norm(0, 1), scipy.stats.norm(0, 1)],
+            starting_location=np.zeros(2),
+            proposal=NormalProposalDistribution(0.01 * np.eye(2)),
+        )
+        self.assertIsInstance(sampler.prior, IndependentPrior)
+        self.assertTrue(np.isfinite(sampler.prior.logpdf(np.zeros(2))))
+
+    def test_batched_adaptive_updates_proposal_after_burn_batch(self):
+        sampler = BatchedAdaptiveMetropolisSampler(
+            params=[Parameter("x"), Parameter("y")],
+            prior=scipy.stats.multivariate_normal(mean=[0.0, 0.0], cov=np.eye(2)),
+            starting_location=np.zeros(2),
+            initial_proposal_cov=np.eye(2),
+        )
+        initial = sampler.proposal
+        sampler.sample(
+            n_steps=30,
+            starting_location=np.zeros(2),
+            rng=np.random.default_rng(7),
+            log_posterior=lambda x: -0.5 * float(x @ x),
+            burn=True,
+        )
+        # burn-in records nothing but does adapt; the public proposal follows
+        self.assertEqual(sampler.chain.shape, (0, 2))
+        self.assertIsNot(sampler.proposal, initial)
+        self.assertIs(sampler.args[0], sampler.proposal)
+        np.testing.assert_allclose(sampler.proposal.cov, sampler.proposal_cov)
+
+
+class TestWalkerValidation(unittest.TestCase):
+    def setUp(self):
+        self.SimpleNamespace = SimpleNamespace
+        self.model = Polynomial(1)
+        obs = Observation(
+            x=np.array([0.0, 1.0, 2.0, 3.0, 4.0]),
+            y=np.array([1.0, 2.1, 3.2, 4.0, 5.1]),
+            y_stat_err=np.array([0.1, 0.1, 0.1, 0.1, 0.1]),
+        )
+        self.parametric = Constraint(
+            observations=[obs],
+            physical_model=self.model,
+            extra_terms=[floor_slope_noise_term(np.arange(obs.n_data_pts))],
+        )
+        self.evidence = Evidence(constraints=[self.parametric])
+        self.prior = scipy.stats.multivariate_normal(mean=[0.0, 1.0], cov=np.eye(2))
+
+    def _sampler(self, params):
+        return self.SimpleNamespace(params=list(params), prior=self.prior)
+
+    def test_mismatched_model_params_raise(self):
+        with self.assertRaises(ValueError):
+            Walker(
+                model_sampler=self._sampler(self.model.params[:1]),
+                evidence=self.evidence,
+                likelihood_samplers=[self._sampler(self.parametric.params)],
+            )
+
+    def test_sampler_count_mismatch_raises(self):
+        with self.assertRaises(ValueError):
+            Walker(
+                model_sampler=self._sampler(self.evidence.model_params),
+                evidence=self.evidence,
+                likelihood_samplers=[],
+            )
+
+    def test_mismatched_likelihood_params_raise(self):
+        from rxmc.params import Parameter
+
+        with self.assertRaises(ValueError):
+            Walker(
+                model_sampler=self._sampler(self.evidence.model_params),
+                evidence=self.evidence,
+                likelihood_samplers=[self._sampler([Parameter("wrong name")])],
+            )
 
 
 if __name__ == "__main__":

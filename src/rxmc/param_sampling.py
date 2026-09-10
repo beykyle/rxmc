@@ -17,6 +17,7 @@ import numpy as np
 from . import params, proposal
 from .adaptive_metropolis import adaptive_metropolis
 from .metropolis_hastings import metropolis_hastings
+from .priors import as_prior
 
 
 class Sampler:
@@ -51,7 +52,9 @@ class Sampler:
     ):
         self.params = params
         self.starting_location = starting_location
-        self.prior = prior
+        # a list of scipy marginals becomes an IndependentPrior, as in
+        # ParameterConfig, so both drivers accept the same prior forms
+        self.prior = as_prior(prior)
         self.sampling_algorithm = sampling_algorithm
         self.args = args if args is not None else ()
         self.kwargs = kwargs if kwargs is not None else {}
@@ -64,7 +67,7 @@ class Sampler:
         self.bounds = np.array([param.bounds for param in params])
 
         _validate_object(
-            prior,
+            self.prior,
             "prior",
             required_methods=["logpdf"],
         )
@@ -301,8 +304,10 @@ class AdaptiveMetropolisSampler(Sampler):
 class BatchedAdaptiveMetropolisSampler(Sampler):
     """Metropolis sampler that updates the proposal covariance after each batch.
 
-    After each completed (non-burn) batch the proposal covariance is replaced
-    by the empirical covariance of that batch, scaled by ``2.38² / ndim``.
+    After **every** completed batch — burn-in batches included — the proposal
+    covariance is replaced by the empirical covariance of that batch, scaled
+    by ``2.38² / ndim``.  Burn-in only affects whether the samples are
+    recorded, so the proposal adapts during burn-in as is standard.
 
     Parameters
     ----------
@@ -348,10 +353,12 @@ class BatchedAdaptiveMetropolisSampler(Sampler):
         log_posterior: Callable[[np.ndarray], float],
         burn: bool = False,
     ):
-        """Run the sampler for one batch, updating the proposal after recording.
+        """Run the sampler for one batch, then adapt the proposal.
 
-        Overrides :meth:`Sampler.sample` to adapt the proposal covariance from
-        the current batch's empirical covariance after each non-burn batch.
+        Overrides :meth:`Sampler.sample` to replace the proposal covariance
+        with the current batch's empirical covariance after every batch,
+        burn-in or not.  :attr:`proposal` and :attr:`proposal_cov` always
+        reflect the proposal the *next* batch will use.
 
         Parameters
         ----------
@@ -364,8 +371,8 @@ class BatchedAdaptiveMetropolisSampler(Sampler):
         log_posterior : callable
             Function ``f(x) -> float`` returning the log posterior.
         burn : bool, optional
-            If ``True``, discard samples and skip covariance update.
-            Defaults to ``False``.
+            If ``True``, discard the samples (they are not recorded); the
+            covariance update still happens.  Defaults to ``False``.
         """
         chain, logp_chain, accepted = self.sampling_algorithm(
             starting_location,
@@ -382,8 +389,8 @@ class BatchedAdaptiveMetropolisSampler(Sampler):
         self.proposal_cov = (
             self.scale * empirical_cov + np.eye(empirical_cov.shape[0]) * epsilon
         )
-        new_proposal = proposal.NormalProposalDistribution(self.proposal_cov)
-        self.args = [new_proposal]
+        self.proposal = proposal.NormalProposalDistribution(self.proposal_cov)
+        self.args = [self.proposal]
         if not burn:
             self.record_batch(n_steps, accepted, chain, logp_chain)
 

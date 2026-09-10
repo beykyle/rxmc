@@ -21,8 +21,10 @@ multivariate), the built-in :class:`~rxmc.priors.TruncatedNormalPrior`, and
 any user-supplied class that satisfies the same interface.
 
 Alternatively, a **list** of univariate ``scipy.stats`` frozen distributions
-(one per parameter) may be passed.  This form and any prior class that
-implements ``prior_transform(u)`` both support the Dynesty-compatible
+(one per parameter) may be passed; it is wrapped in an
+:class:`~rxmc.priors.IndependentPrior` on construction (the same rule
+:class:`~rxmc.param_sampling.Sampler` applies).  That class and any prior
+class that implements ``prior_transform(u)`` support the Dynesty-compatible
 :meth:`CalibrationConfig.prior_transform`.
 """
 
@@ -32,6 +34,7 @@ import numpy as np
 
 from rxmc.evidence import Evidence
 from rxmc.params import Parameter
+from rxmc.priors import as_prior, clip_unit_cube
 
 
 class ParameterConfig:
@@ -73,8 +76,10 @@ class ParameterConfig:
     ):
         self.params = params
         self.ndim = len(params)
-        self.prior = prior
-        self.initial_proposal_distribution = initial_proposal_distribution
+        # a list of marginals becomes an IndependentPrior here, so every
+        # method below sees one prior object (the rule Sampler applies too)
+        self.prior = as_prior(prior)
+        self.initial_proposal_distribution = as_prior(initial_proposal_distribution)
 
         if self.ndim == 0:
             raise ValueError("Parameter list cannot be empty")
@@ -90,27 +95,33 @@ class ParameterConfig:
 
     @staticmethod
     def _infer_dim(dist) -> Optional[int]:
-        """Return the dimensionality of a prior object, or None if unknown."""
-        if hasattr(dist, "dim") and isinstance(dist.dim, int):
-            return dist.dim
-        if hasattr(dist, "mean"):
-            return int(np.size(dist.mean))
-        return None
+        """Return the dimensionality of a prior object, or None if unknown.
+
+        An integer ``dim`` attribute wins; otherwise the size of ``mean`` is
+        used, *calling* it when it is a method (frozen ``scipy.stats``
+        univariates and user classes expose ``mean()``; scipy multivariates
+        expose an array).
+        """
+        dim = getattr(dist, "dim", None)
+        if isinstance(dim, int) and not isinstance(dim, bool):
+            return dim
+        mean = getattr(dist, "mean", None)
+        if mean is None:
+            return None
+        if callable(mean):
+            try:
+                mean = mean()
+            except Exception:
+                return None
+        return int(np.size(mean))
 
     def _validate_prior_dim(self, dist, name: str) -> None:
-        if isinstance(dist, list):
-            if len(dist) != self.ndim:
-                raise ValueError(
-                    f"{name} list length ({len(dist)}) does not match "
-                    f"number of parameters ({self.ndim})"
-                )
-        else:
-            dim = self._infer_dim(dist)
-            if dim is not None and dim != self.ndim:
-                raise ValueError(
-                    f"{name} dimensionality ({dim}) does not match "
-                    f"number of parameters ({self.ndim})"
-                )
+        dim = self._infer_dim(dist)
+        if dim is not None and dim != self.ndim:
+            raise ValueError(
+                f"{name} dimensionality ({dim}) does not match "
+                f"number of parameters ({self.ndim})"
+            )
 
     # ------------------------------------------------------------------
     # Public API
@@ -129,11 +140,7 @@ class ParameterConfig:
         ndarray, shape (nwalkers, ndim)
             One initial position per walker.
         """
-        dist = self.initial_proposal_distribution
-        if isinstance(dist, list):
-            samples = [d.rvs(nwalkers) for d in dist]
-            return np.column_stack(samples)
-        samples = np.atleast_1d(dist.rvs(nwalkers))
+        samples = np.atleast_1d(self.initial_proposal_distribution.rvs(nwalkers))
         return samples.reshape(nwalkers, -1)
 
     def prior_logpdf(self, x: np.ndarray) -> float:
@@ -149,22 +156,15 @@ class ParameterConfig:
         float
             Log prior probability at ``x``.
         """
-        x = np.atleast_1d(x)
-        if isinstance(self.prior, list):
-            logpdfs = [dist.logpdf(x[i]) for i, dist in enumerate(self.prior)]
-            return float(np.sum(logpdfs))
-        return float(self.prior.logpdf(x))
+        return float(self.prior.logpdf(np.atleast_1d(x)))
 
     def prior_transform(self, u: np.ndarray) -> np.ndarray:
         """Map unit-cube coordinates to physical parameters for this sector.
 
-        Supports two forms:
-
-        * **List prior** — each element must expose a ``ppf`` method (all
-          frozen ``scipy.stats`` univariate distributions do).
-        * **Joint prior with ``prior_transform``** — the prior object must
-          implement ``prior_transform(u) -> ndarray`` itself (e.g.
-          :class:`~rxmc.priors.TruncatedNormalPrior`).
+        The prior object must implement ``prior_transform(u) -> ndarray``
+        (:class:`~rxmc.priors.IndependentPrior`, which a list prior becomes,
+        and :class:`~rxmc.priors.TruncatedNormalPrior` do).  ``u`` is clipped
+        into the open unit cube first, so an exact ``0`` or ``1`` stays finite.
 
         Parameters
         ----------
@@ -179,15 +179,15 @@ class ParameterConfig:
         Raises
         ------
         NotImplementedError
-            If the prior is neither a list nor exposes ``prior_transform``.
+            If the prior does not expose ``prior_transform``.
         """
-        if isinstance(self.prior, list):
-            return np.array([dist.ppf(u[i]) for i, dist in enumerate(self.prior)])
+        u = clip_unit_cube(u)
         if hasattr(self.prior, "prior_transform"):
             return self.prior.prior_transform(u)
         raise NotImplementedError(
-            "Prior transform requires either a list of distributions with ppf "
-            "or a prior object that implements prior_transform(u)."
+            "Prior transform requires a prior object that implements "
+            "prior_transform(u) (a list of scipy marginals is wrapped in "
+            "IndependentPrior, which does)."
         )
 
 
@@ -252,16 +252,12 @@ class CalibrationConfig:
             1.0 if likelihood_scaling is None else likelihood_scaling
         )
 
-        if (
-            len(self.evidence.constraints) == 0
-            and len(self.evidence.parametric_constraints) == 0
-        ):
+        if len(self.evidence.constraints) == 0:
             raise ValueError("Evidence must have at least one constraint")
         if np.any(
             [
                 c.physical_model.params != self.model_config.params
                 for c in self.evidence.constraints
-                + self.evidence.parametric_constraints
             ]
         ):
             raise ValueError(
@@ -273,7 +269,7 @@ class CalibrationConfig:
                 "in the evidence constraints"
             )
         for lc, c in zip(self.likelihood_configs, self.evidence.parametric_constraints):
-            if lc.params != c.likelihood.params:
+            if list(lc.params) != list(c.params):
                 raise ValueError(
                     "Likelihood parameters do not match those in the evidence constraints"
                 )
@@ -318,10 +314,11 @@ class CalibrationConfig:
         """Prior distribution objects in parameter-sector order.
 
         Returns one entry per sector: the model prior first, followed by one
-        entry per likelihood sector.  Each entry is whatever was passed as
-        ``prior`` to the corresponding :class:`ParameterConfig` — a list of
-        univariate distributions, a multivariate distribution, or a custom
-        prior object.
+        entry per likelihood sector.  Each entry is the prior object held by
+        the corresponding :class:`ParameterConfig` — a multivariate
+        distribution, a custom prior object, or the
+        :class:`~rxmc.priors.IndependentPrior` a list of univariate
+        distributions was wrapped into.
         """
         return [pc.prior for pc in self.parameter_configs]
 
@@ -493,12 +490,9 @@ class CalibrationConfig:
         ValueError
             If ``u`` does not have length ``ndim``.
         """
-        u = np.asarray(u, dtype=float)
+        u = clip_unit_cube(u)
         if u.shape[-1] != self.ndim:
             raise ValueError(f"Expected u with length {self.ndim}, got shape {u.shape}")
-
-        eps = np.finfo(float).eps
-        u = np.clip(u, eps, 1.0 - eps)
 
         theta = np.empty_like(u)
         offset = 0
@@ -523,20 +517,45 @@ class CalibrationConfig:
 
         Returns
         -------
-        list of ndarray
-            Predicted observable for each constraint, in the order
-            ``evidence.constraints + evidence.parametric_constraints``.
+        list
+            One entry per constraint, in ``evidence.constraints`` order; each entry
+            is itself a list of per-observation prediction arrays.  For the
+            conditioning data of a likelihood sector use :meth:`predict_parametric`,
+            whose order matches :meth:`conditional_posterior`'s ``lm_index``.
         """
-        constraints = self.evidence.constraints + self.evidence.parametric_constraints
-        return [c.predict(*xmodel) for c in constraints]
+        return [c.predict(*xmodel) for c in self.evidence.constraints]
+
+    def predict_parametric(self, xmodel) -> list:
+        """Predictions for the *parametric* constraints only.
+
+        Indexed in ``evidence.parametric_constraints`` order, so
+        ``predict_parametric(xmodel)[lm_index]`` is the correct ``ym`` to feed
+        :meth:`conditional_posterior` at ``lm_index`` (unlike :meth:`predict`,
+        which is indexed over *all* constraints and therefore misaligns whenever a
+        non-parametric constraint precedes a parametric one).
+
+        Parameters
+        ----------
+        xmodel : ndarray, shape (model_config.ndim,)
+            Physical model parameter vector.
+
+        Returns
+        -------
+        list
+            One prediction per parametric constraint.
+        """
+        return [c.predict(*xmodel) for c in self.evidence.parametric_constraints]
 
     def conditional_posterior(self, x_lm, lm_index: int, ym) -> float:
         """Log posterior for one likelihood sector, conditioned on observed data.
 
-        Evaluates ``marginal_log_likelihood(ym, *x_lm) + prior_logpdf(x_lm)``
-        for the likelihood sector at ``lm_index``.  Useful for Gibbs-style
-        updates where the likelihood parameters are sampled separately from
-        the physical model parameters.
+        Evaluates
+        ``prior_logpdf(x_lm) + likelihood_scaling * w * marginal_log_likelihood(ym, *x_lm)``
+        for the likelihood sector at ``lm_index``, where ``w`` is the
+        constraint's :attr:`Evidence.weights` entry.  The likelihood is tempered
+        exactly as in :meth:`log_posterior` (prior untouched), so Gibbs-style
+        updates that alternate this conditional with the model block target the
+        same joint distribution.
 
         Parameters
         ----------
@@ -546,13 +565,17 @@ class CalibrationConfig:
             Index into ``likelihood_configs`` (and
             ``evidence.parametric_constraints``).
         ym : ndarray
-            Predicted observable used as the conditioning data.
+            Predicted observable used as the conditioning data — use
+            ``predict_parametric(xmodel)[lm_index]`` to obtain it with matching
+            index order.
 
         Returns
         -------
         float
             Log posterior for this likelihood sector.
         """
-        return self.evidence.parametric_constraints[lm_index].marginal_log_likelihood(
-            ym, *x_lm
-        ) + self.likelihood_configs[lm_index].prior_logpdf(x_lm)
+        lp = self.likelihood_configs[lm_index].prior_logpdf(x_lm)
+        if not np.isfinite(lp):
+            return -np.inf
+        ll = self.evidence.weighted_marginal_log_likelihood(lm_index, ym, *x_lm)
+        return lp + self.likelihood_scaling * ll

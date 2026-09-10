@@ -62,4 +62,4 @@ intersphinx_mapping = {
     "scipy": ("https://docs.scipy.org/doc/scipy", None),
 }
 
-exclude_patterns = ["_build", "**.ipynb_checkpoints"]
+exclude_patterns = ["_build", "jupyter_execute", "**.ipynb_checkpoints"]

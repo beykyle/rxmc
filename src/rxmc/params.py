@@ -24,7 +24,15 @@ class Parameter:
         ``name`` when not supplied.
     bounds : tuple of float, optional
         ``(lower, upper)`` bounds for the parameter.  Defaults to
-        ``(-np.inf, np.inf)``.
+        ``(-np.inf, np.inf)``.  Stored as a tuple of floats.
+
+    Notes
+    -----
+    Equality and hashing are by *value* (all five fields), so equal
+    parameters are interchangeable as dict keys and set members.  Sharing one
+    sampled value between covariance terms is by object *identity* (see
+    :mod:`rxmc.covariance`); two equal-but-distinct parameters are two
+    parameters.
     """
 
     def __init__(
@@ -33,16 +41,26 @@ class Parameter:
         self.name = name
         self.dtype = dtype
         self.unit = unit
+        bounds = tuple(float(b) for b in bounds)
+        if len(bounds) != 2:
+            raise ValueError(f"bounds must be (lower, upper), got {bounds!r}")
         self.bounds = bounds
         self.latex_name = latex_name if latex_name else name
+
+    def _key(self):
+        return (self.name, self.dtype, self.unit, self.latex_name, self.bounds)
 
     def __eq__(self, other):
         if not isinstance(other, Parameter):
             return False
+        return self._key() == other._key()
+
+    def __hash__(self):
+        return hash(self._key())
+
+    def __repr__(self):
         return (
-            self.name == other.name
-            and self.dtype == other.dtype
-            and self.unit == other.unit
-            and self.latex_name == other.latex_name
-            and self.bounds == other.bounds
+            f"Parameter({self.name!r}, dtype={self.dtype.__name__}, "
+            f"unit={self.unit!r}, latex_name={self.latex_name!r}, "
+            f"bounds={self.bounds!r})"
         )

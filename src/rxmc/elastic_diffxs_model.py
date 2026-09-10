@@ -12,7 +12,23 @@ import jitr
 import numpy as np
 
 from .elastic_diffxs_observation import ElasticDifferentialXSObservation
+from .observation_from_measurement import MB_PER_B
 from .physical_model import PhysicalModel
+
+
+def _require_observation(observation) -> None:
+    """Reject observations this model cannot evaluate on.
+
+    Both reaction observations report ``quantity == "dXS/dA"``, so a string
+    check cannot tell them apart; the class carries the solver workspace the
+    model needs.
+    """
+    if not isinstance(observation, ElasticDifferentialXSObservation):
+        raise ValueError(
+            "ElasticDifferentialXSModel requires an "
+            "ElasticDifferentialXSObservation, got "
+            f"{type(observation).__name__}"
+        )
 
 
 class ElasticDifferentialXSModel(PhysicalModel):
@@ -23,13 +39,15 @@ class ElasticDifferentialXSModel(PhysicalModel):
     def __init__(
         self,
         quantity: str,
-        interaction_central: Callable[[float, tuple], complex],
-        interaction_spin_orbit: Callable[[float, tuple], complex],
+        interaction_central: Callable[..., np.ndarray],
+        interaction_spin_orbit: Callable[..., np.ndarray] | None,
         calculate_interaction_from_params: Callable[
             [jitr.xs.elastic.DifferentialWorkspace, tuple], tuple
         ],
         params: list = [],
         model_name: str = None,
+        interaction_coulomb: Callable[..., np.ndarray] | None = None,
+        transform=None,
     ):
         """
         Parameters
@@ -37,23 +55,34 @@ class ElasticDifferentialXSModel(PhysicalModel):
         quantity : str
             Observable to compute: ``"dXS/dA"``, ``"dXS/dRuth"``, or ``"Ay"``.
         interaction_central : callable
-            ``f(r, args) -> complex`` returning the central interaction potential.
-        interaction_spin_orbit : callable
-            ``f(r, args) -> complex`` returning the spin-orbit potential.
+            ``f(r, *args) -> np.ndarray`` returning the central interaction
+            potential on the radial grid ``r`` (fm), in MeV.
+        interaction_spin_orbit : callable or None
+            ``f(r, *args) -> np.ndarray`` returning the spin-orbit potential on
+            ``r``.  ``None`` for a spin-orbit-free model.
         calculate_interaction_from_params : callable
-            ``f(workspace, *params) -> (central_args, spin_orbit_args)``
-            mapping model parameters to the argument tuples expected by the
-            interaction callables.
+            ``f(workspace, *params) -> (central_args, spin_orbit_args)`` or
+            ``-> (central_args, spin_orbit_args, coulomb_args)`` mapping model
+            parameters to the argument tuples expected by the interaction
+            callables.
         params : list of Parameter, optional
             Parameters of the model.  Defaults to ``[]``.
         model_name : str, optional
             Human-readable model name.  Defaults to ``"ElasticDifferentialXSModel"``.
+        interaction_coulomb : callable, optional
+            ``f(r, *args) -> np.ndarray`` returning the Coulomb potential on
+            ``r``.  When ``None`` the Coulomb interaction inside the channel
+            radius must be folded into ``interaction_central``.
+        transform : Transform or callable, optional
+            Parametric model-side transform applied to the prediction; see
+            :class:`~rxmc.physical_model.PhysicalModel`.
         """
         self.model_name = model_name or "ElasticDifferentialXSModel"
 
         self.quantity = quantity
         self.interaction_central = interaction_central
         self.interaction_spin_orbit = interaction_spin_orbit
+        self.interaction_coulomb = interaction_coulomb
         self.calculate_interaction_from_params = calculate_interaction_from_params
 
         if self.quantity == "dXS/dA":
@@ -62,8 +91,44 @@ class ElasticDifferentialXSModel(PhysicalModel):
             self.extractor = extract_dXS_dRuth
         elif self.quantity == "Ay":
             self.extractor = extract_Ay
+        else:
+            raise ValueError(
+                f"Unknown quantity {quantity!r}; expected 'dXS/dA', 'dXS/dRuth' "
+                "or 'Ay'."
+            )
 
-        super().__init__(params)
+        super().__init__(params, transform=transform)
+
+    def _xs(self, ws, params):
+        """Evaluate the potentials on ``ws.radial_grid()`` and solve.
+
+        ``calculate_interaction_from_params`` returns either two argument
+        tuples ``(central, spin_orbit)`` or three ``(central, spin_orbit,
+        coulomb)``; anything else is an error.
+        """
+        args = self.calculate_interaction_from_params(ws, *params)
+        if len(args) == 2:
+            (central_args, spin_orbit_args), coulomb_args = args, ()
+        elif len(args) == 3:
+            central_args, spin_orbit_args, coulomb_args = args
+        else:
+            raise ValueError(
+                "calculate_interaction_from_params must return 2 or 3 argument "
+                f"tuples, got {len(args)}"
+            )
+        r = ws.radial_grid()
+        central = self.interaction_central(r, *central_args)
+        spin_orbit = (
+            None
+            if self.interaction_spin_orbit is None
+            else self.interaction_spin_orbit(r, *spin_orbit_args)
+        )
+        coulomb = (
+            None
+            if self.interaction_coulomb is None
+            else self.interaction_coulomb(r, *coulomb_args)
+        )
+        return ws.xs(central, spin_orbit, coulomb)
 
     def evaluate(
         self,
@@ -85,21 +150,14 @@ class ElasticDifferentialXSModel(PhysicalModel):
         np.ndarray
             Predicted observable on ``observation.constraint_workspace.angles``.
         """
+        _require_observation(observation)
         if observation.quantity != self.quantity:
             raise ValueError(
                 f"Observation quantity {observation.quantity} does not match "
                 f"model quantity {self.quantity}."
             )
         ws = observation.constraint_workspace
-        central_params, spin_orbit_params = self.calculate_interaction_from_params(
-            ws, *params
-        )
-        xs = ws.xs(
-            self.interaction_central,
-            self.interaction_spin_orbit,
-            args_central=central_params,
-            args_spin_orbit=spin_orbit_params,
-        )
+        xs = self._xs(ws, params)
         if observation.compound_correction is not None:
             if observation.quantity not in ["dXS/dA", "dXS/dRuth"]:
                 raise ValueError(
@@ -122,28 +180,23 @@ class ElasticDifferentialXSModel(PhysicalModel):
         observation : ElasticDifferentialXSObservation
             Observation containing the reaction data and pre-built workspace.
         *params : float
-            Physical-model parameter values.
+            Full model parameter values (physical parameters followed by any
+            transform parameters).
 
         Returns
         -------
         np.ndarray
             Predicted observable on ``observation.visualization_workspace.angles``.
         """
+        _require_observation(observation)
         if observation.quantity != self.quantity:
             raise ValueError(
                 f"Observation quantity {observation.quantity} does not match "
                 f"model quantity {self.quantity}."
             )
+        base, values = self.split_params(params)
         ws = observation.visualization_workspace
-        central_params, spin_orbit_params = self.calculate_interaction_from_params(
-            ws, *params
-        )
-        xs = ws.xs(
-            self.interaction_central,
-            self.interaction_spin_orbit,
-            args_central=central_params,
-            args_spin_orbit=spin_orbit_params,
-        )
+        xs = self._xs(ws, base)
         if observation.compound_correction is not None:
             cn = np.interp(
                 ws.angles,
@@ -156,14 +209,14 @@ class ElasticDifferentialXSModel(PhysicalModel):
                 )
             xs.dsdo += cn
             xs.t += 2 * np.pi * np.trapz(cn, ws.angles)
-        return self.extractor(xs, ws)
+        return self.apply_transform(observation, self.extractor(xs, ws), values)
 
 
 def extract_dXS_dA(
     xs: jitr.xs.elastic.ElasticXS, ws: jitr.xs.elastic.DifferentialWorkspace
 ) -> np.ndarray:
-    """Extracts dXS/dA in b/Sr"""
-    return xs.dsdo / 1000
+    """Extracts dXS/dA in b/Sr (``jitr`` reports mb/sr)."""
+    return xs.dsdo / MB_PER_B
 
 
 def extract_dXS_dRuth(

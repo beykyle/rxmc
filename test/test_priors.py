@@ -5,7 +5,12 @@ import scipy.stats
 
 from rxmc.config import ParameterConfig
 from rxmc.params import Parameter
-from rxmc.priors import IndependentPrior, TruncatedNormalPrior
+from rxmc.priors import (
+    IndependentPrior,
+    TruncatedNormalPrior,
+    as_prior,
+    clip_unit_cube,
+)
 
 
 class TestIndependentPrior(unittest.TestCase):
@@ -137,6 +142,37 @@ class TestTruncatedNormalPrior(unittest.TestCase):
         theta = self.prior.prior_transform(u)
         lp = self.prior.logpdf(theta)
         self.assertTrue(np.isfinite(lp))
+
+
+class TestUnitCubeClipping(unittest.TestCase):
+    def test_clip_unit_cube(self):
+        u = clip_unit_cube([0.0, 0.5, 1.0])
+        eps = np.finfo(float).eps
+        np.testing.assert_allclose(u, [eps, 0.5, 1.0 - eps])
+        self.assertEqual(u.dtype, float)
+        self.assertTrue(np.all(u > 0.0) and np.all(u < 1.0))
+
+    def test_independent_prior_boundary_is_finite(self):
+        # an unbounded marginal's ppf is +-inf at exactly 0 / 1
+        prior = IndependentPrior([scipy.stats.norm(0, 1), scipy.stats.norm(0, 1)])
+        theta = prior.prior_transform([0.0, 1.0])
+        self.assertTrue(np.all(np.isfinite(theta)))
+        self.assertLess(theta[0], 0.0)
+        self.assertGreater(theta[1], 0.0)
+
+    def test_truncated_normal_boundary_is_finite(self):
+        prior = TruncatedNormalPrior(mu=[0.0], sigma=[1.0], lower=[-2.0], upper=[3.0])
+        theta = prior.prior_transform([0.0])
+        self.assertTrue(np.all(np.isfinite(theta)))
+        np.testing.assert_allclose(theta, [-2.0], atol=1e-6)
+
+    def test_as_prior_wraps_lists_only(self):
+        dists = [scipy.stats.norm(0, 1)]
+        wrapped = as_prior(dists)
+        self.assertIsInstance(wrapped, IndependentPrior)
+        self.assertIs(wrapped.distributions[0], dists[0])
+        prior = TruncatedNormalPrior(mu=[0.0], sigma=[1.0], lower=[-1.0], upper=[1.0])
+        self.assertIs(as_prior(prior), prior)
 
 
 if __name__ == "__main__":

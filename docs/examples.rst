@@ -18,6 +18,7 @@ Basic calibration
 
    examples/linear_calibration_demo.ipynb
    examples/systematic_err_demo.ipynb
+   examples/robust_likelihoods.ipynb
 
 Realistic nuclear physics calibration
 --------------------------------------
@@ -26,6 +27,7 @@ Realistic nuclear physics calibration
    :maxdepth: 1
 
    examples/30s_optical_potential_calibration.ipynb
+   examples/measurement_to_calibration.ipynb
    examples/calibration_config_emcee_dynesty.ipynb
 
 Advanced topics
@@ -34,6 +36,8 @@ Advanced topics
 .. toctree::
    :maxdepth: 1
 
+   examples/correlated_observations.ipynb
+   examples/gp_discrepancy.ipynb
    examples/normalization_inference.ipynb
    examples/sampling_algos.ipynb
    examples/overconfidence.ipynb
