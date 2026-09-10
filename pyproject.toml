@@ -36,17 +36,20 @@ docs = [
 ]
 examples = [
   "corner>=2.2",
+  "dill>=0.3",
   "dynesty>=2.1",
   "emcee>=3.1",
   "ipykernel>=6.0",
   "jupyter>=1.0",
   "matplotlib>=3.8",
+  "scikit-learn>=1.0",
   "tqdm>=4.66",
 ]
 validation = [
   "black>=24.0",
   "build>=1.2",
   "corner>=2.2",
+  "dill>=0.3",
   "dynesty>=2.1",
   "emcee>=3.1",
   "ipykernel>=6.0",
@@ -57,6 +60,7 @@ validation = [
   "nbqa>=1.9",
   "pytest>=8.0",
   "ruff>=0.6",
+  "scikit-learn>=1.0",
   "tqdm>=4.66",
 ]
 
@@ -71,7 +75,7 @@ write_to = "src/rxmc/__version__.py"
 
 [tool.black]
 line-length = 88
-target-version = ["py310"]
+target-version = ["py312"]
 
 [tool.isort]
 profile = "black"
@@ -80,7 +84,7 @@ src_paths = ["src", "test"]
 
 [tool.ruff]
 line-length = 88
-target-version = "py310"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["F", "I"]
@@ -91,6 +95,12 @@ select = ["F", "I"]
 known-first-party = ["rxmc", "helpers"]
 
 [tool.pytest.ini_options]
-# bare `pytest` runs the unit suite only; the notebooks are executed in CI via
-# `pytest -n 4 --nbmake --nbmake-timeout=1200 examples`
+# bare `pytest` runs the fast tier: unit tests plus the sampler-free and
+# short-chain assertions of every recipe test.  The converged tier is marked
+# `slow` and runs on a schedule with `pytest -m slow`; the notebooks with
+# `pytest --nbmake examples`.  See docs/groundup_design.md section 9.
 testpaths = ["test"]
+addopts = "-m 'not slow'"
+markers = [
+  "slow: converged-chain tier; deselected by default, run nightly with -m slow",
+]

@@ -1,59 +1,16 @@
 Installation
 ============
 
-Requirements
-------------
-
-``rxmc`` requires Python 3.10 or later. Core dependencies are listed in
-``requirements.txt`` and are installed automatically.
-
-Development / local use
------------------------
+``rxmc`` requires Python 3.12 or later.  Core dependencies are listed in
+``requirements.txt`` and are installed automatically.  The 1.0 pre-releases
+will be published to PyPI as ``v1.0.0a1``, ``b1``, ``rc1`` and installable
+with ``pip install --pre rxmc``; until then install from the branch:
 
 .. code-block:: bash
 
-   git clone git@github.com:beykyle/rxmc.git
+   git clone -b rewrite git@github.com:beykyle/rxmc.git
    cd rxmc
-   pip install -ve .
+   python -m venv .venv && source .venv/bin/activate
+   pip install -e '.[validation]'      # or '.[examples]' for the notebooks only
 
-It is strongly recommended to use an isolated environment.
-
-``venv``
---------
-
-.. code-block:: bash
-
-   python -m venv .rxmc
-   source .rxmc/bin/activate
-   pip install -r requirements.txt
-   pip install -ve .
-
-``uv``
-------
-
-.. code-block:: bash
-
-   uv env create
-   uv env use python
-   uv install -e .
-
-Optional extras
----------------
-
-Install example notebook runtime dependencies:
-
-.. code-block:: bash
-
-   pip install -ve '.[examples]'
-
-Install the full validation toolchain (formatting, linting, testing):
-
-.. code-block:: bash
-
-   pip install -ve '.[validation]'
-
-Install documentation build dependencies:
-
-.. code-block:: bash
-
-   pip install -ve '.[docs]'
+The 0.x package is at tag ``v0.1.0`` and on branch ``legacy/0.x``.

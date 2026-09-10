@@ -1,45 +1,12 @@
-from . import adaptive_metropolis as adaptive_metropolis
-from . import config as config
-from . import constraint as constraint
-from . import covariance as covariance
-from . import elastic_diffxs_model as elastic_diffxs_model
-from . import elastic_diffxs_observation as elastic_diffxs_observation
-from . import evidence as evidence
-from . import ias_pn_model as ias_pn_model
-from . import ias_pn_observation as ias_pn_observation
-from . import likelihood_model as likelihood_model
-from . import metropolis_hastings as metropolis_hastings
-from . import model_comparison as model_comparison
-from . import observation as observation
-from . import observation_from_measurement as observation_from_measurement
-from . import param_sampling as param_sampling
-from . import params as params
-from . import physical_model as physical_model
-from . import predictive as predictive
-from . import priors as priors
-from . import transforms as transforms
-from . import walker as walker
-from .__version__ import __version__ as __version__
+"""rxmc: Bayesian calibration of reaction models with composable error models.
 
-__all__ = [
-    "__version__",
-    "adaptive_metropolis",
-    "config",
-    "constraint",
-    "covariance",
-    "elastic_diffxs_model",
-    "elastic_diffxs_observation",
-    "evidence",
-    "ias_pn_model",
-    "ias_pn_observation",
-    "likelihood_model",
-    "metropolis_hastings",
-    "observation",
-    "observation_from_measurement",
-    "param_sampling",
-    "params",
-    "physical_model",
-    "predictive",
-    "priors",
-    "walker",
-]
+The 1.0 rewrite is in progress on this branch; see ``docs/groundup_design.md``
+for the design and ``docs/recipes.md`` for the supported use cases.
+"""
+
+try:
+    from .__version__ import __version__ as __version__
+except ImportError:  # pragma: no cover - source checkout without a build
+    __version__ = "0+unknown"
+
+__all__ = ["__version__"]
