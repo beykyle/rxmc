@@ -1,5 +1,9 @@
 # rxmc
 
+> **The 1.0 rewrite is in progress on branch [`rewrite`](https://github.com/beykyle/rxmc/tree/rewrite)**, guided by
+> [`docs/groundup_design.md`](docs/groundup_design.md) and [`docs/recipes.md`](docs/recipes.md).
+> This 0.x package is preserved at tag `v0.1.0` and on branch `legacy/0.x`.
+
 `rxmc` is an orchestration layer for Bayesian calibration of reaction models to
 large data sets with flexible, composable covariance modeling.
 
