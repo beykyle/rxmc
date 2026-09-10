@@ -5,6 +5,7 @@ for the design and ``docs/recipes.md`` for the supported use cases.
 """
 
 from . import likelihood as likelihood
+from . import terms as terms
 from . import transforms as transforms
 from . import units as units
 from .params import Parameter as Parameter
@@ -14,4 +15,4 @@ try:
 except ImportError:  # pragma: no cover - source checkout without a build
     __version__ = "0+unknown"
 
-__all__ = ["__version__", "Parameter", "likelihood", "transforms", "units"]
+__all__ = ["__version__", "Parameter", "likelihood", "terms", "transforms", "units"]
