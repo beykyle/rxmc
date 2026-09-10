@@ -426,10 +426,7 @@ models = {
     "Lgp": rx.Constraint([comp_log], terms=[T.noise(log_eps), gp], statistical=False),
     "L0t": rx.Constraint([comp_log], terms=[T.noise(log_eps)], statistical=False, likelihood=rx.StudentT()),
 }
-# L0: constant noise in log space; E0: fractional noise in linear space;
-# L2y: L0 plus a free normalisation mode; Lgp: L0 plus a GP in angle;
-# L0t: L0 under a Student-t likelihood.  The full ladder and its legend live
-# in test/helpers.py (STUDY_LEGEND).
+# the labels are defined in the table below this block
 logz = {}
 for name, c in models.items():
     p = rx.Problem([c.masked_where(lambda x: x < cut)], priors=priors)
@@ -437,6 +434,27 @@ for name, c in models.items():
     logz[name] = rx.diagnostics.logz_summary(res.logz[-1] + p.log_jacobian(), res.logzerr[-1])
 verdict = rx.diagnostics.compare_logz(logz["Lgp"], logz["L0"])
 ```
+
+The error-model ladder of the study, in the words a reader needs.  All
+forms are covariances of the residual in log space unless stated; `theta`
+is the scattering angle in radians and `u = theta / pi`.
+
+| label | error model |
+|---|---|
+| `L0` | constant noise: `sigma = err` on every point |
+| `E0` | fractional noise in linear space: `sigma_i = err * ym_i` |
+| `L1` | noise growing with angle: `sigma(theta) = err * exp(slope * u)` |
+| `L2` | `L0` plus one correlated mode proportional to angle, `sys * u` |
+| `L2n` | `L0` plus a free correlated offset mode, `sys * 1` |
+| `L2y` | `L0` plus a free correlated normalisation mode, `sys * ym` |
+| `L12` | `L1` plus the angle mode of `L2` |
+| `Lgp` | `L0` plus a Matérn(5/2) Gaussian process in `u` with constant amplitude |
+| `Lgpn` | `L0` plus the Gaussian process with an angle-growing amplitude |
+| `LKp` | noise, an offset mode, and an RBF Gaussian process in momentum transfer `q = 2 k sin(theta/2)` with amplitude `A q^(r/2)` |
+| `L0t` | `L0` under a Student-t likelihood |
+
+The test suite builds every row of this table against a hand-built dense
+covariance (`test/helpers.py`), so the table and the tests cannot drift.
 
 Expected behaviour:
 

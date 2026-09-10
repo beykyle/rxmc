@@ -1,9 +1,11 @@
 """Shared helpers for the test suite: dense references built by hand.
 
-``STUDY_LEGEND`` and :func:`study_form` define the error-model ladder of the
+``STUDY_LEGEND`` and :func:`study_form` build the error-model ladder of the
 motivating study (elastic alpha + Ca scattering data with no reported
-uncertainties, compared in log space).  Every label used in the tests and the
-recipes is defined here, once, in the words a maintainer needs.
+uncertainties, compared in log space).  The ladder is *defined* for users in
+the table of recipe 18 (``docs/recipes.md``); the legend here is the test
+suite's copy of that table, kept identical so the tests and the docs cannot
+drift.
 """
 
 from dataclasses import dataclass
@@ -93,9 +95,10 @@ def index_params(terms):
 # The alpha + Ca error-model ladder
 # ----------------------------------------------------------------------------
 
-#: Label -> what the error model is.  All forms are covariances of the
-#: residual ``y - ym`` in log space unless stated; ``theta`` is the scattering
-#: angle in radians and ``u = theta / pi`` its normalised form.
+#: Label -> what the error model is; the same table as recipe 18 in
+#: docs/recipes.md.  All forms are covariances of the residual ``y - ym`` in
+#: log space unless stated; ``theta`` is the scattering angle in radians and
+#: ``u = theta / pi`` its normalised form.
 STUDY_LEGEND = {
     "L0": "constant noise: sigma = err on every point",
     "E0": "fractional noise in linear space: sigma_i = err * ym_i",
