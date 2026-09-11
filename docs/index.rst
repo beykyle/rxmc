@@ -12,8 +12,10 @@ calibration driven by external samplers (emcee, dynesty, black-box-bayes).
 - :doc:`design` is the maintainer's description of the library.
 - :doc:`api` is the reference.
 
-The 1.0 rewrite lives on the ``rewrite`` branch until its release; the 0.x
-package is preserved at tag ``v0.1.0`` and on branch ``legacy/0.x``.
+This is ``rxmc`` 1.0, a rewrite that does not run 0.x code.  The 0.x package
+is preserved at tag `v0.1.0 <https://github.com/beykyle/rxmc/tree/v0.1.0>`_
+and on branch `legacy/0.x <https://github.com/beykyle/rxmc/tree/legacy/0.x>`_;
+:doc:`installation` says how to pin it.
 
 .. toctree::
    :maxdepth: 1

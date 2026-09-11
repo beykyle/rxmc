@@ -129,14 +129,19 @@ print(problem.names, sampler.results.logz[-1])
 
 Python 3.12 or later; the runtime dependencies are `numpy`, `scipy`,
 `jitr >= 3.0` and `exfor-tools`.  Until the 1.0 pre-releases are on PyPI
-(`pip install --pre rxmc`), install from the branch:
+(`pip install --pre rxmc`), install from GitHub:
 
 ```bash
-git clone -b rewrite git@github.com:beykyle/rxmc.git
+git clone git@github.com:beykyle/rxmc.git
 cd rxmc
 python -m venv .venv && source .venv/bin/activate
 pip install -e '.[examples]'        # or '.[validation]' to run the tests
 ```
+
+1.0 is a rewrite and does not run 0.x code.  The 0.x package is preserved at
+tag [`v0.1.0`](https://github.com/beykyle/rxmc/tree/v0.1.0) and on branch
+[`legacy/0.x`](https://github.com/beykyle/rxmc/tree/legacy/0.x); pin it with
+`pip install git+https://github.com/beykyle/rxmc@v0.1.0`.
 
 ## Validation
 

@@ -1,7 +1,7 @@
 """rxmc: Bayesian calibration of reaction models with composable error models.
 
-The 1.0 rewrite is in progress on this branch; see ``docs/groundup_design.md``
-for the design and ``docs/recipes.md`` for the supported use cases.
+See ``docs/design.md`` for the design and ``docs/recipes.md`` for the
+supported use cases.
 """
 
 from . import constraint as constraint
