@@ -1,242 +1,157 @@
+"""
+(p,n) isobaric-analog-state differential cross sections from ``jitr``.
+
+:class:`IsobaricAnalogPN` is a :class:`~rxmc.model.Model` that overrides only
+``bind``: given a grid of angles and a dataset's kinematics
+(``meta["reaction"]``, ``meta["Elab"]``, ``meta["ExIAS"]``) it builds the
+``jitr`` quasielastic (p,n) workspace on that grid and returns a
+:class:`~rxmc.model.Predictor` for the cross section in b/sr.  The (p,n)
+transition is driven by the difference between the proton and neutron
+potentials (the Lane term), so the five potentials are declared separately.
+"""
+
+from __future__ import annotations
+
+from typing import Callable
+
 import jitr
 import numpy as np
-from exfor_tools.distribution import Distribution
 
-from .observation import Observation
-from .observation_from_measurement import (  # noqa: F401  (re-exported names)
-    DEFAULT_LMAX,
-    XS_UNIT,
-    check_angle_grid,
-    measurement_kwargs,
-    normalized_error_kwargs,
-    ureg,
-)
+from ..model import Model, Predictor
+from ..units import DEFAULT_LMAX, MB_PER_B, check_angle_grid
 
-
-class IsobaricAnalogPNObservation(Observation):
-    """
-    Observation for (p,n) isobaric analog state (IAS) reactions.
-
-    This is an :class:`~rxmc.observation.Observation` (statistical error only): it
-    inherits ``statistical_term`` and ``num_pts_within_interval``.  Any correlated
-    systematic is composed explicitly as an ``extra_terms`` entry in the
-    :class:`~rxmc.constraint.Constraint`.
-
-    It is designed to handle (p,n) IAS reaction measurements in differential cross
-    section form.
-
-    Internally, this involves initializing a jitr.xs.quasielastic_pn.Workspace
-    which precomputes things like boundary conditions to speed up computation of
-    observables for a given set of interaction parameters.
-    """
-
-    def __init__(
-        self,
-        x: np.ndarray,
-        y: np.ndarray,
-        Elab: float,
-        reaction: jitr.reactions.Reaction,
-        ExIAS: float,
-        y_units: str,
-        y_stat_err=None,
-        y_sys_err_normalization=None,
-        y_sys_err_offset=None,
-        dataset_label: str | None = None,
-        lmax: int = DEFAULT_LMAX,
-        angles_vis: np.ndarray = np.linspace(0.01, 180, 100),
-        wavelengths_beyond_range: float = 2.0,
-        zeros_per_node: int = 5,
-        transform=None,
-        mask=None,
-    ):
-        """
-        Initialize a Observation instance for the (p,n) IAS reaction.
-
-        Parameters
-        ----------
-        x : np.ndarray
-            Measured angle grid in degrees.
-        y : np.ndarray
-            Measured differential cross section data.
-        Elab : float
-            Laboratory energy of the incoming proton (MeV).
-        reaction : jitr.reactions.Reaction
-            Reaction information.
-        ExIAS : float
-            Excitation energy of the IAS in the residual nucleus (MeV).
-        y_units : str
-            Units of the supplied `y` values.
-        y_stat_err : np.ndarray, optional
-            Statistical errors associated with `y`.
-        y_sys_err_normalization : float or np.ndarray, optional
-            Reported *fractional* (dimensionless) normalisation uncertainty.
-            Retained as inert metadata (see
-            :meth:`rxmc.observation.Observation.systematic_terms`); not divided
-            by the unit normalisation.
-        y_sys_err_offset : float or np.ndarray, optional
-            Reported *absolute* offset uncertainty in the same units as `y`.
-            Retained as inert metadata, converted to internal units (divided by
-            the unit normalisation).
-        dataset_label : str, optional
-            Human-readable dataset identifier used in error messages.
-        lmax: int
-            Maximum angular momentum
-        angles_vis: np.ndarray
-            Array of angles in degrees for visualization.
-        wavelengths_beyond_range: float
-            Number of wavelengths beyond the interaction range to set the channel radius.
-        zeros_per_node: int
-            Number of zeros of the basis functions per node in the R-matrix solver.
-        """
-        self.reaction = reaction
-        self.lmax = lmax
-        self.subentry = dataset_label
-        self.angle_units = ureg.radian
-        self.quantity = "dXS/dA"
-
-        self.angles_vis = angles_vis
-        angles_rad_vis = np.deg2rad(angles_vis)
-        check_angle_grid(angles_rad_vis, "angles_rad_vis")
-
-        angles_rad_constraint = np.deg2rad(x)
-        label = dataset_label or "dataset"
-        check_angle_grid(
-            angles_rad_constraint,
-            f"x values for {label}",
-        )
-
-        # set up workspaces to precompute things for the solver
-        # for quick evaluation of observables
-        constraint_ws, vis_ws, kinematics_entrance, kinematics_exit = set_up_solver(
-            reaction=self.reaction,
-            Elab=Elab,
-            ExIAS=ExIAS,
-            angle_rad_constraint=angles_rad_constraint,
-            angle_rad_vis=angles_rad_vis,
-            lmax=self.lmax,
-            wavelengths_beyond_range=wavelengths_beyond_range,
-            zeros_per_node=zeros_per_node,
-        )
-        self.constraint_workspace = constraint_ws
-        self.visualization_workspace = vis_ws
-
-        self.y_units = XS_UNIT
-        measurement_unit = 1 * ureg(y_units)
-        if not measurement_unit.check(self.y_units):
-            raise ValueError(
-                f"Expected measurement_unit to be dimensionally "
-                f"compatible with 'b/sr', got {y_units}"
-            )
-
-        norm = 1.0 / measurement_unit.to(self.y_units).magnitude
-        # retained for provenance / manual term recomposition
-        self.norm = norm
-
-        super().__init__(
-            angles_rad_constraint,
-            np.asarray(y) / norm,
-            label=dataset_label,
-            transform=transform,
-            mask=mask,
-            **normalized_error_kwargs(
-                norm, y_stat_err, y_sys_err_normalization, y_sys_err_offset
-            ),
-        )
-
-    @classmethod
-    def from_measurement(
-        cls,
-        measurement: Distribution,
-        reaction: jitr.reactions.Reaction,
-        ExIAS: float,
-        **kwargs,
-    ):
-        """Construct from an ``exfor_tools`` ``Distribution``.
-
-        ``**kwargs`` (solver settings, ``transform``, ``mask``, ...) are
-        forwarded to the constructor.
-        """
-        return cls(
-            reaction=reaction, ExIAS=ExIAS, **measurement_kwargs(measurement), **kwargs
-        )
+__all__ = ["IsobaricAnalogPN", "set_up_solver"]
 
 
 def set_up_solver(
-    reaction: jitr.reactions.Reaction,
+    reaction,
     Elab: float,
     ExIAS: float,
-    angle_rad_constraint: np.array,
-    angle_rad_vis: np.array,
-    lmax: int,
+    angles_rad: np.ndarray,
+    lmax: int = DEFAULT_LMAX,
     wavelengths_beyond_range: float = 2.0,
     zeros_per_node: int = 5,
 ):
-    """
-    Set up the solver for the reaction.
+    """Set up the ``jitr`` (p,n) workspace for a reaction at one energy.
 
     Parameters
     ----------
-    reaction :
-        Reaction information.
+    reaction : jitr.reactions.Reaction
     Elab : float
         Laboratory energy of the incoming proton (MeV).
     ExIAS : float
-        Excitation energy of the IAS in the residual nucleus (MeV).
-    angle_rad_constraint : np.array
-        Angles to compare to experiment (rad).
-    angle_rad_vis : np.array
-        Angles to visualize on (rad)
-    lmax : int
-        Maximum angular momentum.
-    wavelengths_beyond_range : float
-        Number of wavelengths beyond the interaction
-        range to set the channel radius.
-    zeros_per_node : int
-        Number of zeros of the basis functions per
-        node in the R-matrix solver.
+        Excitation energy of the isobaric analog state in the residual (MeV).
+    angles_rad : np.ndarray
+        Angles in radians the cross section is wanted on.
+    lmax, wavelengths_beyond_range, zeros_per_node
+        Solver settings (see :func:`rxmc.reactions.elastic.set_up_solver`).
 
     Returns
     -------
-    tuple
-        constraint and visualization workspaces.
+    (jitr.xs.quasielastic_pn.Workspace, kinematics_entrance, kinematics_exit)
     """
     kinematics_entrance = reaction.kinematics(Elab=Elab)
     kinematics_exit = reaction.kinematics_exit(
         kinematics_entrance, residual_excitation_energy=ExIAS
     )
-
     k = kinematics_entrance.k
     interaction_range_fm = jitr.utils.interaction_range(reaction.target.A) + 2
     a = k * interaction_range_fm + wavelengths_beyond_range * 2 * np.pi
     channel_radius_fm = a / k
     N = jitr.utils.suggested_basis_size(a, zeros_per_node)
-    core_solver = jitr.rmatrix.Solver(N)
-
-    constraint_workspace = jitr.xs.quasielastic_pn.Workspace(
+    ws = jitr.xs.quasielastic_pn.Workspace(
         reaction,
         kinematics_entrance,
         kinematics_exit,
-        core_solver,
-        angle_rad_constraint,
+        jitr.rmatrix.Solver(N),
+        np.asarray(angles_rad, dtype=float),
         lmax,
         channel_radius_fm,
         tmatrix_abs_tol=1e-8,
     )
+    return ws, kinematics_entrance, kinematics_exit
 
-    visualization_workspace = jitr.xs.quasielastic_pn.Workspace(
-        reaction,
-        kinematics_entrance,
-        kinematics_exit,
-        core_solver,
-        angle_rad_vis,
-        lmax,
-        channel_radius_fm,
-        tmatrix_abs_tol=1e-8,
-    )
 
-    return (
-        constraint_workspace,
-        visualization_workspace,
-        kinematics_entrance,
-        kinematics_exit,
-    )
+class IsobaricAnalogPN(Model):
+    """The (p,n) IAS differential cross section in b/sr.
+
+    Parameters
+    ----------
+    U_p_coulomb, U_p_central, U_p_spin_orbit, U_n_central, U_n_spin_orbit : callable
+        ``f(r, *args) -> np.ndarray`` on the radial grid ``r`` (fm), in MeV.
+    args_from_params : callable
+        ``f(workspace, *values) -> (args_p_coulomb, args_p_central,
+        args_p_spin_orbit, args_n_central, args_n_spin_orbit)``.
+    params : sequence of Parameter
+    lmax, wavelengths_beyond_range, zeros_per_node
+        Solver settings, forwarded to :func:`set_up_solver`.
+    """
+
+    def __init__(
+        self,
+        U_p_coulomb: Callable,
+        U_p_central: Callable,
+        U_p_spin_orbit: Callable,
+        U_n_central: Callable,
+        U_n_spin_orbit: Callable,
+        args_from_params: Callable,
+        params,
+        *,
+        lmax: int = DEFAULT_LMAX,
+        wavelengths_beyond_range: float = 2.0,
+        zeros_per_node: int = 5,
+    ):
+        super().__init__(None, params)
+        self.potentials = (
+            U_p_coulomb,
+            U_p_central,
+            U_p_spin_orbit,
+            U_n_central,
+            U_n_spin_orbit,
+        )
+        self.args_from_params = args_from_params
+        self.lmax = lmax
+        self.wavelengths_beyond_range = wavelengths_beyond_range
+        self.zeros_per_node = zeros_per_node
+
+    def workspace(self, x, meta):
+        meta = meta or {}
+        try:
+            reaction, Elab, ExIAS = (
+                meta["reaction"],
+                float(meta["Elab"]),
+                float(meta["ExIAS"]),
+            )
+        except KeyError as err:
+            raise ValueError(
+                f"{type(self).__name__} needs meta[{err.args[0]!r}] to bind: build "
+                "the dataset with from_measurement(..., ExIAS=), or pass "
+                "meta={'reaction': ..., 'Elab': ..., 'ExIAS': ...}"
+            ) from None
+        x = np.asarray(x, dtype=float)
+        check_angle_grid(x, "x")
+        ws, _, _ = set_up_solver(
+            reaction,
+            Elab,
+            ExIAS,
+            x,
+            lmax=self.lmax,
+            wavelengths_beyond_range=self.wavelengths_beyond_range,
+            zeros_per_node=self.zeros_per_node,
+        )
+        return ws
+
+    def bind(self, x, meta=None) -> Predictor:
+        ws = self.workspace(x, meta)
+        potentials, args_from_params = self.potentials, self.args_from_params
+        r = ws.radial_grid()
+
+        def predict(*values):
+            args = args_from_params(ws, *values)
+            if len(args) != 5:
+                raise ValueError(
+                    f"args_from_params must return 5 argument tuples, got {len(args)}"
+                )
+            return ws.xs(*(U(r, *a) for U, a in zip(potentials, args))) / MB_PER_B
+
+        return Predictor(self.params, x, predict)
