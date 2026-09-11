@@ -533,11 +533,20 @@ def _kernel_params(kernel, prefix) -> list:
     for hp in kernel.hyperparameters:
         if hp.fixed:
             continue
+        # sklearn bounds are in linear space; the parameter lives in log-theta,
+        # so finite bounds give the derived parameter a uniform prior there
+        bounds = np.log(np.atleast_2d(np.asarray(hp.bounds, dtype=float)))
         if hp.n_elements == 1:
-            params.append(Parameter(f"{prefix}_{hp.name}", latex=hp.name))
+            params.append(
+                Parameter(f"{prefix}_{hp.name}", bounds=tuple(bounds[0]), latex=hp.name)
+            )
         else:
             params.extend(
-                Parameter(f"{prefix}_{hp.name}_{i}", latex=f"{hp.name}[{i}]")
+                Parameter(
+                    f"{prefix}_{hp.name}_{i}",
+                    bounds=tuple(bounds[i]),
+                    latex=f"{hp.name}[{i}]",
+                )
                 for i in range(hp.n_elements)
             )
     return params
@@ -562,7 +571,10 @@ def kernel(
     One :class:`~rxmc.params.Parameter` is derived per *free* kernel
     hyperparameter **element** (sampled in sklearn's log-theta space): an
     anisotropic hyperparameter (``n_elements > 1``) contributes that many
-    parameters.  ``amplitude_params`` follow the kernel parameters.
+    parameters.  A derived parameter takes the log of the kernel's bounds as
+    its bounds, so it compiles with a uniform prior on log-theta over them;
+    pass ``params=`` for any other prior.  ``amplitude_params`` follow the
+    kernel parameters.
 
     Parameters
     ----------

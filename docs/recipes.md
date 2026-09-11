@@ -175,11 +175,18 @@ band = rx.predictive.total_predictive_band(problem, gp, omp.bind(x_fine, d.meta)
 Expected behaviour:
 
 - One parameter per free kernel hyperparameter element, named
-  `discrepancy_<hyperparameter>`, sampled in sklearn's log-theta space.
+  `discrepancy_<hyperparameter>`, sampled in sklearn's log-theta space and
+  bounded by the log of the kernel's bounds, so it compiles with a uniform
+  prior there (`params=` for any other prior).
+- `kernel()` returns a `KernelTerm`, a `Term` that also carries the kernel,
+  so the predictive band can condition the discrepancy from the term alone.
 - The model parameters relax from their biased values toward the truth
   (`gp_discrepancy`); the learned discrepancy tracks the true defect.
 - `total_predictive_band` finds the kernel's columns from the term itself;
-  no column arithmetic.
+  no column arithmetic.  It conditions on the residuals of the training rows
+  with everything *else* in the constraint's covariance (statistical errors,
+  noise, modes) as the regression noise, and predicts in the comparison
+  space of the term's comparisons (`physical=True` maps back).
 - Every error-model form of the α+Ca study reproduces a hand-built dense
   matrix (`TestStudyForms`).
 
@@ -269,7 +276,12 @@ Expected behaviour:
 - `fit` and `held` share every `Comparison`, `Term`, and `Parameter`; the two
   problems have identical `names`, so a chain from one scores the other.
 - Active sets are disjoint, their union is every point, and
-  `ll(fit) + ll(held) == ll(full)` for a block-local covariance.
+  `ll(fit) + ll(held) == ll(full)` for a block-local covariance.  When a term
+  spans the split (a GP over several experiments), the held-out problem's
+  own likelihood is the *marginal* of its rows; pass the fitted problem as
+  `given=` to `heldout_log_predictive` / `predictive_draws` for the
+  conditional `p(y_held | y_fit, theta)` under the full covariance (recipes
+  28 and 30).
 - Terms are authored once over all points; masking selects rows, it never
   rebuilds anything.
 
@@ -803,7 +815,8 @@ w = maximise(lambda w: np.sum(logsumexp(np.log(w)[:, None] + S, axis=0)), simple
 Expected behaviour:
 
 - Held-out log densities are joint over the held-out comparison and exact
-  under a correlated covariance; PSIS-LOO per point is not available
+  under a correlated covariance (`given=fit` when a term spans the fitted
+  and the held-out comparisons); PSIS-LOO per point is not available
   without per-point likelihood factors (closing section).
 - Stacking weights need not sum to the evidence weights; in the M-open
   setting they are the ones to prefer.
@@ -867,7 +880,7 @@ for i, comp in enumerate(comps):
     p    = rx.Problem([fit], priors)
     s    = run(p)
     held = rx.Problem([fit.complement()], priors)
-    draws = rx.diagnostics.predictive_draws(held, s, n_rep=4)
+    draws = rx.diagnostics.predictive_draws(held, s, n_rep=4, given=p)   # conditional on the fit
     tol = np.percentile(np.abs(draws - draws.mean(0)), 90, axis=0)      # tolerance bound per point
     cov = rx.diagnostics.coverage_curve(draws, held.constraints[0].y[held.constraints[0].active])
 ```
@@ -876,7 +889,9 @@ Expected behaviour:
 
 - The held-out comparison's covariance terms are the same objects as in the fit;
   a GP discrepancy conditioned on the other experiments carries into the
-  prediction through `predictive_draws`.
+  prediction through `predictive_draws(..., given=p)`, which draws from
+  `p(y_held | y_fit, theta)` under the full covariance.  Without `given=` the
+  draws use the marginal block, which forgets what the fit taught the GP.
 - Coverage on the held-out experiment is the honest check; in-sample
   coverage is not.
 - Tolerance bounds are empirical percentiles of the draws, componentwise.
@@ -909,6 +924,9 @@ Expected behaviour:
   bias.
 - Chains must be thinned to roughly independent draws first, or spurious
   boundary spikes appear.
+- `comp.space.inverse` is defined for every built-in parameter-free space
+  (`identity`, `log`, `exp`), so the simulated data go back to physical
+  units regardless of the comparison space.
 - SBC validates the computation under the assumed model; it says nothing
   about whether the model fits real data; that is the posterior predictive
   coverage check of recipe 17.

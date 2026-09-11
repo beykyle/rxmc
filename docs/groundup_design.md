@@ -307,7 +307,10 @@ noise_fraction(parameter, log=True, on=None)
 model_error(parameter, averaging=True, log=True, on=None)
 systematic(parameter, basis, log=True, basis_params=(), on=None, coords=None)
 kernel(kernel, coords=None, amplitude=None, amplitude_params=(), jitter=1e-10,
-       prefix="discrepancy", params=None, on=None)
+       prefix="discrepancy", params=None, on=None) -> KernelTerm
+# KernelTerm(Term) adds kernel, n_kernel, amplitude, jitter so predictive.total_predictive_band
+#          can condition the discrepancy from the term alone.  A derived hyperparameter is
+#          bounded by the log of the kernel's bounds (a uniform prior in log-theta).
 # params=: the hyperparameter Parameter objects, one per free element in kernel.theta order;
 #          None derives fresh ones named f"{prefix}_{name}".  Pass the same objects to share
 #          hyperparameters between per-block kernels.  Two kernel terms with derived
@@ -574,10 +577,14 @@ gone.
 
 ```python
 # diagnostics.py
-predictive_draws(problem, samples, constraint=0, *, n_rep=1, rng=None, model_only=False)
+predictive_draws(problem, samples, constraint=0, *, n_rep=1, rng=None, model_only=False, given=None)
 coverage_curve(draws, y, levels=None); coverage_error(draws, y, levels=None)
 sharpness(draws, percentiles=(16, 84), transform=None)
-heldout_log_predictive(heldout_problem, samples)          # Problem([fit.complement()], priors=...)
+heldout_log_predictive(heldout_problem, samples, *, given=None)   # Problem([fit.complement()])
+# given=: the fitted problem.  A held-out problem's own likelihood is the marginal of its
+#         rows, wrong when a term spans fit and held-out rows (a GP over experiments);
+#         given= computes the Gaussian conditional p(y_held | y_fit, theta) under the full
+#         covariance, which equals the marginal when nothing spans.
 log_posterior_predictive(logp_samples, logw=None)
 logz_summary(logz, logzerr); compare_logz(a, b, sigma=2.0)
 
@@ -585,8 +592,11 @@ logz_summary(logz, logzerr); compare_logz(a, b, sigma=2.0)
 gp_posterior_predictive(kernel, theta, X_train, residuals, X_pred, *, train_noise_var=None, jitter=1e-10)
 predictive_band(draws, levels=(16, 50, 84))
 total_predictive_band(problem, term, predictor, x_pred, samples, *, noise_std=0.0,
-                      train_noise_var=None, levels=(16, 84), n_draws=400, rng=None)
-# term is the kernel Term; its columns and the predictor's come from problem.columns
+                      train_noise_var=None, levels=(16, 84), n_draws=400, rng=None,
+                      physical=False)
+# term is the KernelTerm; its columns and the predictor's come from problem.columns.  The
+# conditioning noise defaults to the constraint's covariance minus the kernel block; the
+# band is in the comparison space of the term's comparisons unless physical=True.
 ```
 
 ## 3. Worked example: the α+Ca study shape

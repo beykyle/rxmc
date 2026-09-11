@@ -36,3 +36,43 @@ def map_estimate(problem, x0):
         lambda t: -problem.log_posterior(t), np.asarray(x0, float), method="L-BFGS-B"
     )
     return res.x
+
+
+# ----------------------------------------------------------------------------
+# Exact posteriors for problems whose model is linear in its parameters
+# ----------------------------------------------------------------------------
+
+
+def line_design(x):
+    """Design matrix of :func:`line` in its parameter order ``(m, b)``."""
+    x = np.asarray(x, dtype=float)
+    return np.column_stack([x, np.ones_like(x)])
+
+
+def linear_posterior(problem, design=line_design):
+    """``(mean, cov, log_evidence)`` of a problem linear in its parameters.
+
+    Every constraint must have a constant covariance and independent normal
+    priors on the parameters (in ``problem.params`` order); ``design(x)`` maps
+    a constraint's stacked ``x`` to the rows of the design matrix.  Wraps
+    ``oracle.linear_gaussian`` over the active rows of all constraints.
+    """
+    from scipy.linalg import block_diag
+
+    from oracle import linear_gaussian
+
+    theta0 = np.zeros(problem.ndim)
+    Xs, ys, Ss = [], [], []
+    for c in problem.constraints:
+        Xs.append(design(c.x)[c.active])
+        ys.append(c.y[c.active])
+        Ss.append(c.matrix(theta0))
+    mu0 = np.array([p.prior.mean() for p in problem.params])
+    C0 = np.diag([p.prior.var() for p in problem.params])
+    return linear_gaussian(np.vstack(Xs), np.concatenate(ys), block_diag(*Ss), mu0, C0)
+
+
+def oracle_samples(problem, n, rng, design=line_design):
+    """``(n, ndim)`` exact posterior samples, a stand-in for a converged chain."""
+    mean, cov, _ = linear_posterior(problem, design)
+    return np.random.default_rng(rng).multivariate_normal(mean, cov, n)

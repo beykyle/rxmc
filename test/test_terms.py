@@ -456,6 +456,8 @@ class TestKernelTerm:
         assert t.kernel is k and t.n_kernel == 1 and t.amplitude is constant_amplitude
         assert [p.name for p in t.params] == ["discrepancy_length_scale", "log_A"]
         assert t.kind == "matrix" and t.jitter == 1e-10
+        # the derived parameter is bounded by the log of sklearn's bounds
+        np.testing.assert_allclose(t.params[0].bounds, np.log([1e-5, 1e5]))
         # a fixed kernel has no kernel parameters and is constant
         fixed = kernel(RBF(1.0, "fixed"))
         assert fixed.n_kernel == 0 and fixed.is_constant and fixed.params == ()
