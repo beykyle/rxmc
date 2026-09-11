@@ -1084,6 +1084,10 @@ Expected behaviour:
 - A normalisation error affects the cross section and not a ratio
   observable; an angle-calibration error affects both through their
   angular derivatives, which the basis supplies from `c.ym` and `c.x`.
+- A spanning term sees the *gathered* stack, so a basis that differentiates
+  along the grid must not straddle the seam between comparisons: it splits
+  the rows by a per-point dataset field such as `c.meta("quantity")`
+  (recipe 22), which `from_measurement` fills in.
 - The multi-quantity extension of the Peelle treatment applies: build the
   mode from predictions, not data.
 
