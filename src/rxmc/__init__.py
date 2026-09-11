@@ -10,6 +10,7 @@ from . import data as data
 from . import diagnostics as diagnostics
 from . import likelihood as likelihood
 from . import model as model
+from . import predictive as predictive
 from . import problem as problem
 from . import reactions as reactions
 from . import terms as terms
@@ -49,6 +50,7 @@ __all__ = [
     "diagnostics",
     "likelihood",
     "model",
+    "predictive",
     "problem",
     "reactions",
     "terms",
