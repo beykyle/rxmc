@@ -1140,9 +1140,9 @@ Expected behaviour:
 - The *live* term reading `c.ym` is the generative model's marginal
   likelihood, not `C_I`: its covariance grows with the prediction, so the
   log-determinant pulls the mode below the exact values (5 % in the
-  two-quantity case, 9 % in the five-quantity one, against 22 % for
-  `C_F`), and under a flat prior the `1 / rho` tail pulls the mean above
-  them.  A proper prior on the quantities, or the refit, removes the pull.
+  two-quantity case, 9 % in the five-quantity one, against 23 % and about
+  30 % for `C_F`), and under a flat prior the `1 / rho` tail pulls the mean
+  above them.  A proper prior on the quantities, or the refit, removes the pull.
 - The five-quantity numerical study of the reference (its Table I: `q_i`
   = {1.0, 1.5}, {1.8}, {2.2, 2.4}, {1.9, 1.5}, {1.4, 1.2}; `N_i` = 1, 1.1,
   1.25, 1.15, 1.05; `sigma_i = 0.1 q_i`, `sigma_Ni = 0.2 N_i`, `c = 0.8`)
