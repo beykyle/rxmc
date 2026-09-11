@@ -20,7 +20,7 @@ from __future__ import annotations
 import numpy as np
 import scipy.linalg as sla
 
-from .problem import Problem
+from .problem import Problem, _per_point
 from .terms import KernelTerm, TermContext, as_2d
 
 __all__ = ["gp_posterior_predictive", "predictive_band", "total_predictive_band"]
@@ -175,7 +175,8 @@ def total_predictive_band(
         The discrepancy term, as declared in one of the problem's constraints.
     predictor : Predictor
         The model bound to ``x_pred`` (``model.bind(x_pred, meta)``); its
-        columns are read from the problem.
+        columns are read from the problem, and the ``meta`` it was bound with
+        is what a callable amplitude's ``c.meta(key)`` reads at ``x_pred``.
     x_pred : array_like
         The prediction grid (raw coordinates; the term's ``coords`` transform
         is applied for the kernel).
@@ -225,6 +226,12 @@ def total_predictive_band(
     nk, n_fn = term.n_kernel, term._n_fn_params
     x_pred = np.asarray(x_pred)
     meta = None if c.meta is None else {k: v[rows] for k, v in c.meta.items()}
+    # the prediction points carry the metadata the predictor was bound with
+    meta_p = (
+        None
+        if predictor.meta is None
+        else {k: _per_point(v, len(x_pred)) for k, v in predictor.meta.items()}
+    )
 
     out = np.empty((samples.shape[0], x_pred.shape[0]))
     for i, theta in enumerate(samples):
@@ -258,7 +265,7 @@ def total_predictive_band(
             segments=entry.segments, labels=entry.labels,
         )  # fmt: skip
         mu = space(predictor(*theta[cols_pred]))
-        ctx_p = TermContext(x=term.coords(x_pred, *cv), y=mu, ym=mu)
+        ctx_p = TermContext(x=term.coords(x_pred, *cv), y=mu, ym=mu, _meta=meta_p)
         a_t, a_p = _amplitudes(term, ctx_t, ctx_p, av)
         Kst = np.outer(a_p, a_t[keep]) * k(as_2d(ctx_p.x), as_2d(ctx_t.x)[keep])
         Kss = a_p**2 * np.asarray(k.diag(as_2d(ctx_p.x)), dtype=float)

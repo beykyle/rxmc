@@ -270,7 +270,7 @@ class Likelihood:                  # functional of (d2, logdet, n, *values); par
     def log_likelihood(self, d2, logdet, n, *values)
     def chi2(self, d2, logdet, n, *values)          # d2
 class Gaussian(Likelihood)
-class StudentT(Likelihood)         # StudentT(nu=None) -> Parameter("nu", bounds=(1, inf)); pass nu= to share or rename
+class StudentT(Likelihood)         # StudentT(nu=None) -> Parameter("nu", prior=gamma(a=2, scale=10), bounds=(1, inf)); pass nu= to share or rename
 class Chi2(Likelihood)             # -d2/2, no log-determinant
 ```
 
@@ -364,8 +364,11 @@ Compile the same declarations twice and you get two independent problems.
 **Prior assembly.**  Each slot is covered by its parameter's marginal or by
 exactly one joint block `(params, joint)`, where `joint` has
 `logpdf(values)` over those parameters in that order and optionally
-`prior_transform(u)` and `rvs(n)`; `scipy.stats.multivariate_normal`
-qualifies and is whitened for the unit-cube map.  A hyperprior is a joint
+`prior_transform(u)` and `rvs(size=n, random_state=rng)` (scipy's
+spelling); `scipy.stats.multivariate_normal` qualifies and is whitened for
+the unit-cube map.  A joint that declares its dimension (`dim`) must match
+its parameters, and a one-parameter block holding a scipy univariate
+distribution is that parameter's marginal.  A hyperprior is a joint
 block that includes its hyperparameter, whose `logpdf` is
 `sum log p(child | hyper) + log p(hyper)` and whose `prior_transform` draws
 the hyperparameter first (recipe 24).  A slot no prior covers, or covered
@@ -513,9 +516,10 @@ verdict = rx.diagnostics.compare_logz(logz["Lgp"], logz["L2y"])
 fit = ladder["Lgp"].masked_where(lambda x: x < np.deg2rad(90))
 p_fit, p_held = rx.Problem([fit]), rx.Problem([fit.complement()])
 samples = run(p_fit)                                  # rows in p_fit.names order
-lp = rx.diagnostics.heldout_log_predictive(p_held, samples)
+# the GP spans the cut, so score and draw from p(y_held | y_fit, theta): given=
+lp = rx.diagnostics.heldout_log_predictive(p_held, samples, given=p_fit)
 score = rx.diagnostics.log_posterior_predictive(lp)
-draws = rx.diagnostics.predictive_draws(p_held, samples, n_rep=4)
+draws = rx.diagnostics.predictive_draws(p_held, samples, n_rep=4, given=p_fit)
 ```
 
 The labels `L0`, `E0`, `L2y`, `Lgp` are the error-model ladder of recipe

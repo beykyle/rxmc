@@ -42,7 +42,6 @@ def error_models(d, model):
         amplitude=T.constant_amplitude,
         amplitude_params=(log_A,),
     )
-    nu = Parameter("nu", prior=stats.uniform(1, 30))
     return {
         "L0": Constraint([comp_log], terms=[T.noise(log_eps)], statistical=False),
         "E0": Constraint(
@@ -58,7 +57,7 @@ def error_models(d, model):
             [comp_log],
             terms=[T.noise(log_eps)],
             statistical=False,
-            likelihood=StudentT(nu),
+            likelihood=StudentT(),  # the default nu, as the recipe writes it
         ),
     }
 
@@ -83,6 +82,9 @@ def test_each_problem_compiles_independently_with_shared_parameter_objects():
     theta = np.array([*TRUE, np.log(0.1)])
     assert np.isfinite(problems["L0"].log_posterior(theta))
     assert np.isfinite(problems["E0"].log_posterior(theta))
+    # the default nu has a proper prior with a unit-cube map: dynesty takes L0t
+    assert np.isfinite(problems["L0t"].log_posterior([*theta, 5.0]))
+    assert np.all(np.isfinite(problems["L0t"].prior_transform(np.full(4, 0.5))))
 
 
 def test_log_jacobian_makes_spaces_comparable():

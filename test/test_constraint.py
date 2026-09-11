@@ -38,6 +38,13 @@ class TestComparison:
         assert c.log_jacobian(mask) == pytest.approx(-np.sum(np.log(d.y[mask])))
         np.testing.assert_allclose(c.predict(2.0, 1.0), np.log(d.y))
 
+    def test_scalar_derivative_is_a_per_point_jacobian(self):
+        double = Transform(lambda a: 2.0 * a, derivative=lambda a: 2.0)
+        c = Comparison(dataset(), line, space=double)
+        assert c.log_jac.shape == (4,)
+        assert c.log_jacobian() == pytest.approx(4 * np.log(2.0))
+        np.testing.assert_allclose(c.y_err, 2.0 * dataset().y_err)
+
     def test_non_positive_data_under_log_does_not_raise(self):
         d = Dataset([0.0, 1.0], [-1.0, 2.0], [0.1, 0.1])
         c = Comparison(d, line, space=log)
@@ -60,6 +67,19 @@ class TestComparison:
         d = dataset(meta={"Elab": 10.0})
         Comparison(d, Probe(None, [m, b]))
         assert seen["meta"] == {"Elab": 10.0}
+
+    def test_quantity_must_match_the_model(self):
+        class Observable(Model):
+            quantity = "dXS/dA"
+
+        model = Observable(lambda x, m, b: m * x + b, [m, b])
+        Comparison(dataset(meta={"quantity": "dXS/dA"}), model)
+        with pytest.raises(ValueError, match="holds 'dXS/dRuth'.*predicts 'dXS/dA'"):
+            Comparison(dataset(meta={"quantity": "dXS/dRuth"}), model)
+        # a composite (dXS/dRuth * Rutherford) declares no quantity of its own,
+        # and data that declares none is not checked
+        Comparison(dataset(meta={"quantity": "dXS/dRuth"}), model * line)
+        Comparison(dataset(), model)
 
     def test_type_checks(self):
         with pytest.raises(TypeError, match="Dataset"):
@@ -129,6 +149,8 @@ class TestConstraint:
             Constraint([self.c1], terms=[np.eye(3)])
         with pytest.raises(ValueError, match="non-negative"):
             Constraint([self.c1], weight=-1.0)
+        with pytest.raises(ValueError, match="finite"):
+            Constraint([self.c1], weight=np.nan)
         with pytest.raises(ValueError, match="at least one"):
             Constraint([])
         with pytest.raises(TypeError, match="Likelihood"):
@@ -142,6 +164,12 @@ class TestConstraint:
             Constraint([self.c1, self.c2], masks=[np.ones(3, bool)])
         with pytest.raises(ValueError, match="shape"):
             Constraint([self.c1, self.c2], masks=[np.ones(3, bool), np.ones(3, bool)])
+
+    def test_masks_are_copied(self):
+        mask = np.array([True, False, True])
+        c = Constraint([self.c1]).masked([mask])
+        mask[:] = True  # the caller reuses its array
+        assert np.array_equal(c.complement().active, [1])
 
     def test_support_resolution(self):
         c = Constraint([self.c1, self.c2])

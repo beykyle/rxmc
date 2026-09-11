@@ -41,6 +41,14 @@ from .terms import Term
 __all__ = ["StructuredCovariance", "chol_logdet"]
 
 
+class _SingularCovariance(ValueError):
+    """A parametric covariance that is singular at the requested ``theta``.
+
+    The compiled constraint reads it as zero density (``log_likelihood`` is
+    ``-inf``) so a sampler stepping onto such a point moves on.
+    """
+
+
 def chol_logdet(Sigma):
     """Lower Cholesky factor and log-determinant of a positive-definite matrix."""
     L = sla.cholesky(np.asarray(Sigma, dtype=float), lower=True)
@@ -267,7 +275,8 @@ class StructuredCovariance:
                     Ls = None
                 factors = ("structured", blocks, Ls, logdet)
         except np.linalg.LinAlgError as err:
-            raise ValueError(self._singular_message(D)) from err
+            error = ValueError if self.is_constant else _SingularCovariance
+            raise error(self._singular_message(D)) from err
         if self.is_constant:
             self._cache = factors
         return factors
@@ -288,18 +297,19 @@ class StructuredCovariance:
             if np.any(D[pos] == 0.0)
         ]
         msg = "the constraint's covariance is singular on its active points"
-        if offenders:
-            msg += (
-                f"; the diagonal is zero on rows of {offenders}: those comparisons "
-                "have zero statistical error and no diagonal term covers their "
-                "points (a block covered only by correlated modes is singular here "
-                "even when the full covariance is not)"
+        if not offenders:
+            return msg + (
+                " although its diagonal is nonzero: a matrix term dominates it "
+                "(e.g. a kernel amplitude large against the diagonal)"
             )
-        msg += (
-            ".  Remedies: comparison.reported_terms(), a noise term, a fixed Term "
-            "covering those points, or statistical=False with an explicit covariance."
+        return msg + (
+            f"; the diagonal is zero on rows of {offenders}: those comparisons "
+            "have zero statistical error and no diagonal term covers their "
+            "points (a block covered only by correlated modes is singular here "
+            "even when the full covariance is not).  Remedies: "
+            "comparison.reported_terms(), a noise term, a fixed Term covering "
+            "those points, or statistical=False with an explicit covariance."
         )
-        return msg
 
     # -- public --------------------------------------------------------------
 

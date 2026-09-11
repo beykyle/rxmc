@@ -166,6 +166,32 @@ class TestTotalPredictiveBand:
         )
         np.testing.assert_allclose(b1, b2, atol=1e-8)
 
+    def test_amplitude_reads_the_predictor_meta(self):
+        # recipe 22: an amplitude keyed on the dataset's energy is, at 25 MeV, a
+        # constant amplitude of 0.5 at the data and at the prediction points
+        d = Dataset(X, Y, np.full(10, 0.05), label="d", meta={"Elab": 25.0})
+        m1, m2 = line(), line()
+        lA1, lA2 = (Parameter("log_A", prior=stats.norm(0, 1)) for _ in range(2))
+        gp_meta = kernel(
+            RBF(0.3, "fixed"),
+            amplitude=lambda c, lA: np.exp(lA) * c.meta("Elab") / 50.0,
+            amplitude_params=(lA1,),
+        )
+        gp_const = kernel(
+            RBF(0.3, "fixed"), amplitude=constant_amplitude, amplitude_params=(lA2,)
+        )
+        p1 = Problem([Constraint([Comparison(d, m1)], terms=[gp_meta])])
+        p2 = Problem([Constraint([Comparison(d, m2)], terms=[gp_const])])
+        chain1 = np.tile([0.5, 0.2, 0.0], (8, 1))
+        chain2 = np.tile([0.5, 0.2, np.log(0.5)], (8, 1))
+        b1 = total_predictive_band(
+            p1, gp_meta, m1.bind(X_PRED, d.meta), X_PRED, chain1, rng=4
+        )
+        b2 = total_predictive_band(
+            p2, gp_const, m2.bind(X_PRED, {}), X_PRED, chain2, rng=4
+        )
+        np.testing.assert_allclose(b1, b2, atol=1e-8)
+
     def test_explicit_noise_and_errors(self):
         p, gp, model, comp = problem("noise")
         chain = self.chain(p, n=6)

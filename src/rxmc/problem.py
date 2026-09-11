@@ -18,9 +18,13 @@ Prior rules, per slot (see :class:`~rxmc.params.Parameter`):
 * neither: the parameter must appear in exactly one joint block passed as
   ``priors=[(params, joint), ...]``, where ``joint`` exposes
   ``logpdf(values)`` over ``params`` in that order and, optionally,
-  ``prior_transform(u)`` and ``rvs(n)``.  A frozen
+  ``prior_transform(u)`` and ``rvs(size=n, random_state=rng)`` (scipy's
+  spelling).  A joint that declares its dimension (``dim``, as scipy's
+  multivariate distributions do) must match its parameters.  A frozen
   ``scipy.stats.multivariate_normal`` gets a whitening unit-cube map for
-  free.  A hyperprior is a joint block that includes its hyperparameter.
+  free, and a one-parameter block holding a scipy univariate distribution is
+  that parameter's marginal.  A hyperprior is a joint block that includes its
+  hyperparameter.
 
 Nothing user-facing is mutated by compiling.  Compile the same declarations
 twice and you get two independent problems.
@@ -28,13 +32,14 @@ twice and you get two independent problems.
 
 from __future__ import annotations
 
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Sequence
 
 import numpy as np
 from scipy import stats
+from scipy.stats.distributions import rv_frozen
 
 from .constraint import Constraint
-from .covariance import StructuredCovariance
+from .covariance import StructuredCovariance, _SingularCovariance
 from .params import Parameter
 from .terms import statistical
 
@@ -128,14 +133,25 @@ def _is_frozen_mvn(joint) -> bool:
     return type(joint).__name__ == "multivariate_normal_frozen"
 
 
-class _Marginal:
-    """One slot: a marginal (truncated to bounds) or the uniform on bounds."""
+def _joint_dim(joint) -> int | None:
+    """The dimension a joint declares, or ``None`` when it declares none."""
+    if isinstance(joint, rv_frozen):
+        return 1
+    dim = getattr(joint, "dim", None)
+    return None if dim is None else int(dim)
 
-    def __init__(self, p: Parameter, slot: int):
+
+class _Marginal:
+    """One slot: a marginal (truncated to bounds) or the uniform on bounds.
+
+    ``dist`` overrides ``p.prior``: a one-parameter prior block's distribution.
+    """
+
+    def __init__(self, p: Parameter, slot: int, dist=None):
         self.p, self.slot = p, slot
         lo, hi = p.bounds
         self.lo, self.hi = lo, hi
-        self.dist = p.prior
+        self.dist = p.prior if dist is None else dist
         self.bounded = np.isfinite(lo) and np.isfinite(hi)
         if self.dist is None:
             if not self.bounded:
@@ -178,6 +194,12 @@ class _Joint:
         self.names = [p.name for p in self.params]
         if not hasattr(joint, "logpdf"):
             raise TypeError(f"joint prior over {self.names} must have logpdf(values)")
+        dim = _joint_dim(joint)
+        if dim is not None and dim != len(self.params):
+            raise ValueError(
+                f"the joint prior over {self.names} is {dim}-dimensional; it must "
+                f"cover exactly those {len(self.params)} parameter(s), in order"
+            )
         if _is_frozen_mvn(joint):
             self._L = np.linalg.cholesky(np.atleast_2d(joint.cov))
             self._mean = np.atleast_1d(joint.mean)
@@ -195,7 +217,8 @@ class _Joint:
             np.any(values < self.bounds[:, 0]) or np.any(values > self.bounds[:, 1])
         ):
             return -np.inf
-        return float(self.joint.logpdf(values))
+        # item(): a length-1 array is fine, a longer one (a mis-sized joint) is not
+        return float(np.asarray(self.joint.logpdf(values)).item())
 
     def transform(self, u):
         if self.bounded:
@@ -244,7 +267,8 @@ class _Prior:
     def __init__(self, index: ParameterIndex, priors):
         self.ndim = index.ndim
         self.joints: list[_Joint] = []
-        covered: dict[Parameter, str] = {}
+        covered: set[Parameter] = set()
+        univariate: dict[Parameter, Any] = {}
         for entry in priors:
             try:
                 params, joint = entry
@@ -263,10 +287,17 @@ class _Prior:
                     raise ValueError(
                         f"parameter {p.name!r} appears in two joint blocks"
                     )
-                covered[p] = "joint"
-            self.joints.append(_Joint(params, joint, index.slots(params)))
+                covered.add(p)
+            if len(params) == 1 and isinstance(joint, rv_frozen):
+                # a scipy univariate over one parameter is that parameter's
+                # marginal: truncated to its bounds, with a ppf unit-cube map
+                univariate[params[0]] = joint
+            else:
+                self.joints.append(_Joint(params, joint, index.slots(params)))
         self.marginals = [
-            _Marginal(p, i) for i, p in enumerate(index.params) if p not in covered
+            _Marginal(p, i, univariate.get(p))
+            for i, p in enumerate(index.params)
+            if p not in covered or p in univariate
         ]
 
     def logpdf(self, theta) -> float:
@@ -305,6 +336,15 @@ class _Prior:
 # ----------------------------------------------------------------------------
 
 
+def _per_point(v, n) -> np.ndarray:
+    """A metadata value as one entry per point: a length-``n`` array as is,
+    anything else repeated ``n`` times."""
+    arr = np.asarray(v) if v is not None else None
+    if arr is not None and arr.ndim >= 1 and arr.shape[0] == n:
+        return arr
+    return np.full(n, v) if np.isscalar(v) else np.full(n, v, dtype=object)
+
+
 def _stack_meta(constraint: Constraint) -> dict | None:
     keys = set()
     for c in constraint.comparisons:
@@ -313,18 +353,7 @@ def _stack_meta(constraint: Constraint) -> dict | None:
         return None
     meta = {}
     for key in keys:
-        parts = []
-        for c in constraint.comparisons:
-            v = c.data.meta.get(key, None)
-            arr = np.asarray(v) if v is not None else None
-            if arr is not None and arr.ndim >= 1 and arr.shape[0] == c.n:
-                parts.append(arr)
-            else:
-                parts.append(
-                    np.full(c.n, v, dtype=object)
-                    if not np.isscalar(v)
-                    else np.full(c.n, v)
-                )
+        parts = [_per_point(c.data.meta.get(key), c.n) for c in constraint.comparisons]
         try:
             stacked = np.concatenate(parts)
         except (TypeError, ValueError):
@@ -390,7 +419,16 @@ class CompiledConstraint:
 
     def ym(self, theta) -> np.ndarray:
         """The stacked prediction in comparison space, all points."""
-        return np.concatenate([c.predict(*theta[g]) for _, g, c in self.predictors])
+        parts = []
+        for (_, g, c), label in zip(self.predictors, self.labels):
+            y = c.predict(*theta[g])
+            if y.shape != (c.n,):
+                raise ValueError(
+                    f"comparison {label!r}: the model returned shape {y.shape} on a "
+                    f"grid of {c.n} point(s)"
+                )
+            parts.append(y)
+        return np.concatenate(parts)
 
     def predict_physical(self, theta) -> list[np.ndarray]:
         return [c.predictor(*theta[g]) for _, g, c in self.predictors]
@@ -399,8 +437,10 @@ class CompiledConstraint:
         ym = self.ym(theta)
         if not np.all(np.isfinite(ym[self.active])):
             return None
-        d2, logdet = self.covariance.distance(ym, theta)
-        return d2, logdet
+        try:
+            return self.covariance.distance(ym, theta)
+        except _SingularCovariance:
+            return None  # a parametric covariance singular at this theta: no density
 
     def log_likelihood(self, theta) -> float:
         s = self._stats(theta)
@@ -515,8 +555,16 @@ class Problem:
         return float(sum(c.chi2(theta) for c in self.constraints))
 
     def log_jacobian(self) -> float:
-        """Sum of the constraints' comparison-space log-Jacobians."""
-        return float(sum(c.log_jacobian for c in self.constraints))
+        """Sum of the constraints' comparison-space log-Jacobians, each times its
+        ``weight``.
+
+        A tempered constraint enters the likelihood as ``weight * log L``, so
+        its Jacobian enters ``log Z_raw = log Z + log_jacobian()`` with the same
+        weight, and a weight-0 constraint not at all.
+        """
+        return float(
+            sum(c.weight * c.log_jacobian for c in self.constraints if c.weight)
+        )
 
     def prior_transform(self, u) -> np.ndarray:
         u = np.asarray(u, dtype=float)

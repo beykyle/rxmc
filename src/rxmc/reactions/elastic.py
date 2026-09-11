@@ -251,4 +251,4 @@ class ElasticXS(Model):
             )
             return extract(xs, ws)
 
-        return Predictor(self.params, x, predict)
+        return Predictor(self.params, x, predict, meta)

@@ -68,6 +68,14 @@ class Comparison:
             raise TypeError(f"data must be a Dataset, got {type(self.data).__name__}")
         if not isinstance(self.model, Model):
             raise TypeError(f"model must be a Model, got {type(self.model).__name__}")
+        held = (self.data.meta or {}).get("quantity")
+        predicted = getattr(self.model, "quantity", None)
+        if held is not None and predicted is not None and held != predicted:
+            raise ValueError(
+                f"dataset {self.data.label or 'dataset'!r} holds {held!r} but the "
+                f"model predicts {predicted!r}: convert the data "
+                "(from_measurement(..., quantity=)) or use a matching model"
+            )
         space = as_transform(self.space)
         if space.params:
             raise ValueError(
@@ -83,7 +91,8 @@ class Comparison:
             set_(self, "log_jac", np.zeros(self.data.n))
             return
         with np.errstate(all="ignore"):
-            jac = np.abs(space.derivative(self.data.y))
+            # a derivative may come back as a scalar; the Jacobian is per point
+            jac = np.broadcast_to(np.abs(space.derivative(self.data.y)), (self.data.n,))
             set_(self, "y", space(self.data.y))
             set_(self, "y_err", jac * self.data.y_err)
             set_(self, "log_jac", np.log(jac))
@@ -157,7 +166,8 @@ def _reported(spec, n):
 
 
 def _as_mask(mask, n) -> np.ndarray:
-    mask = np.asarray(mask, dtype=bool)
+    # a copy, so the caller reusing its array can't move the mask
+    mask = np.array(mask, dtype=bool)
     if mask.shape != (n,):
         raise ValueError(f"mask must have shape ({n},), got {mask.shape}")
     return mask
@@ -211,8 +221,8 @@ class Constraint:
         if not isinstance(self.likelihood, Likelihood):
             raise TypeError("likelihood must be a Likelihood")
         weight = float(self.weight)
-        if weight < 0:
-            raise ValueError("weight must be non-negative")
+        if not (np.isfinite(weight) and weight >= 0):
+            raise ValueError(f"weight must be finite and non-negative, got {weight}")
         ns = [c.n for c in comps]
         starts = np.concatenate([[0], np.cumsum(ns)[:-1]]).astype(int)
         offsets = tuple(slice(int(s), int(s + n)) for s, n in zip(starts, ns))

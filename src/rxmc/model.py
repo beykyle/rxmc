@@ -54,12 +54,17 @@ class Predictor:
         The grid the prediction is made on.
     fn : callable
         ``fn(*values) -> np.ndarray`` on that grid.
+    meta : mapping, optional
+        The dataset metadata the model was bound with; a term evaluated at the
+        predictor's grid (:func:`~rxmc.predictive.total_predictive_band`) reads
+        it through ``c.meta(key)``.
     """
 
-    def __init__(self, params: Sequence[Parameter], x, fn: Callable):
+    def __init__(self, params: Sequence[Parameter], x, fn: Callable, meta=None):
         self.params = _check_params(params)
         self.x = np.asarray(x)
         self._fn = fn
+        self.meta = meta
 
     def __call__(self, *values) -> np.ndarray:
         if len(values) != len(self.params):
@@ -100,7 +105,7 @@ class Model:
         if self.fn is None:
             raise TypeError(f"{type(self).__name__} must override bind()")
         fn = self.fn
-        return Predictor(self.params, x, lambda *values: fn(x, *values))
+        return Predictor(self.params, x, lambda *values: fn(x, *values), meta)
 
     def __or__(self, transform) -> "Model":
         return _Transformed(self, as_transform(transform))
@@ -125,7 +130,7 @@ class _Transformed(Model):
 
     def bind(self, x, meta=None) -> Predictor:
         pred, t, n = self.inner.bind(x, meta), self.transform, len(self.inner.params)
-        return Predictor(self.params, x, lambda *v: t(pred(*v[:n]), *v[n:]))
+        return Predictor(self.params, x, lambda *v: t(pred(*v[:n]), *v[n:]), meta)
 
 
 class _Combined(Model):
@@ -140,7 +145,7 @@ class _Combined(Model):
     def bind(self, x, meta=None) -> Predictor:
         lp, rp = self.left.bind(x, meta), self.right.bind(x, meta)
         n, op = len(self.left.params), self.op
-        return Predictor(self.params, x, lambda *v: op(lp(*v[:n]), rp(*v[n:])))
+        return Predictor(self.params, x, lambda *v: op(lp(*v[:n]), rp(*v[n:])), meta)
 
 
 def polynomial(order: int) -> Model:

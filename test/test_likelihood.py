@@ -47,6 +47,8 @@ def test_student_t_default_and_explicit_parameter():
     default = StudentT()
     assert [p.name for p in default.params] == ["nu"]
     assert default.params[0].bounds == (1.0, np.inf)
+    # Gamma(2, rate 0.1) (Juárez & Steel 2010): a proper prior, so it compiles
+    assert default.params[0].prior.mean() == pytest.approx(20.0)
     p = Parameter("nu_a", bounds=(1.0, 100.0))
     assert StudentT(nu=p).params == (p,)
     # two defaults are two distinct parameters with one name (compile rejects)

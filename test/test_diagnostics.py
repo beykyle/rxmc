@@ -65,6 +65,15 @@ class TestPredictiveDraws:
         with pytest.raises(ValueError, match=r"\(n, 2\)"):
             predictive_draws(p, [[1.0, 2.0, 3.0]])
 
+    def test_student_t_draws_follow_the_multivariate_t(self):
+        p, _ = line_problem(likelihood=StudentT(Parameter("nu", bounds=(1, 30))))
+        draws = predictive_draws(p, [1.0, 2.0, 6.0], n_rep=100000, rng=0)
+        # a multivariate t with scale diag(ERR**2) has covariance nu/(nu-2) times it
+        np.testing.assert_allclose(draws.var(axis=0), 1.5 * ERR**2, rtol=0.05)
+        # one mixing scale per draw: the points' |residuals| move together
+        r = np.abs(draws - Y)
+        assert np.corrcoef(r[:, 0], r[:, 1])[0, 1] > 0.05
+
     def test_tiny_variances_not_inflated(self):
         d = Dataset(X, Y, np.full(5, 1e-9), label="tiny")
         p = Problem([Constraint([Comparison(d, poly(1))])])
@@ -149,6 +158,53 @@ class TestHeldout:
         # the conditional is exactly the joint over the full data divided by the fit
         joint = full.log_likelihood(theta) - fit.log_likelihood(theta)
         assert lp[0] == pytest.approx(joint)
+
+    def test_conditional_reads_the_columns_of_every_constraint(self):
+        # two constraints with a parameter each: the second's conditional must
+        # read b's column, not the first one
+        rng = np.random.default_rng(5)
+        A = rng.normal(size=(4, 4))
+        K = A @ A.T / 4
+        cs = []
+        for s, label in ((1.0, "d1"), (3.0, "d2")):
+            d = Dataset(self.d.x, s * self.d.y, self.d.y_err, label=label)
+            p = Parameter(f"s{label}", prior=stats.norm(0, 10))
+            m = Model(lambda x, s: s * x, [p])
+            cs.append(Constraint([Comparison(d, m)], terms=[Term(K, kind="matrix")]))
+        fits = [c.masked_where(lambda x: x < 2.5) for c in cs]
+        fit, held = Problem(fits), Problem([f.complement() for f in fits])
+        full = Problem(cs)
+        theta = np.array([1.0, 3.0])
+        lp = heldout_log_predictive(held, theta, given=fit)
+        assert lp[0] == pytest.approx(
+            full.log_likelihood(theta) - fit.log_likelihood(theta)
+        )
+        S = np.diag(self.d.y_err**2) + K
+        ym = theta[1] * self.d.x
+        F, H = slice(0, 2), slice(2, 4)
+        mean = ym[H] + S[H, F] @ np.linalg.solve(S[F, F], 3.0 * self.d.y[F] - ym[F])
+        draws = predictive_draws(held, theta, constraint=1, given=fit, model_only=True)
+        np.testing.assert_allclose(draws[0], mean)
+
+    def test_given_needs_no_marginal_priors_and_keeps_doubly_masked_rows_out(self):
+        # the coefficients have only a joint prior, and a y = 0 point (not
+        # finite in log space) is masked out of both the fit and the held-out view
+        a0, a1 = Parameter("a0"), Parameter("a1")
+        model = Model(lambda x, a0, a1: np.exp(a0 + a1 * x), [a0, a1])
+        d = Dataset(np.arange(5.0), [0.0, 2.0, 3.0, 5.0, 8.0], np.full(5, 0.2))
+        K = 0.05 * np.exp(-0.5 * np.subtract.outer(d.x, d.x) ** 2)
+        c = Constraint([Comparison(d, model, space=log)], terms=[Term(K)])
+        prior = [([a0, a1], stats.multivariate_normal(np.zeros(2), 4 * np.eye(2)))]
+        fit = c.masked([np.array([False, True, True, False, False])])
+        held = c.masked([np.array([False, False, False, True, True])])
+        both = c.masked([np.array([False, True, True, True, True])])
+        p_fit, p_held = Problem([fit], priors=prior), Problem([held], priors=prior)
+        p_both = Problem([both], priors=prior)
+        theta = np.array([0.5, 0.4])
+        lp = heldout_log_predictive(p_held, theta, given=p_fit)
+        assert lp[0] == pytest.approx(
+            p_both.log_likelihood(theta) - p_fit.log_likelihood(theta)
+        )
 
     def test_given_is_validated(self):
         fit, held, full = self.problems([])

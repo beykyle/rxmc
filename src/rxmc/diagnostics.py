@@ -5,8 +5,9 @@ matrix of posterior ``samples`` of shape ``(n, problem.ndim)`` in
 ``problem.names`` order (what emcee's ``get_chain(flat=True)``, dynesty's
 ``samples_equal()`` and black-box-bayes give) and never touches a sampler:
 
-* :func:`predictive_draws` — draws from the posterior predictive
-  ``N(ym(theta), Sigma(theta))`` on a constraint's active points, or the
+* :func:`predictive_draws` — draws from the posterior predictive of a
+  constraint's likelihood on its active points (``N(ym(theta), Sigma(theta))``,
+  or the multivariate t of :class:`~rxmc.likelihood.StudentT`), or the
   model-only predictive ``ym(theta)``.
 * :func:`coverage_curve`, :func:`coverage_error`, :func:`sharpness` —
   empirical calibration and width of those draws against the data.
@@ -34,14 +35,12 @@ Draws and densities are in the comparison space of the constraint (a
 
 from __future__ import annotations
 
-from dataclasses import replace
-
 import numpy as np
 import scipy.linalg as sla
 from scipy.special import logsumexp
 
 from .likelihood import Gaussian
-from .problem import Problem
+from .problem import CompiledConstraint, Problem
 
 __all__ = [
     "predictive_draws",
@@ -97,6 +96,13 @@ def _psd_factor(Sigma, jitter=1e-10) -> np.ndarray:
         return V * np.sqrt(np.clip(w, 0.0, None))
 
 
+def _masks(constraint) -> list[np.ndarray]:
+    """Per-comparison active masks of a compiled constraint, ``None`` as all-true."""
+    if constraint.source.masks is None:
+        return [np.ones(c.n, dtype=bool) for c in constraint.comparisons]
+    return list(constraint.source.masks)
+
+
 class _Conditional:
     """``p(y_H | y_F, theta)`` for one held-out constraint given its fit."""
 
@@ -130,8 +136,11 @@ class _Conditional:
                 "(omit given=) or use a Gaussian likelihood"
             )
         self.held, self.fit = h, f
-        # the union of the two active sets, compiled once: every row active
-        self.full = Problem([replace(h.source, masks=None)]).constraints[0]
+        # the union of the two active sets, compiled once against the held-out
+        # problem's own index, so theta's columns mean what they mean there (the
+        # constraint shares every parameter object, so nothing new is indexed)
+        union = [a | b for a, b in zip(_masks(h), _masks(f))]
+        self.full = CompiledConstraint(h.source.masked(union), held.index)
         lookup = {int(r): i for i, r in enumerate(self.full.active)}
         self.iH = np.array([lookup[int(r)] for r in h.active], dtype=int)
         self.iF = np.array([lookup[int(r)] for r in f.active], dtype=int)
@@ -176,9 +185,12 @@ def predictive_draws(
     """Posterior-predictive draws on a constraint's active points.
 
     For each posterior row ``theta_i`` the constraint gives ``ym_i`` and
-    ``Sigma_i``; ``n_rep`` draws ``ym_i + L_i z`` (``z ~ N(0, I)``) are taken.
-    With ``model_only=True`` the rows are ``ym_i`` themselves and no
-    covariance is assembled.
+    ``Sigma_i``; ``n_rep`` draws ``ym_i + s L_i z`` (``z ~ N(0, I)``) are taken,
+    where ``s`` is the likelihood's per-draw
+    :meth:`~rxmc.likelihood.Likelihood.predictive_scale` (1 for a Gaussian,
+    the multivariate-t mixing scale under a Student-t).  With
+    ``model_only=True`` the rows are ``ym_i`` themselves and no covariance is
+    assembled.
 
     Parameters
     ----------
@@ -227,6 +239,7 @@ def predictive_draws(
             mu, Sigma = c.ym(theta)[c.active], c.matrix(theta)
         L = _psd_factor(Sigma)
         z = rng.standard_normal((n_rep, N))
+        z *= c.likelihood.predictive_scale(rng, n_rep, *theta[c.like_gather])[:, None]
         out[i * n_rep : (i + 1) * n_rep] = mu + z @ L.T
     return out
 

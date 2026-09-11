@@ -154,4 +154,4 @@ class IsobaricAnalogPN(Model):
                 )
             return ws.xs(*(U(r, *a) for U, a in zip(potentials, args))) / MB_PER_B
 
-        return Predictor(self.params, x, predict)
+        return Predictor(self.params, x, predict, meta)

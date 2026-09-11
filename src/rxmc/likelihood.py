@@ -18,6 +18,7 @@ from __future__ import annotations
 from math import inf
 
 import numpy as np
+from scipy import stats
 from scipy.special import gammaln
 
 from .params import Parameter
@@ -41,6 +42,14 @@ class Likelihood:
     def chi2(self, d2, logdet, n, *values) -> float:
         return d2
 
+    def predictive_scale(self, rng, size, *values) -> np.ndarray:
+        """Per-draw multipliers of a correlated normal draw ``L z``: ones.
+
+        A scale mixture of normals returns its mixing scales instead, so
+        ``ym + scale * L z`` is a draw from the likelihood's own predictive.
+        """
+        return np.ones(size)
+
 
 class Gaussian(Likelihood):
     """Multivariate-normal likelihood over the stacked residual (parameter-free)."""
@@ -61,16 +70,30 @@ class StudentT(Likelihood):
     Parameters
     ----------
     nu : Parameter, optional
-        The degrees of freedom.  Defaults to ``Parameter("nu", bounds=(1, inf))``;
-        two constraints using the default each derive a ``"nu"`` and the
+        The degrees of freedom.  Defaults to ``Parameter("nu",
+        prior=gamma(a=2, scale=10), bounds=(1, inf))``: the Gamma(2, rate 0.1)
+        prior of Juárez & Steel, "Model-based clustering of non-Gaussian panel
+        data based on skew-t distributions", J. Bus. Econ. Stat. 28, 52 (2010),
+        truncated to ``nu >= 1``.  It has most of its mass on heavy tails and a
+        mean near 20, and a unit-cube map, so nested samplers take it as is.
+        Two constraints using the default each derive a ``"nu"`` and the
         problem fails to compile on the duplicate name, so pass ``nu=`` to
         share one or to name them apart.
     """
 
     def __init__(self, nu: Parameter | None = None):
         if nu is None:
-            nu = Parameter("nu", bounds=(1.0, inf), latex=r"\nu")
+            nu = Parameter(
+                "nu",
+                prior=stats.gamma(a=2.0, scale=10.0),
+                bounds=(1.0, inf),
+                latex=r"\nu",
+            )
         self.params = (nu,)
+
+    def predictive_scale(self, rng, size, nu) -> np.ndarray:
+        """``sqrt(nu / w)`` with ``w ~ chi2(nu)``: the multivariate-t mixing scale."""
+        return np.sqrt(nu / rng.chisquare(nu, size))
 
     def log_likelihood(self, d2, logdet, n, nu) -> float:
         return (

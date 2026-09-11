@@ -203,6 +203,51 @@ class TestPriors:
         np.testing.assert_allclose(theta, [0.0, 0.0, 0.0], atol=1e-12)
         assert np.isfinite(p.log_prior(theta))
 
+    def test_joint_dimension_must_match_its_parameters(self):
+        model = line_model(prior=False)
+        m, b = model.params
+        c = Constraint([Comparison(dataset(), model)])
+        mvn2 = stats.multivariate_normal([0.0, 3.0], np.diag([1.0, 4.0]))
+        with pytest.raises(ValueError, match=r"2-dimensional.*1 parameter"):
+            Problem([c], priors=[([m], mvn2), ([b], stats.norm())])
+        with pytest.raises(ValueError, match="3-dimensional"):
+            Problem([c], priors=[([m, b], stats.multivariate_normal(np.zeros(3)))])
+        with pytest.raises(ValueError, match="1-dimensional"):
+            Problem([c], priors=[([m, b], stats.norm())])
+
+    def test_one_parameter_block_of_a_univariate_is_a_marginal(self):
+        # the natural way to give a bounded parameter (StudentT's nu) a prior
+        nu = Parameter("nu", bounds=(1.0, np.inf))
+        c = Constraint([Comparison(dataset(), line_model())], likelihood=StudentT(nu))
+        expon = stats.expon(loc=1, scale=10)
+        p = Problem([c], priors=[(nu, expon)])
+        theta = np.array([*TRUE, 4.0])
+        m_b = stats.norm(0, 5).logpdf(TRUE).sum()
+        assert p.log_prior(theta) == pytest.approx(m_b + expon.logpdf(4.0))
+        assert p.prior_transform([0.5, 0.5, 0.5])[2] == pytest.approx(expon.median())
+        assert np.all(p.sample_prior(20, rng=0)[:, 2] >= 1.0)
+        # and truncated to the parameter's bounds
+        t = Parameter("t", bounds=(0.0, np.inf))
+        model = Model(lambda x, t: t * x, [t])
+        q = Problem([Constraint([Comparison(dataset(), model)])], [([t], stats.norm())])
+        assert q.log_prior([0.5]) == pytest.approx(stats.norm.logpdf(0.5) + np.log(2))
+        assert q.log_prior([-0.5]) == -np.inf
+
+    def test_custom_joint_sampled_through_rvs(self):
+        class Box:
+            def logpdf(self, v):
+                return 0.0 if np.all((0 <= v) & (v <= 1)) else -np.inf
+
+            def rvs(self, size, random_state):
+                return random_state.uniform(size=(size, 2))
+
+        m, b = Parameter("m"), Parameter("b")
+        model = Model(lambda x, m, b: m * x + b, [m, b])
+        p = Problem([Constraint([Comparison(dataset(), model)])], [([m, b], Box())])
+        s = p.sample_prior(30, rng=0)
+        assert s.shape == (30, 2) and np.all((s >= 0) & (s <= 1))
+        assert p.starting_location(4).shape == (4, 2)
+
     def test_clip_unit_cube(self):
         u = clip_unit_cube([0.0, 0.5, 1.0])
         assert 0 < u[0] < 1e-10 and u[1] == 0.5 and 1 - 1e-10 < u[2] < 1
@@ -307,6 +352,43 @@ class TestCompile:
         Problem(
             [Constraint([Comparison(d, line_model())], terms=[noise(eps)])]
         )  # parametric: fine
+
+    def test_parametric_covariance_singular_at_theta_is_zero_density(self):
+        d = Dataset(X[:3], [1.0, 2.0, 3.0], np.zeros(3), label="exact")
+        eps = Parameter("log_eps", prior=stats.norm())
+        p = Problem([Constraint([Comparison(d, line_model())], terms=[noise(eps)])])
+        theta = np.array([*TRUE, -400.0])  # exp(-400)**2 underflows to zero
+        assert p.log_likelihood(theta) == -np.inf and p.chi2(theta) == np.inf
+        assert p.log_posterior(theta) == -np.inf
+        assert np.isfinite(p.log_likelihood([*TRUE, np.log(0.1)]))
+
+    def test_prediction_shape_checked_per_comparison(self):
+        # two x-ignoring models that return each other's lengths
+        s = Parameter("s", prior=stats.norm())
+        c = Constraint(
+            [
+                Comparison(
+                    dataset(0, 3, "short"), Model(lambda x, s: s * np.ones(5), [s])
+                ),
+                Comparison(
+                    dataset(1, 5, "long"), Model(lambda x, s: s * np.ones(3), [s])
+                ),
+            ]
+        )
+        with pytest.raises(ValueError, match=r"'short'.*shape \(5,\).*3 point"):
+            Problem([c]).log_likelihood([1.0])
+
+    def test_log_jacobian_carries_the_weights(self):
+        model = line_model()
+        tempered = Constraint(
+            [Comparison(dataset(0, label="a"), model, space=log)], weight=0.5
+        )
+        spare = Constraint(
+            [Comparison(dataset(1, label="b"), model, space=log)], weight=0.0
+        )
+        lj = tempered.log_jacobian
+        assert Problem([tempered]).log_jacobian() == pytest.approx(0.5 * lj)
+        assert Problem([tempered, spare]).log_jacobian() == pytest.approx(0.5 * lj)
 
     def test_predict_and_matrix(self):
         d = dataset()
