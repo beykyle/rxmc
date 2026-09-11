@@ -1,37 +1,49 @@
-"""
-Sampler-agnostic model-comparison and predictive-checking utilities.
+"""Sampler-agnostic posterior checks on ``(problem, samples)``.
 
-Everything here consumes a :class:`~rxmc.constraint.Constraint` plus posterior
-*samples* (rows of model parameters and, optionally, of the constraint's
-covariance/likelihood parameters) and never touches a sampler:
+Everything here consumes a compiled :class:`~rxmc.problem.Problem` and a
+matrix of posterior ``samples`` of shape ``(n, problem.ndim)`` in
+``problem.names`` order (what emcee's ``get_chain(flat=True)``, dynesty's
+``samples_equal()`` and black-box-bayes give) and never touches a sampler:
 
 * :func:`predictive_draws` — draws from the posterior predictive
-  ``N(ym(theta), Sigma(theta))`` on the constraint's active points (or the
-  model-only predictive ``ym(theta)``).
-* :func:`coverage_curve`, :func:`coverage_error`, :func:`sharpness` — empirical
-  calibration and width of those draws against the data.
+  ``N(ym(theta), Sigma(theta))`` on a constraint's active points, or the
+  model-only predictive ``ym(theta)``.
+* :func:`coverage_curve`, :func:`coverage_error`, :func:`sharpness` —
+  empirical calibration and width of those draws against the data.
 * :func:`heldout_log_predictive`, :func:`log_posterior_predictive` —
-  out-of-sample scoring on a held-out constraint (e.g.
-  ``constraint.complement()``).
+  out-of-sample scoring on a held-out problem (``Problem([fit.complement()])``).
 * :func:`logz_summary`, :func:`compare_logz` — nested-sampling evidence
   bookkeeping with replicate-based errors and a conservative tie verdict.
-* :func:`log_jacobian` — the comparison-space Jacobian needed to compare
-  evidences across residual spaces (e.g. log-y versus linear-y fits).
 
-Notes
------
-Drawing from ``N(ym, Sigma)`` in a *transformed* comparison space (an
-observation with ``transform=log``) yields draws in that space; map them back
-with the transform's inverse (``np.exp``) before comparing to raw data.
+Held-out scoring and a term that spans the split
+------------------------------------------------
+A held-out problem built from ``fit.complement()`` has the *marginal*
+covariance of its active rows.  When no term couples the fitted and the
+held-out rows that is the right density, and ``ll(fit) + ll(held) == ll(full)``.
+When a term does span the split (a Gaussian process ``on=comps`` over
+several experiments), the honest held-out density is the conditional
+``p(y_held | y_fit, theta)`` under the full covariance; pass the fitted
+problem as ``given=`` to :func:`heldout_log_predictive` and
+:func:`predictive_draws` and they compute exactly that.  Without a spanning
+term the conditional equals the marginal.
+
+Draws and densities are in the comparison space of the constraint (a
+``space=log`` comparison gives log-space draws; map them back with
+``comparison.space.inverse``).
 """
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
+import scipy.linalg as sla
 from scipy.special import logsumexp
 
+from .likelihood import Gaussian
+from .problem import Problem
+
 __all__ = [
-    "log_jacobian",
     "predictive_draws",
     "coverage_curve",
     "coverage_error",
@@ -40,24 +52,30 @@ __all__ = [
     "log_posterior_predictive",
     "logz_summary",
     "compare_logz",
-    "split_samples",
 ]
-
-
-def log_jacobian(constraint) -> float:
-    """Comparison-space log-Jacobian of a constraint (sum over active points).
-
-    ``log Z_raw = log Z_transformed + log_jacobian``: add it to the evidence of a
-    fit performed in a transformed comparison space (e.g. ``transform=log``)
-    before comparing with a fit in raw space.  Zero for identity transforms.
-    """
-    return float(constraint.log_jacobian)
-
 
 _DEFAULT_LEVELS = np.linspace(0.02, 0.98, 49)
 
 
-def _psd_factor(Sigma, jitter=1e-10):
+# ----------------------------------------------------------------------------
+# Helpers
+# ----------------------------------------------------------------------------
+
+
+def _rows(samples, ndim) -> np.ndarray:
+    """Posterior samples as ``(n, ndim)``; a 1-D input is one row."""
+    samples = np.asarray(samples, dtype=float)
+    if samples.ndim == 1:
+        samples = samples[None, :]
+    if samples.ndim != 2 or samples.shape[1] != ndim:
+        raise ValueError(
+            f"samples must have shape (n, {ndim}) in problem.names order, got "
+            f"{samples.shape}"
+        )
+    return samples
+
+
+def _psd_factor(Sigma, jitter=1e-10) -> np.ndarray:
     """A factor ``L`` with ``L L^T = Sigma``.
 
     The lower Cholesky factor when ``Sigma`` is positive definite; otherwise
@@ -79,87 +97,137 @@ def _psd_factor(Sigma, jitter=1e-10):
         return V * np.sqrt(np.clip(w, 0.0, None))
 
 
-def _rows(samples, n=None):
-    """Posterior samples as a 2-D ``(n_samples, n_params)`` array.
+class _Conditional:
+    """``p(y_H | y_F, theta)`` for one held-out constraint given its fit."""
 
-    A 1-D input is one sample row (as in :func:`split_samples`).  When ``n`` is
-    given the number of rows must match it.
-    """
-    samples = np.asarray(samples, dtype=float)
-    if samples.ndim == 1:
-        samples = samples[None, :]
-    if n is not None and samples.shape[0] != n:
-        raise ValueError(f"expected {n} sample rows, got {samples.shape[0]}")
-    return samples
+    def __init__(self, held: Problem, given: Problem, constraint: int):
+        try:
+            h, f = held.constraints[constraint], given.constraints[constraint]
+        except IndexError:
+            raise ValueError(
+                f"held-out and fitted problems must both have constraint "
+                f"{constraint}"
+            ) from None
+        if h.comparisons != f.comparisons:
+            raise ValueError(
+                "given= must be the fitted problem over the same comparison "
+                "objects (Problem([fit]) with held = Problem([fit.complement()]))"
+            )
+        if held.names != given.names:
+            raise ValueError(
+                "held-out and fitted problems index different parameters: "
+                f"{held.names} vs {given.names}"
+            )
+        if np.intersect1d(h.active, f.active).size:
+            raise ValueError(
+                "the held-out and fitted active points overlap; the held-out "
+                "constraint should be the complement of the fitted one"
+            )
+        if not isinstance(h.likelihood, Gaussian):
+            raise ValueError(
+                "the conditional held-out density is Gaussian; the constraint "
+                f"uses {type(h.likelihood).__name__}.  Score the marginal instead "
+                "(omit given=) or use a Gaussian likelihood"
+            )
+        self.held, self.fit = h, f
+        # the union of the two active sets, compiled once: every row active
+        self.full = Problem([replace(h.source, masks=None)]).constraints[0]
+        lookup = {int(r): i for i, r in enumerate(self.full.active)}
+        self.iH = np.array([lookup[int(r)] for r in h.active], dtype=int)
+        self.iF = np.array([lookup[int(r)] for r in f.active], dtype=int)
+        self.yF = self.full.y[f.active]
+
+    def __call__(self, theta):
+        """``(mean, cov)`` of the held-out rows given the fitted data."""
+        ym = self.full.ym(theta)
+        S = self.full.covariance.matrix(ym, theta)
+        SHH = S[np.ix_(self.iH, self.iH)]
+        SHF = S[np.ix_(self.iH, self.iF)]
+        SFF = S[np.ix_(self.iF, self.iF)]
+        L = _psd_factor(SFF)
+        r = self.yF - ym[self.fit.active]
+        mean = ym[self.held.active] + SHF @ sla.cho_solve((L, True), r)
+        cov = SHH - SHF @ sla.cho_solve((L, True), SHF.T)
+        return mean, 0.5 * (cov + cov.T)
+
+
+def _gaussian_logpdf(r, cov) -> float:
+    L = _psd_factor(cov)
+    z = sla.solve_triangular(L, r, lower=True)
+    logdet = 2.0 * np.sum(np.log(np.diag(L)))
+    return float(-0.5 * (z @ z + logdet + len(r) * np.log(2 * np.pi)))
+
+
+# ----------------------------------------------------------------------------
+# Posterior predictive
+# ----------------------------------------------------------------------------
 
 
 def predictive_draws(
-    constraint,
-    model_samples,
-    cov_samples=None,
+    problem: Problem,
+    samples,
+    constraint: int = 0,
     *,
     n_rep: int = 1,
     rng=None,
     model_only: bool = False,
+    given: Problem | None = None,
 ) -> np.ndarray:
-    """Posterior-predictive draws on the constraint's active points.
+    """Posterior-predictive draws on a constraint's active points.
 
     For each posterior row ``theta_i`` the constraint gives ``ym_i`` and
     ``Sigma_i``; ``n_rep`` draws ``ym_i + L_i z`` (``z ~ N(0, I)``) are taken.
-    With ``model_only=True`` the rows are ``ym_i`` (the model-only predictive,
-    no error-model noise).
+    With ``model_only=True`` the rows are ``ym_i`` themselves and no
+    covariance is assembled.
 
     Parameters
     ----------
-    constraint : Constraint
-        The constraint whose predictive is wanted (its active points).
-    model_samples : array_like, shape (n, n_model_params)
-        Posterior samples of the physical-model parameters (a 1-D array is
-        one sample).
-    cov_samples : array_like, shape (n, constraint.n_params), optional
-        Matching samples of the constraint's parameters (required when the
-        constraint has any).
+    problem : Problem
+    samples : array_like, shape (n, problem.ndim)
+        Posterior rows in ``problem.names`` order (a 1-D array is one row).
+    constraint : int, optional
+        Index into ``problem.constraints``.
     n_rep : int, optional
         Draws per posterior row (ignored when ``model_only``).
-    rng : numpy.random.Generator, optional
-        Source of the standard-normal draws; a fresh default generator when
-        omitted.
+    rng : numpy.random.Generator or seed, optional
     model_only : bool, optional
-        Return the predictions ``ym_i`` themselves instead of draws around
-        them (no covariance is assembled).
+        Return the predictions ``ym_i`` on the active points instead of draws
+        around them.
+    given : Problem, optional
+        The *fitted* problem when ``problem`` is its held-out complement and a
+        term spans the two (module docstring): draws then come from the
+        conditional ``N(mu_c, Sigma_c)`` of the held-out rows given the fitted
+        data.
 
     Returns
     -------
     np.ndarray
-        Draws in the observations' comparison space: shape
-        ``(n * n_rep, n_data_pts)``, or ``(n, n_data_pts)`` when ``model_only``.
+        In comparison space: shape ``(n * n_rep, n_active)``, or
+        ``(n, n_active)`` when ``model_only``.
     """
-    rng = np.random.default_rng() if rng is None else rng
-    model_samples = _rows(model_samples)
-    n = model_samples.shape[0]
-    if constraint.n_params:
-        if cov_samples is None:
-            raise ValueError("constraint has parameters; pass cov_samples")
-        cov_samples = _rows(cov_samples, n)
-    else:
-        cov_samples = np.zeros((n, 0))
+    rng = np.random.default_rng(rng)
+    samples = _rows(samples, problem.ndim)
+    n = samples.shape[0]
+    c = problem.constraints[constraint]
+    N = c.n_active
+    cond = None if given is None else _Conditional(problem, given, constraint)
 
-    N = constraint.n_data_pts
     if model_only:
         out = np.empty((n, N))
         for i in range(n):
-            ym = np.concatenate(constraint.predict(*model_samples[i]))
-            out[i] = ym[constraint.active]
+            out[i] = cond(samples[i])[0] if cond else c.ym(samples[i])[c.active]
         return out
 
     out = np.empty((n * n_rep, N))
     for i in range(n):
-        ym, Sigma = constraint.predict_and_covariance(
-            tuple(model_samples[i]), tuple(cov_samples[i])
-        )
+        theta = samples[i]
+        if cond:
+            mu, Sigma = cond(theta)
+        else:
+            mu, Sigma = c.ym(theta)[c.active], c.matrix(theta)
         L = _psd_factor(Sigma)
         z = rng.standard_normal((n_rep, N))
-        out[i * n_rep : (i + 1) * n_rep] = ym + z @ L.T
+        out[i * n_rep : (i + 1) * n_rep] = mu + z @ L.T
     return out
 
 
@@ -173,7 +241,7 @@ def coverage_curve(draws, y, levels=None) -> np.ndarray:
         The data the draws are checked against (same space as ``draws``).
     levels : array_like, optional
         Nominal central-interval probabilities in (0, 1).  Defaults to 49
-        levels from 0.02 to 0.98 (``_DEFAULT_LEVELS``).
+        levels from 0.02 to 0.98.
 
     Returns
     -------
@@ -182,7 +250,7 @@ def coverage_curve(draws, y, levels=None) -> np.ndarray:
     """
     draws = np.asarray(draws, dtype=float)
     y = np.asarray(y, dtype=float)
-    levels = _DEFAULT_LEVELS if levels is None else np.asarray(levels)
+    levels = _DEFAULT_LEVELS if levels is None else np.asarray(levels, dtype=float)
     out = np.empty(len(levels))
     for i, lv in enumerate(levels):
         lo, hi = np.percentile(draws, [50 * (1 - lv), 50 * (1 + lv)], axis=0)
@@ -191,8 +259,8 @@ def coverage_curve(draws, y, levels=None) -> np.ndarray:
 
 
 def coverage_error(draws, y, levels=None) -> float:
-    """``max |coverage(level) - level|`` — a single calibration score."""
-    levels = _DEFAULT_LEVELS if levels is None else np.asarray(levels)
+    """``max |coverage(level) - level|``: a single calibration score."""
+    levels = _DEFAULT_LEVELS if levels is None else np.asarray(levels, dtype=float)
     return float(np.max(np.abs(coverage_curve(draws, y, levels) - levels)))
 
 
@@ -204,11 +272,11 @@ def sharpness(draws, percentiles=(16, 84), transform=None) -> np.ndarray:
     draws : array_like, shape (n_draws, n_pts)
     percentiles : (float, float), optional
         Lower and upper percentiles (in 0-100) bounding the interval; the
-        default is the central 68 %.  Note :func:`coverage_curve` takes
-        interval *probabilities* in (0, 1) instead.
+        default is the central 68 %.  :func:`coverage_curve` takes interval
+        *probabilities* in (0, 1) instead.
     transform : callable, optional
-        Applied to the draws first (e.g. ``np.exp`` to report widths in raw
-        space for a log comparison space, or ``np.log10``).
+        Applied to the draws first (e.g. ``np.exp`` to report widths in
+        physical units for a log comparison space).
     """
     draws = np.asarray(draws, dtype=float)
     if transform is not None:
@@ -217,34 +285,45 @@ def sharpness(draws, percentiles=(16, 84), transform=None) -> np.ndarray:
     return hi - lo
 
 
-def heldout_log_predictive(heldout_constraint, model_samples, cov_samples=None):
+# ----------------------------------------------------------------------------
+# Held-out scoring
+# ----------------------------------------------------------------------------
+
+
+def heldout_log_predictive(
+    heldout_problem: Problem, samples, *, given: Problem | None = None
+) -> np.ndarray:
     """``log p(y_held | theta_i)`` for each posterior row.
 
-    ``heldout_constraint`` is typically ``fit_constraint.complement()``: the same
-    observations, terms and parameters, with the held-out points active.  The
-    score is that constraint's log likelihood at each sample (a 1-D
-    ``model_samples`` is one sample).
+    ``heldout_problem`` is typically ``Problem([fit.complement()])``: the same
+    comparisons, terms and parameters, with the held-out points active.  The
+    score is that problem's log likelihood at each row, so the constraints'
+    ``weight`` and likelihood family apply.  With ``given=`` (the fitted
+    problem) the score is instead the Gaussian conditional density of the
+    held-out rows given the fitted data, constraint by constraint (module
+    docstring).
 
     Returns
     -------
     np.ndarray, shape (n,)
     """
-    model_samples = _rows(model_samples)
-    n = model_samples.shape[0]
-    if heldout_constraint.n_params:
-        if cov_samples is None:
-            raise ValueError("constraint has parameters; pass cov_samples")
-        cov_samples = _rows(cov_samples, n)
-    else:
-        cov_samples = np.zeros((n, 0))
-    return np.array(
-        [
-            heldout_constraint.log_likelihood(
-                tuple(model_samples[i]), tuple(cov_samples[i])
-            )
-            for i in range(n)
-        ]
-    )
+    samples = _rows(samples, heldout_problem.ndim)
+    if given is None:
+        return np.array([heldout_problem.log_likelihood(t) for t in samples])
+    conds = [
+        _Conditional(heldout_problem, given, i)
+        for i in range(len(heldout_problem.constraints))
+    ]
+    out = np.empty(samples.shape[0])
+    for k, theta in enumerate(samples):
+        total = 0.0
+        for c, cond in zip(heldout_problem.constraints, conds):
+            if c.weight == 0.0:
+                continue
+            mean, cov = cond(theta)
+            total += c.weight * _gaussian_logpdf(c.y[c.active] - mean, cov)
+        out[k] = total
+    return out
 
 
 def log_posterior_predictive(logp_samples, logw=None) -> float:
@@ -265,20 +344,26 @@ def log_posterior_predictive(logp_samples, logw=None) -> float:
     return float(logsumexp(logp + logw) - logsumexp(logw))
 
 
-def logz_summary(logz, logzerr):
+# ----------------------------------------------------------------------------
+# Evidence bookkeeping
+# ----------------------------------------------------------------------------
+
+
+def logz_summary(logz, logzerr) -> tuple[float, float, int]:
     """Replicate-aware evidence summary.
 
     Parameters
     ----------
     logz, logzerr : array_like
         ``log Z`` and its sampler-reported error for each replicate run (one
-        value each is fine).
+        value each is fine).  Add ``problem.log_jacobian()`` to ``logz`` first
+        when comparing fits in different comparison spaces.
 
     Returns
     -------
     (float, float, int)
         ``(mean, err, n)`` with ``err = max(half-range across replicates, mean
-        reported error)`` — the sampler's own error is a lower bound.
+        reported error)``: the sampler's own error is a lower bound.
     """
     logz = np.atleast_1d(np.asarray(logz, dtype=float))
     logzerr = np.atleast_1d(np.asarray(logzerr, dtype=float))
@@ -293,7 +378,7 @@ def compare_logz(a, b, sigma: float = 2.0) -> dict:
     ----------
     a, b : (mean, err) or (mean, err, n)
         As returned by :func:`logz_summary`; a trailing replicate count is
-        accepted and ignored (it is informational only).
+        accepted and ignored.
     sigma : float, optional
         A difference smaller than ``sigma * hypot(err_a, err_b)`` is a ``"tie"``.
 
@@ -311,23 +396,3 @@ def compare_logz(a, b, sigma: float = 2.0) -> dict:
     else:
         verdict = "a" if d > 0 else "b"
     return {"dlogZ": d, "err": err, "verdict": verdict}
-
-
-def split_samples(config, samples):
-    """Split flat sampler rows into ``(model_samples, [cov_samples, ...])``.
-
-    Row-wise :meth:`~rxmc.config.CalibrationConfig.split_parameters`: one
-    covariance-sample block per parametric constraint, in
-    ``config.evidence.parametric_constraints`` order.
-
-    Returns
-    -------
-    (np.ndarray, list of np.ndarray)
-        ``model_samples`` of shape ``(n, n_model_params)`` and one
-        ``(n, constraint.n_params)`` array per parametric constraint.
-    """
-    samples = np.asarray(samples, dtype=float)
-    if samples.ndim == 1:
-        samples = samples[None, :]
-    parts = np.split(samples, config.indices[:-1], axis=1)
-    return parts[0], parts[1:]

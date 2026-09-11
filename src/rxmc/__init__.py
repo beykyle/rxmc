@@ -7,6 +7,7 @@ for the design and ``docs/recipes.md`` for the supported use cases.
 from . import constraint as constraint
 from . import covariance as covariance
 from . import data as data
+from . import diagnostics as diagnostics
 from . import likelihood as likelihood
 from . import model as model
 from . import problem as problem
@@ -45,6 +46,7 @@ __all__ = [
     "constraint",
     "covariance",
     "data",
+    "diagnostics",
     "likelihood",
     "model",
     "problem",
