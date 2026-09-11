@@ -1,3 +1,7 @@
+---
+orphan: true
+---
+
 # A ground-up rxmc: declare, then compile
 
 This document guides a rewrite of `rxmc` from a blank repository.  It is the

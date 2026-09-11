@@ -194,7 +194,7 @@ exp._inverse = log
 
 
 def scale(parameter: Parameter | None = None, log: bool = True, name=None) -> Transform:
-    r"""A latent multiplicative normalisation :math:`\rho\, y`.
+    r"""A latent multiplicative normalisation, ``rho * a``.
 
     The Kennedy & O'Hagan forward-model scale: it changes the *mean*, not the
     covariance, so it is composed onto the model (``model | scale(rho)``) and

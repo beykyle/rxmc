@@ -144,6 +144,9 @@ class _Combined(Model):
 
 
 def polynomial(order: int) -> Model:
-    r"""``y = a_0 + a_1 x + ... + a_order x^order`` with parameters ``a0..a<order>``."""
+    """A polynomial of the given order with parameters ``a0`` to ``a<order>``.
+
+    ``y = a_0 + a_1 x + a_2 x^2 + ...``; the parameters carry no prior.
+    """
     params = [Parameter(f"a{i}", latex=f"a_{i}") for i in range(order + 1)]
     return Model(lambda x, *a: P.polyval(np.asarray(x, dtype=float), a), params)

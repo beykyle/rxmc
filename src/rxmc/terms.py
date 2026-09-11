@@ -286,7 +286,7 @@ class KernelTerm(Term):
     discrepancy at new points; the covariance machinery treats a
     ``KernelTerm`` exactly as a ``matrix`` :class:`Term`.
 
-    Attributes
+    Parameters
     ----------
     kernel : sklearn-style kernel
         The kernel object as passed to :func:`kernel`.
