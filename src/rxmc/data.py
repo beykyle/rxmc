@@ -20,7 +20,7 @@ from typing import Any, Mapping
 
 import numpy as np
 
-__all__ = ["Dataset"]
+__all__ = ["Dataset", "from_measurement"]
 
 
 def _error_spec(value, n, name):
@@ -103,3 +103,107 @@ class Dataset:
     def __repr__(self):
         label = f"{self.label!r}, " if self.label else ""
         return f"Dataset({label}n={self.n})"
+
+
+# ----------------------------------------------------------------------------
+# EXFOR measurements
+# ----------------------------------------------------------------------------
+
+_QUANTITY_KIND = {
+    "dXS/dA": "differential",
+    "dXS/dRuth": "dimensionless",
+    "Ay": "dimensionless",
+}
+
+
+def from_measurement(
+    measurement, *, reaction=None, quantity=None, ExIAS=None
+) -> Dataset:
+    """A :class:`Dataset` from an ``exfor_tools`` measurement, in internal units.
+
+    Reads ``x`` (degrees), ``y``, ``Einc``, ``quantity``, ``y_units``,
+    ``statistical_err``, ``systematic_norm_err``, ``systematic_offset_err`` and
+    ``subentry`` from ``measurement`` (any object with those attributes).  Angles
+    are stored in radians, cross sections in b/sr, ratios and analysing powers
+    as they are.  Every dimensionful error (statistical, absolute offset) is
+    converted with the data; the fractional normalisation error passes through
+    untouched.  The kinematics a reaction model needs to bind land in
+    ``meta``: ``reaction``, ``Elab``, ``quantity``, ``k``, ``eta`` and, for the
+    (p,n) channel, ``ExIAS``.
+
+    Parameters
+    ----------
+    measurement : object
+        An ``exfor_tools.distribution.Distribution`` or anything shaped like it.
+    reaction : jitr.reactions.Reaction, optional
+        Needed for the kinematics in ``meta`` and for any conversion between
+        ``dXS/dA`` and ``dXS/dRuth`` (the Rutherford cross section is a closed
+        form of the kinematics).
+    quantity : {"dXS/dA", "dXS/dRuth", "Ay"}, optional
+        The quantity the dataset should hold; defaults to the measured one.
+    ExIAS : float, optional
+        Excitation energy of the isobaric analog state (MeV), for (p,n) data.
+    """
+    from .units import MB_PER_B, check_angle_grid, parse_unit
+
+    measured = measurement.quantity
+    target = measured if quantity is None else quantity
+    for q in (measured, target):
+        if q not in _QUANTITY_KIND:
+            raise ValueError(
+                f"unknown quantity {q!r}; expected one of {list(_QUANTITY_KIND)}"
+            )
+    factor, kind = parse_unit(measurement.y_units)
+    if kind != _QUANTITY_KIND[measured]:
+        raise ValueError(
+            f"measurement quantity {measured!r} needs {_QUANTITY_KIND[measured]} units, "
+            f"got {measurement.y_units!r}"
+        )
+    x = np.deg2rad(np.asarray(measurement.x, dtype=float))
+    label = getattr(measurement, "subentry", None) or ""
+    check_angle_grid(x, f"x of {label or 'measurement'}")
+    Elab = float(measurement.Einc)
+
+    meta = {"quantity": target, "Elab": Elab, "subentry": label or None}
+    kinematics = None
+    if reaction is not None:
+        kinematics = reaction.kinematics(Elab)
+        meta.update(reaction=reaction, k=float(kinematics.k), eta=float(kinematics.eta))
+    if ExIAS is not None:
+        meta["ExIAS"] = float(ExIAS)
+
+    if measured == target:
+        norm = factor  # into b/sr for a cross section, 1 for a ratio
+    elif {measured, target} == {"dXS/dA", "dXS/dRuth"}:
+        if kinematics is None:
+            raise ValueError(
+                f"converting {measured!r} to {target!r} needs the Rutherford cross "
+                "section: pass reaction="
+            )
+        if not kinematics.eta > 0:
+            raise ValueError(
+                f"converting {measured!r} to {target!r} needs a charged projectile "
+                f"(eta = {kinematics.eta})"
+            )
+        from .reactions.elastic import rutherford
+
+        ruth_b = rutherford(kinematics, x) / MB_PER_B
+        norm = factor / ruth_b if measured == "dXS/dA" else ruth_b
+    else:
+        raise ValueError(
+            f"cannot convert measurement quantity {measured!r} to {target!r}"
+        )
+
+    def scaled(v):
+        return None if v is None else np.asarray(v, dtype=float) * norm
+
+    y_err = measurement.statistical_err
+    return Dataset(
+        x,
+        np.asarray(measurement.y, dtype=float) * norm,
+        scaled(np.zeros_like(x) if y_err is None else y_err),
+        norm_err=measurement.systematic_norm_err,
+        offset_err=scaled(measurement.systematic_offset_err),
+        label=label,
+        meta=meta,
+    )

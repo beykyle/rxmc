@@ -10,12 +10,14 @@ from . import data as data
 from . import likelihood as likelihood
 from . import model as model
 from . import problem as problem
+from . import reactions as reactions
 from . import terms as terms
 from . import transforms as transforms
 from . import units as units
 from .constraint import Comparison as Comparison
 from .constraint import Constraint as Constraint
 from .data import Dataset as Dataset
+from .data import from_measurement as from_measurement
 from .model import Model as Model
 from .model import polynomial as polynomial
 from .params import Parameter as Parameter
@@ -36,6 +38,7 @@ __all__ = [
     "Parameter",
     "Problem",
     "Term",
+    "from_measurement",
     "polynomial",
     "constraint",
     "covariance",
@@ -43,6 +46,7 @@ __all__ = [
     "likelihood",
     "model",
     "problem",
+    "reactions",
     "terms",
     "transforms",
     "units",
