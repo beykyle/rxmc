@@ -1026,9 +1026,12 @@ recipe test it unlocks pass.
    (`total_predictive_band` finds the kernel columns itself), 17, 18, 28,
    30, 31.
 7. **CI wiring.**  The heading-to-file check between `recipes.md` and
-   `test/recipes/`; `pytest test` runs both suites; the fast tier must
-   finish in a few minutes on a laptop (patched solvers, small `J` and
-   `n`).
+   `test/recipes/` is itself a test (`test/test_recipes_index.py`: one
+   file per heading and vice versa, each file's docstring quoting its
+   recipe, the recipe-18 legend equal to the tests' legend), so bare
+   `pytest` runs it with both suites; the fast tier must finish in a few
+   minutes on a laptop (patched solvers, small `J` and `n`), and CI lists
+   its ten slowest tests.
 8. **Notebooks 1–9.**  Each notebook names the recipes it is the tutorial
    for: `linear_calibration` (1, 17); `error_models` (2, 4, 5, 19);
    `normalization_and_covariance_structure` (3, 6, 27);

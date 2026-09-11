@@ -465,8 +465,9 @@ is the scattering angle in radians and `u = theta / pi`.
 | `LKp` | noise, an offset mode, and an RBF Gaussian process in momentum transfer `q = 2 k sin(theta/2)` with amplitude `A q^(r/2)` |
 | `L0t` | `L0` under a Student-t likelihood |
 
-The test suite builds every row of this table against a hand-built dense
-covariance (`test/helpers.py`), so the table and the tests cannot drift.
+The test suite builds every covariance row of this table against a
+hand-built dense matrix, and a test compares the table above with the
+legend the tests carry, so the two cannot drift.
 
 Expected behaviour:
 

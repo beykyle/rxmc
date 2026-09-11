@@ -107,7 +107,7 @@ STUDY_LEGEND = {
     "L2n": "L0 plus a free correlated offset mode: sys * 1",
     "L2y": "L0 plus a free correlated normalisation mode: sys * ym",
     "L12": "L1 plus the angle mode of L2",
-    "Lgp": "L0 plus a Matern(5/2) Gaussian process in u with constant amplitude",
+    "Lgp": "L0 plus a Matérn(5/2) Gaussian process in u with constant amplitude",
     "Lgpn": "L0 plus the Gaussian process with an angle-growing amplitude",
     "LKp": "noise, an offset mode, and an RBF Gaussian process in momentum transfer "
     "q = 2 k sin(theta/2) with amplitude A q^(r/2)",
