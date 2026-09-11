@@ -9,6 +9,10 @@ likelihood.  The library owns no sampler: a compiled problem exposes the
 densities and the prior transform that emcee, dynesty or black-box-bayes
 need.
 
+##  Documentation
+
+The documentation website, including API reference is https://beykyle.github.io/rxmc/.
+
 ## Quickstart
 
 Declare, compile, hand to a sampler, read the chain back by name.
@@ -35,7 +39,7 @@ problem = rx.Problem([rx.Constraint([rx.Comparison(data, line)])])
 print(problem.names)  # ['m', 'b']
 
 sampler = emcee.EnsembleSampler(16, problem.ndim, problem.log_posterior)
-sampler.run_mcmc(problem.sample_prior(16, rng=1), 1000, progress=False)
+sampler.run_mcmc(problem.sample_prior(16, rng=1), 1000)
 samples = sampler.get_chain(discard=300, flat=True)
 print(samples[:, problem.columns(m)].mean(), samples[:, problem.columns(b)].mean())
 
@@ -118,7 +122,7 @@ print(problem.names, sampler.results.logz[-1])
   hierarchical calibration.
 - [`docs/design.md`](docs/design.md): the maintainer's description of the
   library, its rules and its testing tiers.
-- The rendered documentation, with the API reference, at
+- The documentation website, including API reference, at
   https://beykyle.github.io/rxmc/.
 
 ## Installation
@@ -145,8 +149,3 @@ sphinx-build -W docs docs/_build/html
 ```
 
 The three Python blocks of this README are executed by `test/test_readme.py`.
-
-## Status
-
-The 1.0 rewrite lives on the `rewrite` branch until its release.  The 0.x
-package is preserved at tag `v0.1.0` and on branch `legacy/0.x`.
