@@ -20,6 +20,9 @@ from .constraint import Comparison as Comparison
 from .constraint import Constraint as Constraint
 from .data import Dataset as Dataset
 from .data import from_measurement as from_measurement
+from .likelihood import Chi2 as Chi2
+from .likelihood import Gaussian as Gaussian
+from .likelihood import StudentT as StudentT
 from .model import Model as Model
 from .model import polynomial as polynomial
 from .params import Parameter as Parameter
@@ -34,13 +37,16 @@ except ImportError:  # pragma: no cover - source checkout without a build
 
 __all__ = [
     "__version__",
+    "Chi2",
     "Comparison",
     "Constraint",
     "Dataset",
+    "Gaussian",
     "KernelTerm",
     "Model",
     "Parameter",
     "Problem",
+    "StudentT",
     "Term",
     "from_measurement",
     "polynomial",
