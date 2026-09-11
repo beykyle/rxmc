@@ -158,6 +158,52 @@ class TestTermCoords:
         S = t.value(np.zeros(3), np.zeros(3), np.zeros(3), *k.theta)
         assert np.allclose(S, k(X))
 
+    def test_fixed_kernel_with_parametric_coords(self):
+        s = Parameter("s")
+        coords = Transform(lambda a, s: a * s, (s,))
+        x = np.array([0.0, 0.5, 1.0])
+        for amp in (None, 0.3):
+            t = kernel(RBF(1.0, "fixed"), coords=coords, amplitude=amp)
+            assert t.params == (s,) and not t.is_constant
+            K = t.value(x, np.zeros(3), np.zeros(3), 2.0)
+            a2 = 1.0 if amp is None else amp**2
+            np.testing.assert_allclose(K, a2 * RBF(1.0)(2.0 * x[:, None]), atol=1e-8)
+
+    def test_replace_keeps_one_copy_of_the_coords_parameters(self):
+        from dataclasses import replace
+
+        le, s, u = Parameter("le"), Parameter("s"), Parameter("u")
+        t = noise(le, coords=Transform(lambda a, s: a * s, (s,)))
+        x, y = np.array([1.0, 2.0]), np.zeros(2)
+        moved = replace(t, on=None)
+        assert moved.params == (le, s)
+        np.testing.assert_allclose(moved.value(x, y, None, np.log(0.2), 3.0), 0.2)
+        assert replace(t, coords=Transform(lambda a, u: a + u, (u,))).params == (le, u)
+        le2 = Parameter("le2")
+        assert replace(t, params=(le2,)).params == (le2, s)
+        lA = Parameter("log_A")
+        k = kernel(
+            RBF(1.0, "fixed"),
+            amplitude=constant_amplitude,
+            amplitude_params=(lA,),
+            coords=Transform(lambda a, s: a * s, (s,)),
+        )
+        k2 = replace(k, on=None)
+        assert k2.params == (lA, s)
+        np.testing.assert_allclose(
+            k2.value(x, y, y, 0.0, 1.0), k.value(x, y, y, 0.0, 1.0)
+        )
+
+    def test_non_numeric_x_reaches_a_callable_term(self):
+        x = np.empty(3, dtype=object)
+        x[:] = [(10.0, 0.1), (10.0, 0.2), (20.0, 0.1)]  # (E, theta) pairs
+        t = Term(lambda c: np.array([e for e, _ in c.x]) / 100.0, kind="diag")
+        np.testing.assert_allclose(t.value(x, np.ones(3), None), [0.1, 0.1, 0.2])
+        le = Parameter("le")
+        np.testing.assert_allclose(
+            noise(le).value(x, np.ones(3), None, np.log(0.3)), 0.3
+        )
+
 
 # ----------------------------------------------------------------------------
 # Factories

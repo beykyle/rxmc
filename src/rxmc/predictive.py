@@ -120,14 +120,25 @@ def _locate(problem: Problem, term: KernelTerm):
         for e in c.covariance.entries:
             if e.term is term:
                 return c, e
+        if any(t is term for t in c.source.terms):
+            raise ValueError(
+                "the kernel term's support is fully masked in this problem: it has "
+                "no training rows to condition on"
+            )
     raise ValueError("the kernel term is not part of any constraint of the problem")
+
+
+def _same_space(a, b) -> bool:
+    """One space: the same object, or parameter-free wrappers of one callable
+    (``space=np.log`` on each comparison wraps it anew each time)."""
+    return a is b or (not a.params and not b.params and a.fn is b.fn)
 
 
 def _one_space(constraint, rows):
     spaces = []
     for comp, o in zip(constraint.comparisons, constraint.offsets):
         if np.any((rows >= o.start) & (rows < o.stop)):
-            if not any(comp.space is s for s in spaces):
+            if not any(_same_space(comp.space, s) for s in spaces):
                 spaces.append(comp.space)
     if len(spaces) != 1:
         raise ValueError(

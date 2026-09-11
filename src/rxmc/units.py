@@ -89,9 +89,11 @@ def parse_unit(label: str) -> tuple[float, str]:
 
 
 def check_angle_grid(angles_rad: np.ndarray, name: str) -> None:
-    """Reject a grid that is not 1-D or not inside ``[0, pi]`` radians."""
+    """Reject a grid that is not 1-D, not finite, or not inside ``[0, pi]`` radians."""
     angles_rad = np.asarray(angles_rad)
     if angles_rad.ndim != 1:
         raise ValueError(f"{name} must be 1D, is {angles_rad.ndim}D")
+    if not np.all(np.isfinite(angles_rad)):
+        raise ValueError(f"{name} must be finite")
     if angles_rad.size and (angles_rad.min() < 0 or angles_rad.max() > np.pi):
         raise ValueError(f"{name} must be on [0, pi] radians")

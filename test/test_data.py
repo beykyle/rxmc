@@ -38,6 +38,10 @@ def test_error_specs():
     np.testing.assert_allclose(d.offset_err, [0.01, 0.02, 0.03])
     with pytest.raises(ValueError, match="norm_err"):
         Dataset([0, 1, 2], [1, 2, 3], [0.1, 0.1, 0.1], norm_err=[0.05, 0.05])
+    for bad in (np.nan, -0.05, [0.01, np.nan, 0.03]):
+        for name in ("norm_err", "offset_err"):
+            with pytest.raises(ValueError, match=f"{name} must be finite"):
+                Dataset([0, 1, 2], [1, 2, 3], [0.1, 0.1, 0.1], **{name: bad})
 
 
 def test_meta_is_copied():

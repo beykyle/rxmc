@@ -54,6 +54,13 @@ def test_construction_in_internal_units():
     )
 
 
+def test_lab_frame_angles_are_refused():
+    with pytest.raises(ValueError, match="LAB frame"):
+        from_measurement(measurement(x_units="LAB-degrees"), reaction=P_CA)
+    d = from_measurement(measurement(x_units="CM-degrees"), reaction=P_CA)
+    np.testing.assert_allclose(d.x, np.deg2rad([20.0, 40.0]))
+
+
 def test_exfor_tools_labels_and_millibarns():
     for label in ("barns/ster", "b/Sr", "MB/SR", "mb/sr"):
         d = from_measurement(measurement(y_units=label), reaction=P_CA)

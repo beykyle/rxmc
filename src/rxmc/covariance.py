@@ -162,12 +162,11 @@ class StructuredCovariance:
         self._cache = None
         if self.is_constant:
             self._factor(self._D0, self._U0, self._M0, self._X0)
-        elif not self.dense and all(
-            e.term.is_constant for e in self.entries if e.term.kind != "mode"
-        ):
-            # modes never enter B, so B is constant even with parametric modes:
-            # fail now, by label, rather than at the first likelihood call
-            self._check_blocks(self._D0, self._M0)
+        elif not self.dense:
+            # modes never enter B, so a block no parametric diag or matrix term
+            # touches has a constant B: a singular one fails now, by label, rather
+            # than as a zero density at every theta
+            self._check_blocks(self._D0, self._M0, self._constant_blocks())
 
     # -- assembly -------------------------------------------------------------
 
@@ -281,20 +280,32 @@ class StructuredCovariance:
             self._cache = factors
         return factors
 
-    def _check_blocks(self, D, M):
+    def _constant_blocks(self) -> list[int]:
+        """The blocks whose ``B`` no parametric diag or matrix entry touches."""
+        varying = set()
+        for e in self.parametric_entries:
+            if e.term.kind == "mode":
+                continue
+            pos = e.pos[e.keep]
+            varying.update(
+                b for b, bp in enumerate(self.block_pos) if np.isin(pos, bp).any()
+            )
+        return [b for b in range(len(self.block_pos)) if b not in varying]
+
+    def _check_blocks(self, D, M, blocks):
         try:
-            for b, pos in enumerate(self.block_pos):
+            for b in blocks:
+                pos = self.block_pos[b]
                 if pos.size:
                     B = np.diag(D[pos]) + (0.0 if M[b] is None else M[b])
                     sla.cholesky(B, lower=True)
         except np.linalg.LinAlgError as err:
-            raise ValueError(self._singular_message(D)) from err
+            raise ValueError(self._singular_message(D, blocks)) from err
 
-    def _singular_message(self, D):
+    def _singular_message(self, D, blocks=None):
+        blocks = range(len(self.block_pos)) if blocks is None else blocks
         offenders = [
-            self.labels[b]
-            for b, pos in enumerate(self.block_pos)
-            if np.any(D[pos] == 0.0)
+            self.labels[b] for b in blocks if np.any(D[self.block_pos[b]] == 0.0)
         ]
         msg = "the constraint's covariance is singular on its active points"
         if not offenders:

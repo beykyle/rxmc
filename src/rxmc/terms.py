@@ -163,7 +163,8 @@ class Term:
     coords : Transform or callable, optional
         Coordinate transform applied to ``x`` before ``fn`` sees it (e.g. angle
         to momentum transfer).  Its parameters, if any, are appended to
-        :attr:`params`.
+        :attr:`params`.  A transform needs numeric ``x``; without one, ``fn``
+        sees ``x`` exactly as the dataset holds it (any dtype).
     constant : bool, optional
         Declare that a *callable* ``fn`` reads neither ``c.ym`` nor any
         parameter, so the contribution can be evaluated once at compile.
@@ -178,17 +179,25 @@ class Term:
     on: Any = None
     coords: Any = identity
     constant: bool = False
+    _appended: Any = None  # the coords parameters appended to params last time
 
     def __post_init__(self):
         if self.kind not in KINDS:
             raise ValueError(f"kind must be one of {KINDS}, got {self.kind!r}")
         coords = as_transform(self.coords)
         fn_params = tuple(self.params)
+        # dataclasses.replace re-runs this with the previous coords' parameters
+        # already appended to params: take them off before appending the current
+        k = len(self._appended or ())
+        if k and len(fn_params) >= k:
+            if all(a is b for a, b in zip(fn_params[-k:], self._appended)):
+                fn_params = fn_params[:-k]
         for p in fn_params + coords.params:
             if not isinstance(p, Parameter):
                 raise TypeError(f"params must be Parameter objects, got {p!r}")
         object.__setattr__(self, "coords", coords)
         object.__setattr__(self, "params", fn_params + coords.params)
+        object.__setattr__(self, "_appended", coords.params)
         object.__setattr__(self, "_n_fn_params", len(fn_params))
         if callable(self.fn):
             if self.constant and self.params:
@@ -236,7 +245,7 @@ class Term:
         :attr:`TermContext.segments`); omitted, the support is one segment.
         """
         self._check_count(values)
-        x = np.asarray(x, dtype=float)
+        x = np.asarray(x)  # opaque: only a coordinate transform needs it numeric
         if not self.coords.is_identity:
             x = self.coords(x, *values[self._n_fn_params :])
         return TermContext(
@@ -297,7 +306,8 @@ class KernelTerm(Term):
     amplitude : callable or array or None
         The amplitude as passed to :func:`kernel`.
     jitter : float
-        The diagonal nugget added to every kernel block.
+        The diagonal nugget of every kernel block, relative to the block's mean
+        variance.
     """
 
     kernel: Any = None
@@ -592,7 +602,9 @@ def kernel(
     amplitude_params : sequence of Parameter, optional
         Parameters consumed by ``amplitude``.
     jitter : float, optional
-        Added to the diagonal after scaling, for numerical stability.
+        ``jitter * mean(diag K)`` is added to the diagonal after scaling, for
+        numerical stability; relative, so it never dominates a small variance
+        (a cross section in b/sr).
     prefix : str, optional
         Name prefix of the derived kernel parameters.  Two kernel terms with
         derived names and the same prefix fail to compile on the duplicate
@@ -630,7 +642,9 @@ def kernel(
             K = np.outer(a, a) * K
         else:
             K = np.array(K, dtype=float)
-        K[np.diag_indices_from(K)] += jitter
+        K[np.diag_indices_from(K)] += jitter * max(
+            float(np.mean(np.diag(K))), np.finfo(float).tiny
+        )
         return K
 
     return KernelTerm(
@@ -639,7 +653,7 @@ def kernel(
         kind="matrix",
         on=on,
         coords=coords,
-        constant=nk == 0 and not amplitude_params and not callable(amplitude),
+        constant=fixed_K and not amplitude_params and not callable(amplitude),
         kernel=kernel,
         n_kernel=nk,
         amplitude=amplitude,

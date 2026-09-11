@@ -93,6 +93,10 @@ class TestElasticXS:
         with pytest.raises(ValueError, match="meta\\['Elab'\\]"):
             omp().bind(ANGLES, {"reaction": N_CA})
 
+    def test_ratio_to_rutherford_needs_a_charged_projectile(self):
+        with pytest.raises(ValueError, match="neutral projectile"):
+            omp("dXS/dRuth").bind(ANGLES, meta(N_CA))
+
     def test_composes_like_any_model(self):
         rho = Parameter("log_rho", prior=stats.norm(0, 0.1))
         scaled = omp() | scale(rho)

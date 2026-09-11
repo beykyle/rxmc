@@ -57,3 +57,5 @@ def test_check_angle_grid():
         check_angle_grid(np.array([0.0, 4.0]), "angles")
     with pytest.raises(ValueError, match="radians"):
         check_angle_grid(np.array([-0.1, 1.0]), "angles")
+    with pytest.raises(ValueError, match="finite"):
+        check_angle_grid(np.array([0.3, np.nan, 1.0]), "angles")

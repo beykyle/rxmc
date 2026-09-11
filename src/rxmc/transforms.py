@@ -113,7 +113,8 @@ class Transform:
         a = np.asarray(a, dtype=float)
         if self.derivative_fn is not None:
             return np.asarray(self.derivative_fn(a, *values), dtype=float)
-        h = 1e-6 * np.maximum(np.abs(a), 1.0)
+        # a step relative to a, so data far below 1 (b/sr) keep their precision
+        h = 1e-6 * np.where(a == 0.0, 1.0, np.abs(a))
         return (self(a + h, *values) - self(a - h, *values)) / (2 * h)
 
     def __or__(self, other) -> "Transform":

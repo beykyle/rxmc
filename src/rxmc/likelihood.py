@@ -19,7 +19,7 @@ from math import inf
 
 import numpy as np
 from scipy import stats
-from scipy.special import gammaln
+from scipy.special import betaln, gammaln
 
 from .params import Parameter
 
@@ -96,9 +96,10 @@ class StudentT(Likelihood):
         return np.sqrt(nu / rng.chisquare(nu, size))
 
     def log_likelihood(self, d2, logdet, n, nu) -> float:
+        # lnG((n+nu)/2) - lnG(nu/2), without the cancellation at large nu
         return (
-            gammaln((n + nu) / 2.0)
-            - gammaln(nu / 2.0)
+            gammaln(n / 2.0)
+            - betaln(nu / 2.0, n / 2.0)
             - 0.5 * n * np.log(np.pi * nu)
             - 0.5 * logdet
             - 0.5 * (nu + n) * np.log1p(d2 / nu)

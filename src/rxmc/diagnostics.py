@@ -75,13 +75,14 @@ def _rows(samples, ndim) -> np.ndarray:
 
 
 def _psd_factor(Sigma, jitter=1e-10) -> np.ndarray:
-    """A factor ``L`` with ``L L^T = Sigma``.
+    """A lower-triangular factor ``L`` with ``L L^T = Sigma``.
 
-    The lower Cholesky factor when ``Sigma`` is positive definite; otherwise
-    the Cholesky factor of ``Sigma`` plus a jitter *relative* to its mean
-    variance, and failing that a symmetric square root from the eigen
-    decomposition (negative eigenvalues clipped to zero).  No jitter is added
-    on the successful path, so draws are never inflated.
+    The Cholesky factor when ``Sigma`` is positive definite; otherwise the
+    Cholesky factor of ``Sigma`` plus a jitter *relative* to its mean
+    variance, and failing that the triangular factor of the eigen
+    decomposition's square root (negative eigenvalues clipped to zero), so a
+    caller may always treat ``L`` as a Cholesky factor.  No jitter is added on
+    the successful path, so draws are never inflated.
     """
     Sigma = np.asarray(Sigma, dtype=float)
     try:
@@ -93,7 +94,10 @@ def _psd_factor(Sigma, jitter=1e-10) -> np.ndarray:
         return np.linalg.cholesky(Sigma + jitter * scale * np.eye(len(Sigma)))
     except np.linalg.LinAlgError:
         w, V = np.linalg.eigh(Sigma)
-        return V * np.sqrt(np.clip(w, 0.0, None))
+        # A = V sqrt(w) has A A^T = Sigma but is not triangular; with A^T = Q R,
+        # L = R^T is, and L L^T = A A^T
+        L = np.linalg.qr((V * np.sqrt(np.clip(w, 0.0, None))).T, mode="r").T
+        return L * np.where(np.diag(L) < 0, -1.0, 1.0)  # column signs: diag >= 0
 
 
 def _masks(constraint) -> list[np.ndarray]:
@@ -380,6 +384,8 @@ def logz_summary(logz, logzerr) -> tuple[float, float, int]:
     """
     logz = np.atleast_1d(np.asarray(logz, dtype=float))
     logzerr = np.atleast_1d(np.asarray(logzerr, dtype=float))
+    if not (np.all(np.isfinite(logz)) and np.all(np.isfinite(logzerr))):
+        raise ValueError(f"log Z and its errors must be finite, got {logz}, {logzerr}")
     half_range = 0.5 * (logz.max() - logz.min()) if logz.size > 1 else 0.0
     return float(logz.mean()), float(max(half_range, logzerr.mean())), int(logz.size)
 
@@ -393,7 +399,8 @@ def compare_logz(a, b, sigma: float = 2.0) -> dict:
         As returned by :func:`logz_summary`; a trailing replicate count is
         accepted and ignored.
     sigma : float, optional
-        A difference smaller than ``sigma * hypot(err_a, err_b)`` is a ``"tie"``.
+        A difference no larger than ``sigma * hypot(err_a, err_b)`` is a
+        ``"tie"``.
 
     Returns
     -------
@@ -402,9 +409,11 @@ def compare_logz(a, b, sigma: float = 2.0) -> dict:
     """
     ma, ea = a[0], a[1]
     mb, eb = b[0], b[1]
+    if not np.all(np.isfinite([ma, ea, mb, eb])):
+        raise ValueError(f"evidence summaries must be finite, got {a} and {b}")
     d = float(ma - mb)
     err = float(np.hypot(ea, eb))
-    if abs(d) < sigma * err:
+    if abs(d) <= sigma * err:
         verdict = "tie"
     else:
         verdict = "a" if d > 0 else "b"

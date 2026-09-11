@@ -11,6 +11,7 @@ from helpers import manual_mvn_loglike
 from rxmc import Comparison, Constraint, Dataset, Model, Parameter, Problem, Term
 from rxmc.covariance import StructuredCovariance
 from rxmc.diagnostics import (
+    _psd_factor,
     compare_logz,
     coverage_curve,
     coverage_error,
@@ -73,6 +74,14 @@ class TestPredictiveDraws:
         # one mixing scale per draw: the points' |residuals| move together
         r = np.abs(draws - Y)
         assert np.corrcoef(r[:, 0], r[:, 1])[0, 1] > 0.05
+
+    def test_fallback_factor_is_triangular(self):
+        S = np.array([[1.0, 1.0001], [1.0001, 1.0]])  # indefinite: both Choleskys fail
+        L = _psd_factor(S)
+        w, V = np.linalg.eigh(S)
+        assert np.all(np.isfinite(L)) and np.allclose(L, np.tril(L))
+        assert np.all(np.diag(L) >= 0)
+        np.testing.assert_allclose(L @ L.T, (V * np.clip(w, 0, None)) @ V.T, atol=1e-12)
 
     def test_tiny_variances_not_inflated(self):
         d = Dataset(X, Y, np.full(5, 1e-9), label="tiny")
@@ -235,6 +244,14 @@ class TestLogZ:
         assert logz_summary([-10.0], [0.3]) == (-10.0, 0.3, 1)
         assert logz_summary([-10.0, -12.0], [0.3, 0.3]) == (-11.0, 1.0, 2)
         assert logz_summary([-10.0, -10.2], [0.5, 0.5])[1] == pytest.approx(0.5)
+
+    def test_compare_ties_at_the_boundary_and_rejects_nan(self):
+        assert compare_logz((1.0, 0.0), (1.0, 0.0))["verdict"] == "tie"
+        assert compare_logz((1.0, 0.5), (0.0, 0.0), sigma=2.0)["verdict"] == "tie"
+        with pytest.raises(ValueError, match="finite"):
+            compare_logz((np.nan, 0.1), (0.0, 0.1))
+        with pytest.raises(ValueError, match="finite"):
+            logz_summary([1.0, 2.0], [0.1, np.nan])
 
     def test_compare(self):
         r = compare_logz((-10.0, 0.5), (-15.0, 0.5))

@@ -55,6 +55,15 @@ def test_student_t_default_and_explicit_parameter():
     assert StudentT().params[0] is not default.params[0]
 
 
+def test_student_t_tends_to_the_gaussian_at_huge_nu(stats):
+    _, _, _, d2, logdet = stats
+    gauss = Gaussian().log_likelihood(d2, logdet, 3)
+    for nu in (1e15, 1e16):
+        assert StudentT().log_likelihood(d2, logdet, 3, nu) == pytest.approx(
+            gauss, abs=1e-6
+        )
+
+
 def test_chi2_drops_logdet(stats):
     _, _, _, d2, logdet = stats
     assert Chi2().log_likelihood(d2, logdet, 3) == pytest.approx(-0.5 * d2)

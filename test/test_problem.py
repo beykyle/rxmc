@@ -1,5 +1,8 @@
 """The compile step: index, priors, compiled constraints, the flat interface."""
 
+import warnings
+from dataclasses import replace
+
 import dill
 import dynesty
 import emcee
@@ -11,7 +14,15 @@ from helpers import manual_mvn_loglike
 from rxmc import Comparison, Constraint, Dataset, Model, Parameter, Problem
 from rxmc.likelihood import StudentT
 from rxmc.problem import ParameterIndex, clip_unit_cube
-from rxmc.terms import Term, kernel, noise, normalization, offset, statistical
+from rxmc.terms import (
+    Term,
+    constant_amplitude,
+    kernel,
+    noise,
+    normalization,
+    offset,
+    statistical,
+)
 from rxmc.transforms import log, scale
 
 X = np.linspace(0.0, 2.0, 6)
@@ -174,11 +185,35 @@ class TestPriors:
             [Constraint([Comparison(dataset(), model)])], priors=[([m, b], mvn)]
         )
         assert p.log_prior([-1.0, 0.0]) == -np.inf
-        assert p.log_prior([1.0, 0.0]) == pytest.approx(mvn.logpdf([1.0, 0.0]))
+        # renormalised by the mass inside 0 <= m <= 10
+        mass = stats.norm.cdf(10.0) - 0.5
+        assert p.log_prior([1.0, 0.0]) == pytest.approx(
+            mvn.logpdf([1.0, 0.0]) - np.log(mass)
+        )
         with pytest.raises(NotImplementedError, match="truncated"):
             p.prior_transform([0.5, 0.5])
         s = p.sample_prior(50, rng=0)  # rejection sampling inside the bounds
         assert np.all(s[:, 0] >= 0.0)
+
+    def test_bounded_mvn_prior_is_renormalised_deterministically(self):
+        m, b = Parameter("m", bounds=(0.0, np.inf)), Parameter("b")
+        model = Model(lambda x, m, b: m * x + b, [m, b])
+        mvn = stats.multivariate_normal(np.zeros(2), np.eye(2))
+        p = Problem([Constraint([Comparison(dataset(), model)])], [([m, b], mvn)])
+        # half the mass lies in m >= 0, so the density there doubles
+        assert p.log_prior([1.0, 0.5]) == pytest.approx(
+            mvn.logpdf([1.0, 0.5]) + np.log(2.0)
+        )
+        # the box probability is quasi-Monte Carlo in 3-D: two compiles agree
+        t = Parameter("t", bounds=(-1.0, 1.0))
+        model3 = Model(lambda x, m, b, t: m * x + b + t, [m, b, t])
+        mvn3 = stats.multivariate_normal(np.zeros(3), np.eye(3) + 0.3)
+        c3 = Constraint([Comparison(dataset(), model3)])
+        lp = [
+            Problem([c3], [([m, b, t], mvn3)]).log_prior([1.0, 0.0, 0.2])
+            for _ in range(2)
+        ]
+        assert lp[0] == lp[1]
 
     def test_custom_joint_with_prior_transform(self):
         class Hier:
@@ -247,6 +282,16 @@ class TestPriors:
         s = p.sample_prior(30, rng=0)
         assert s.shape == (30, 2) and np.all((s >= 0) & (s <= 1))
         assert p.starting_location(4).shape == (4, 2)
+
+    def test_marginal_truncated_far_in_the_upper_tail(self):
+        t = Parameter("t", prior=stats.norm(), bounds=(8.3, np.inf))
+        model = Model(lambda x, t: t * x, [t])
+        p = Problem([Constraint([Comparison(dataset(), model)])])
+        tn = stats.truncnorm(8.3, np.inf)
+        assert p.log_prior([9.0]) == pytest.approx(tn.logpdf(9.0))
+        draws = np.array([p.prior_transform([u])[0] for u in np.linspace(0, 1, 101)])
+        assert np.all(draws >= 8.3) and np.all(np.diff(draws) > 0)
+        np.testing.assert_allclose(p.prior_transform([0.5]), tn.median())
 
     def test_clip_unit_cube(self):
         u = clip_unit_cube([0.0, 0.5, 1.0])
@@ -390,6 +435,54 @@ class TestCompile:
         assert Problem([tempered]).log_jacobian() == pytest.approx(0.5 * lj)
         assert Problem([tempered, spare]).log_jacobian() == pytest.approx(0.5 * lj)
 
+    def test_constant_singular_block_fails_at_compile_beside_a_parametric_one(self):
+        model, eps = line_model(), Parameter("log_eps", prior=stats.norm())
+        cg = Comparison(dataset(0, 3, "noisy"), model)
+        exact = Dataset(
+            X[:3], [1.0, 2.0, 3.0], np.zeros(3), norm_err=0.05, label="E1234-002"
+        )
+        cz = Comparison(exact, model)
+        terms = [noise(eps, on=cg)] + cz.reported_terms()
+        with pytest.raises(ValueError, match="E1234-002") as err:
+            Problem([Constraint([cg, cz], terms=terms)])
+        assert "noisy" not in str(err.value)
+
+    def test_kernel_jitter_scales_with_the_data(self):
+        # scaling the data, and the amplitude with it, by s shifts ll by exactly
+        # -n log s: the nugget must be relative, not an absolute 1e-10
+        from sklearn.gaussian_process.kernels import RBF
+
+        s, d = 1e-4, dataset()
+        lls = []
+        for k in (1.0, s):
+            m, b = Parameter("m", prior=stats.norm()), Parameter(
+                "b", prior=stats.norm()
+            )
+            lA = Parameter("log_A", prior=stats.norm())
+            model = Model(lambda x, m, b, k=k: k * (m * x + b), [m, b])
+            data = Dataset(d.x, k * d.y, k * d.y_err)
+            gp = kernel(
+                RBF(0.5, "fixed"), amplitude=constant_amplitude, amplitude_params=(lA,)
+            )
+            p = Problem([Constraint([Comparison(data, model)], terms=[gp])])
+            lls.append(p.log_likelihood([*TRUE, np.log(0.3 * k)]))
+        assert lls[1] - lls[0] == pytest.approx(-d.n * np.log(s), rel=1e-9)
+
+    def test_metadata_tuples_and_0d_arrays_stack(self):
+        seen = {}
+
+        def fn(c):
+            seen["E"], seen["t"] = c.meta("Elab"), c.meta("target")
+            return 0.01 * np.sqrt(c.meta("Elab"))
+
+        meta = {"target": (48, 20), "Elab": np.array(14.0)}
+        d = Dataset(X, dataset().y, 0.1 * np.ones(6), meta=meta)
+        term = Term(fn, kind="diag", constant=True)
+        p = Problem([Constraint([Comparison(d, line_model())], terms=[term])])
+        assert np.isfinite(p.log_likelihood(TRUE))
+        assert seen["E"].dtype == float and np.allclose(seen["E"], 14.0)
+        assert all(t == (48, 20) for t in seen["t"])
+
     def test_predict_and_matrix(self):
         d = dataset()
         p = Problem(
@@ -428,6 +521,18 @@ class TestViews:
         assert pf.log_likelihood(theta) + ph.log_likelihood(theta) == pytest.approx(
             pa.log_likelihood(theta)
         )
+
+    def test_rows_active_in_two_weighted_constraints_warn(self):
+        c = Constraint([Comparison(dataset(), line_model())])
+        with pytest.warns(
+            UserWarning, match="'d' has rows active in constraints 0 and 1"
+        ):
+            Problem([c, c])
+        fit = c.masked_where(lambda x: x < 1.0)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            Problem([fit, fit.complement()])  # disjoint rows
+            Problem([c, replace(c, weight=0.0)])  # a weight-0 monitor
 
     def test_parameter_on_fully_masked_comparison_keeps_its_slot(self):
         model = line_model()

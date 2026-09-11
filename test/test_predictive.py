@@ -192,6 +192,33 @@ class TestTotalPredictiveBand:
         )
         np.testing.assert_allclose(b1, b2, atol=1e-8)
 
+    def test_one_bare_callable_is_one_space(self):
+        # space=np.log wraps into a new Transform on each comparison
+        model = line()
+        ds = [Dataset(X, Y + 1.0 + k, np.full(10, 0.05), label=f"d{k}") for k in (0, 1)]
+        comps = [Comparison(d, model, space=np.log) for d in ds]
+        gp = kernel(RBF(0.3, "fixed"), on=comps)
+        p = Problem([Constraint(comps, terms=[gp])])
+        chain = np.tile([0.5, 1.2], (4, 1))
+        band = total_predictive_band(p, gp, model.bind(X_PRED, {}), X_PRED, chain)
+        assert band.shape == (2, 30) and np.all(np.isfinite(band))
+
+    def test_fully_masked_kernel_support_says_so(self):
+        model = line()
+        c1, c2 = (
+            Comparison(Dataset(X, Y, np.full(10, 0.05), label=lab), model)
+            for lab in "ab"
+        )
+        gp = kernel(RBF(0.3, "fixed"), on=c2)
+        c = Constraint([c1, c2], terms=[gp]).masked(
+            [np.ones(10, bool), np.zeros(10, bool)]
+        )
+        chain = np.tile([0.5, 0.2], (4, 1))
+        with pytest.raises(ValueError, match="fully masked"):
+            total_predictive_band(
+                Problem([c]), gp, model.bind(X_PRED, {}), X_PRED, chain
+            )
+
     def test_explicit_noise_and_errors(self):
         p, gp, model, comp = problem("noise")
         chain = self.chain(p, n=6)

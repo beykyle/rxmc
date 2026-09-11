@@ -28,12 +28,15 @@ def _error_spec(value, n, name):
     if value is None:
         return None
     if np.ndim(value) == 0:
-        return float(value)
-    v = np.asarray(value, dtype=float)
-    if v.shape != (n,):
-        raise ValueError(
-            f"{name} must be a scalar or have shape ({n},), got shape {v.shape}"
-        )
+        v = float(value)
+    else:
+        v = np.asarray(value, dtype=float)
+        if v.shape != (n,):
+            raise ValueError(
+                f"{name} must be a scalar or have shape ({n},), got shape {v.shape}"
+            )
+    if not (np.all(np.isfinite(v)) and np.all(np.asarray(v) >= 0)):
+        raise ValueError(f"{name} must be finite and non-negative, got {value}")
     return v
 
 
@@ -121,7 +124,9 @@ def from_measurement(
 ) -> Dataset:
     """A :class:`Dataset` from an ``exfor_tools`` measurement, in internal units.
 
-    Reads ``x`` (degrees), ``y``, ``Einc``, ``quantity``, ``y_units``,
+    Reads ``x`` (degrees, in the CM frame: an ``x_units`` of ``"LAB-degrees"``
+    is refused, and a measurement without ``x_units`` is taken as CM), ``y``,
+    ``Einc``, ``quantity``, ``y_units``,
     ``statistical_err``, ``systematic_norm_err``, ``systematic_offset_err`` and
     ``subentry`` from ``measurement`` (any object with those attributes).  Angles
     are stored in radians, cross sections in b/sr, ratios and analysing powers
@@ -159,8 +164,15 @@ def from_measurement(
             f"measurement quantity {measured!r} needs {_QUANTITY_KIND[measured]} units, "
             f"got {measurement.y_units!r}"
         )
-    x = np.deg2rad(np.asarray(measurement.x, dtype=float))
     label = getattr(measurement, "subentry", None) or ""
+    frame = getattr(measurement, "x_units", "CM-degrees")
+    if str(frame).upper().startswith("LAB"):
+        raise ValueError(
+            f"measurement {label or 'measurement'!r} has angles in the LAB frame "
+            f"({frame!r}); rxmc compares in the CM frame: convert the angles and "
+            "the cross sections to CM first"
+        )
+    x = np.deg2rad(np.asarray(measurement.x, dtype=float))
     check_angle_grid(x, f"x of {label or 'measurement'}")
     Elab = float(measurement.Einc)
 

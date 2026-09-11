@@ -45,6 +45,11 @@ class TestComparison:
         assert c.log_jacobian() == pytest.approx(4 * np.log(2.0))
         np.testing.assert_allclose(c.y_err, 2.0 * dataset().y_err)
 
+    def test_finite_difference_step_is_relative_to_tiny_data(self):
+        y = np.array([1e-6, 9e-7, 2e-6])  # b/sr-sized, below the old absolute step
+        c = Comparison(Dataset(np.arange(3.0), y, 0.1 * y), line, space=np.log10)
+        np.testing.assert_allclose(c.y_err, 0.1 / np.log(10), rtol=1e-6)
+
     def test_non_positive_data_under_log_does_not_raise(self):
         d = Dataset([0.0, 1.0], [-1.0, 2.0], [0.1, 0.1])
         c = Comparison(d, line, space=log)

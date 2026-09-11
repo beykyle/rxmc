@@ -228,6 +228,11 @@ class ElasticXS(Model):
 
     def bind(self, x, meta=None) -> Predictor:
         ws = self.workspace(x, meta)
+        if self.quantity == "dXS/dRuth" and ws.rutherford is None:
+            raise ValueError(
+                "dXS/dRuth needs the Rutherford cross section, which a neutral "
+                "projectile does not have: compare dXS/dA instead"
+            )
         extract = _EXTRACT[self.quantity]
         central, spin_orbit, coulomb = self.central, self.spin_orbit, self.coulomb
         args_from_params = self.args_from_params

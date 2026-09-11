@@ -347,6 +347,8 @@ Expected behaviour:
   is everything a reaction model needs to bind.
 - Incompatible units, or a quantity the measurement cannot be converted
   to, raise at conversion time.
+- Angles must be in the CM frame: a measurement whose `x_units` is
+  `LAB-degrees` raises; convert it to CM first.
 
 ## 15. Evaluate a reaction model on any grid
 

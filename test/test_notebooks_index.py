@@ -50,9 +50,7 @@ def _cited(name) -> set:
 
 @pytest.mark.parametrize("name", sorted(NOTEBOOKS))
 def test_each_notebook_exists_and_cites_its_recipes(name):
-    present = _present()
-    if name not in present:
-        pytest.xfail(f"examples/{name}.ipynb is not written yet")
+    assert name in _present(), f"examples/{name}.ipynb is in NOTEBOOKS but missing"
     cited = _cited(name)
     assert cited, f"{name} cites no recipe"
     missing = cited - _headings()

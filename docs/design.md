@@ -366,7 +366,9 @@ exactly one joint block `(params, joint)`, where `joint` has
 `logpdf(values)` over those parameters in that order and optionally
 `prior_transform(u)` and `rvs(size=n, random_state=rng)` (scipy's
 spelling); `scipy.stats.multivariate_normal` qualifies and is whitened for
-the unit-cube map.  A joint that declares its dimension (`dim`) must match
+the unit-cube map, and renormalised by its mass inside any bounds (a custom
+joint's `logpdf` must already be normalised on its truncated support).  A
+joint that declares its dimension (`dim`) must match
 its parameters, and a one-parameter block holding a scipy univariate
 distribution is that parameter's marginal.  A hyperprior is a joint
 block that includes its hyperparameter, whose `logpdf` is

@@ -23,8 +23,10 @@ Prior rules, per slot (see :class:`~rxmc.params.Parameter`):
   multivariate distributions do) must match its parameters.  A frozen
   ``scipy.stats.multivariate_normal`` gets a whitening unit-cube map for
   free, and a one-parameter block holding a scipy univariate distribution is
-  that parameter's marginal.  A hyperprior is a joint block that includes its
-  hyperparameter.
+  that parameter's marginal.  Finite bounds truncate a joint: a frozen MVN is
+  renormalised by its mass inside them, while a custom joint's ``logpdf`` must
+  already be normalised on its truncated support.  A hyperprior is a joint
+  block that includes its hyperparameter.
 
 Nothing user-facing is mutated by compiling.  Compile the same declarations
 twice and you get two independent problems.
@@ -32,6 +34,7 @@ twice and you get two independent problems.
 
 from __future__ import annotations
 
+import warnings
 from typing import Any, Iterable, Sequence
 
 import numpy as np
@@ -153,6 +156,7 @@ class _Marginal:
         self.lo, self.hi = lo, hi
         self.dist = p.prior if dist is None else dist
         self.bounded = np.isfinite(lo) and np.isfinite(hi)
+        self.upper = False
         if self.dist is None:
             if not self.bounded:
                 raise ValueError(
@@ -162,9 +166,13 @@ class _Marginal:
             self.c_lo, self.c_hi = 0.0, 1.0
             self.log_norm = np.log(hi - lo)
         else:
-            self.c_lo = float(self.dist.cdf(lo)) if np.isfinite(lo) else 0.0
-            self.c_hi = float(self.dist.cdf(hi)) if np.isfinite(hi) else 1.0
-            mass = self.c_hi - self.c_lo
+            # far in the upper tail cdf(lo) rounds to 1: work in the survival
+            # function there, so the mass and the unit-cube map keep their precision
+            self.upper = bool(np.isfinite(lo) and self.dist.cdf(lo) > 0.5)
+            cdf, at_inf = (self.dist.sf, 0.0) if self.upper else (self.dist.cdf, 1.0)
+            self.c_lo = float(cdf(lo)) if np.isfinite(lo) else 0.0
+            self.c_hi = float(cdf(hi)) if np.isfinite(hi) else at_inf
+            mass = abs(self.c_hi - self.c_lo)
             if not mass > 0:
                 raise ValueError(
                     f"the prior of {p.name!r} has no mass inside its bounds"
@@ -181,7 +189,11 @@ class _Marginal:
     def transform(self, u):
         if self.dist is None:
             return self.lo + u * (self.hi - self.lo)
-        return self.dist.ppf(self.c_lo + u * (self.c_hi - self.c_lo))
+        inverse = self.dist.isf if self.upper else self.dist.ppf
+        # clipped: the inverse can round a hair outside the bounds at u ~ 0 or 1
+        return np.clip(
+            inverse(self.c_lo + u * (self.c_hi - self.c_lo)), self.lo, self.hi
+        )
 
 
 class _Joint:
@@ -205,6 +217,17 @@ class _Joint:
             self._mean = np.atleast_1d(joint.mean)
         else:
             self._L = None
+        # a truncated MVN is renormalised by its mass inside the bounds; the box
+        # probability is quasi-Monte Carlo from 3 dimensions, so it is seeded
+        self.log_mass = 0.0
+        if self.bounded and _is_frozen_mvn(joint):
+            box = stats.multivariate_normal(joint.mean, joint.cov, seed=0)
+            mass = float(box.cdf(self.bounds[:, 1], lower_limit=self.bounds[:, 0]))
+            if not mass > 0:
+                raise ValueError(
+                    f"the joint prior over {self.names} has no mass inside its bounds"
+                )
+            self.log_mass = float(np.log(mass))
 
     @property
     def has_transform(self) -> bool:
@@ -218,7 +241,7 @@ class _Joint:
         ):
             return -np.inf
         # item(): a length-1 array is fine, a longer one (a mis-sized joint) is not
-        return float(np.asarray(self.joint.logpdf(values)).item())
+        return float(np.asarray(self.joint.logpdf(values)).item()) - self.log_mass
 
     def transform(self, u):
         if self.bounded:
@@ -337,12 +360,23 @@ class _Prior:
 
 
 def _per_point(v, n) -> np.ndarray:
-    """A metadata value as one entry per point: a length-``n`` array as is,
-    anything else repeated ``n`` times."""
-    arr = np.asarray(v) if v is not None else None
+    """A metadata value as one entry per point: a length-``n`` sequence as is,
+    anything else (a scalar, a 0-d array, a provenance tuple, an object)
+    repeated ``n`` times."""
+    if isinstance(v, (np.ndarray, np.generic)) and v.ndim == 0:
+        v = v.item()
+    if np.isscalar(v):
+        return np.full(n, v)
+    try:
+        arr = np.asarray(v)
+    except ValueError:  # ragged: not per-point
+        arr = None
     if arr is not None and arr.ndim >= 1 and arr.shape[0] == n:
         return arr
-    return np.full(n, v) if np.isscalar(v) else np.full(n, v, dtype=object)
+    out = np.empty(n, dtype=object)
+    for i in range(n):  # element by element: numpy would broadcast a sequence
+        out[i] = v
+    return out
 
 
 def _stack_meta(constraint: Constraint) -> dict | None:
@@ -464,6 +498,30 @@ class CompiledConstraint:
         return f"CompiledConstraint({self.labels}, n_active={self.n_active})"
 
 
+def _warn_on_shared_rows(constraints) -> None:
+    """Warn when one dataset's rows are active in two weighted constraints.
+
+    Its likelihood would count those rows twice.  Disjoint masks (a fit and its
+    complement) and weight-0 monitor constraints are fine.
+    """
+    seen: dict[int, list] = {}
+    for k, c in enumerate(constraints):
+        if c.weight == 0.0:
+            continue
+        for comp, o in zip(c.comparisons, c.offsets):
+            rows = c.active[(c.active >= o.start) & (c.active < o.stop)] - o.start
+            for j, prev in seen.get(id(comp.data), []):
+                if np.intersect1d(rows, prev).size:
+                    warnings.warn(
+                        f"dataset {comp.data.label or 'dataset'!r} has rows active in "
+                        f"constraints {j} and {k}: the likelihood counts them twice "
+                        "(mask them apart, or give one constraint weight 0)",
+                        UserWarning,
+                        stacklevel=3,
+                    )
+            seen.setdefault(id(comp.data), []).append((k, rows))
+
+
 # ----------------------------------------------------------------------------
 # The problem
 # ----------------------------------------------------------------------------
@@ -488,6 +546,7 @@ class Problem:
                 raise TypeError(f"constraints must be Constraint objects, got {c!r}")
         self.index = ParameterIndex()
         self.constraints = tuple(CompiledConstraint(c, self.index) for c in constraints)
+        _warn_on_shared_rows(self.constraints)
         self.priors = tuple(priors)
         # a hyperprior block may introduce a parameter no model or term uses (its
         # hyperparameter); it gets a slot after every constraint's parameters
