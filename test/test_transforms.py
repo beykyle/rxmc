@@ -26,6 +26,7 @@ class TestTransform:
         np.testing.assert_allclose(log.derivative(np.array([2.0, 4.0])), [0.5, 0.25])
         assert log.inverse is exp
         assert exp.inverse is log
+        assert identity.inverse is identity
         np.testing.assert_allclose(exp(log(np.array([3.0, 7.0]))), [3.0, 7.0])
 
     def test_finite_difference_derivative_fallback(self):

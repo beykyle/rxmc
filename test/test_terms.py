@@ -7,6 +7,7 @@ from sklearn.gaussian_process.kernels import RBF, ConstantKernel, Matern, WhiteK
 from helpers import STUDY_LEGEND, assemble_dense, study_form
 from rxmc import Parameter
 from rxmc.terms import (
+    KernelTerm,
     Term,
     TermContext,
     averaging,
@@ -442,3 +443,19 @@ class TestSegments:
         c = TermContext(x=np.zeros(3), y=np.zeros(3))
         with pytest.raises(ValueError, match="length 3"):
             c.split(np.zeros(4))
+
+
+class TestKernelTerm:
+    """The kernel factory returns a Term that also carries its kernel."""
+
+    def test_fields(self):
+        k = RBF(1.0)
+        lA = Parameter("log_A")
+        t = kernel(k, amplitude=constant_amplitude, amplitude_params=(lA,))
+        assert isinstance(t, KernelTerm) and isinstance(t, Term)
+        assert t.kernel is k and t.n_kernel == 1 and t.amplitude is constant_amplitude
+        assert [p.name for p in t.params] == ["discrepancy_length_scale", "log_A"]
+        assert t.kind == "matrix" and t.jitter == 1e-10
+        # a fixed kernel has no kernel parameters and is constant
+        fixed = kernel(RBF(1.0, "fixed"))
+        assert fixed.n_kernel == 0 and fixed.is_constant and fixed.params == ()

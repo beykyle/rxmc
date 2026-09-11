@@ -22,6 +22,7 @@ from .model import Model as Model
 from .model import polynomial as polynomial
 from .params import Parameter as Parameter
 from .problem import Problem as Problem
+from .terms import KernelTerm as KernelTerm
 from .terms import Term as Term
 
 try:
@@ -34,6 +35,7 @@ __all__ = [
     "Comparison",
     "Constraint",
     "Dataset",
+    "KernelTerm",
     "Model",
     "Parameter",
     "Problem",

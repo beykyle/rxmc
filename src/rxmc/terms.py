@@ -49,6 +49,7 @@ __all__ = [
     "KINDS",
     "TermContext",
     "Term",
+    "KernelTerm",
     "as_2d",
     "ones",
     "ym",
@@ -275,6 +276,34 @@ class Term:
     def __repr__(self):
         names = ", ".join(p.name for p in self.params)
         return f"Term(kind={self.kind!r}, params=({names}), on={self.on!r})"
+
+
+@dataclass(eq=False, frozen=True)
+class KernelTerm(Term):
+    """A :func:`kernel` term that also carries what GP conditioning needs.
+
+    :func:`~rxmc.predictive.total_predictive_band` reads these to predict the
+    discrepancy at new points; the covariance machinery treats a
+    ``KernelTerm`` exactly as a ``matrix`` :class:`Term`.
+
+    Attributes
+    ----------
+    kernel : sklearn-style kernel
+        The kernel object as passed to :func:`kernel`.
+    n_kernel : int
+        Number of free kernel hyperparameter elements: ``params[:n_kernel]``
+        are the log-theta parameters, ``params[n_kernel:]`` the amplitude's,
+        then any coordinate-transform parameters.
+    amplitude : callable or array or None
+        The amplitude as passed to :func:`kernel`.
+    jitter : float
+        The diagonal nugget added to every kernel block.
+    """
+
+    kernel: Any = None
+    n_kernel: int = 0
+    amplitude: Any = None
+    jitter: float = 0.0
 
 
 # ----------------------------------------------------------------------------
@@ -592,11 +621,15 @@ def kernel(
         K[np.diag_indices_from(K)] += jitter
         return K
 
-    return Term(
+    return KernelTerm(
         fn,
         tuple(kparams) + amplitude_params,
         kind="matrix",
         on=on,
         coords=coords,
         constant=nk == 0 and not amplitude_params and not callable(amplitude),
+        kernel=kernel,
+        n_kernel=nk,
+        amplitude=amplitude,
+        jitter=jitter,
     )
