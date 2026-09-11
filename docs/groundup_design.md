@@ -722,7 +722,7 @@ rewrite: a capability is done when its row has a test.
 | global error scale and USU modes (new, reference) | `diag` term scaling `c.meta("y_err")` with `statistical=False`; `offset(parameter=, on=blocks_of_technique)`; recipe 34 | test_terms |
 | energy-dependent parameters (new, reference) | per-block `Model` instances closing over `meta`, shared coefficient objects; recipe 35 | test_model |
 | discrepancy on a physical basis, Legendre (new, reference) | `systematic` modes or `omp + Model(basis_sum)`; recipe 36 | test_terms |
-| correlated systematics between observables of one measurement (new, reference) | two blocks, one constraint, spanning mode; recipe 37 | test_covariance |
+| correlated normalisations between quantities of one experiment, Peelle's puzzle in more than one dimension (new, reference) | one comparison per quantity, one constraint, a spanning `matrix` term built from `c.split(c.ym)`; recipe 37 | test_covariance |
 | classic normal hierarchical model, BDA3 ch. 5 (new, reference) | marginalised as `noise(log_tau)`, non-centred as a `Model` over `[mu, log_tau, *etas]`, centred as a joint block; recipe 38 | test_problem (marginalised and non-centred agree on `mu, tau`; a parameter on a fully masked block is sampled from its prior) |
 | SafeBayes: learn the tempering exponent (new, reference) | driver loop over `replace(c, weight=η)` and `c.masked(prefix)`; next-point density as a log-likelihood difference; recipe 25 | test_problem (`replace` keeps names; `ll(prefix i+1) − ll(prefix i)` equals the Gaussian conditional) |
 | hyperprior: per-dataset parameters with a sampled spread (new) | joint block `(children + [hyper], obj)` with `logpdf` and `prior_transform` | test_problem (children uncovered without the block; `prior_transform` round trip) |
@@ -977,7 +977,8 @@ recipe test it unlocks pass.
    the harvest.  Then: a `pyproject` in the current shape with the `slow`
    marker registered and deselected by default; ruff, black and isort
    configuration carried over; the CI workflow (fast tier on pull
-   requests, `pytest -m slow` and nbmake on a schedule); a trusted-
+   requests, `pytest -m slow` and nbmake in the converged workflow that
+   gates `main`); a trusted-
    publishing workflow that uploads to PyPI on tag push.
 1. **`params`, `transforms`, `units`, `likelihood`, `terms`** (verbatim
    harvest plus the stateless `Term`).  Ported: `TestTermKinds`,
@@ -1069,8 +1070,10 @@ preference for assertions that need no sampler at all.
   (coverage within 0.05 of nominal, `τ` recovered within its interval,
   evidence differences), record the seed, R-hat and effective sample
   size so a failure is diagnosable, and run the notebooks through nbmake.
-  They are deselected by default; pull-request CI runs the fast tier and a
-  scheduled job runs `pytest -m slow`.
+  They are deselected by default; every push runs the fast tier, and a
+  separate "Converged tier" workflow runs `pytest -m slow` and the
+  notebooks on pushes and pull requests into `main` (and by hand with
+  `workflow_dispatch`).  There is no scheduled run.
 - **Rules.**  The fast tier has a budget of a few minutes and zero
   tolerated flakiness.  A flaky fast assertion is demoted to `slow`, never
   loosened until it passes.  Every recipe test file has at least one fast

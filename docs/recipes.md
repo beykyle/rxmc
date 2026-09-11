@@ -1086,36 +1086,80 @@ Expected behaviour:
 Reference: Higdon, Gattiker, Williams, Rightley, J. Am. Stat. Assoc. 103,
 570 (2008).
 
-## 37. Correlated systematics between observables of one measurement
+## 37. Correlated normalisations between quantities of one experiment
 
-*One experiment reports both a cross section and an analysing power, and
-they share a normalisation or an angle calibration.*
+*One experiment reports several physical quantities, each measured one or
+more times, all multiplied by normalisations that were themselves measured
+with correlated uncertainties.  I want the covariance across the quantities
+built so that it does not bias the evaluation.*
+
+This is the two-and-more-dimensional Peelle's Pertinent Puzzle of Neudecker,
+Frühwirth, Kawano and Leeb (reference below).  Quantity `i` is
+`rho_i = alpha_i * eta_i`; `alpha_i` is measured as `q_i` (once or several
+times, independent errors `sigma_i`) and `eta_i` as `N_i`, the `N_i` sharing
+a covariance `B` with correlation `c`.  The reported data are the products
+`r_i = q_i N_i`.
 
 ```python
-comp_xs = rx.Comparison(d_xs, rx.reactions.ElasticXS("dXS/dA", *pot, params=p))
-comp_ay = rx.Comparison(d_ay, rx.reactions.ElasticXS("Ay", *pot, params=p))
-log_eta = rx.Parameter("log_eta", prior=stats.norm(-3, 1))
-c = rx.Constraint([comp_xs, comp_ay], terms=[T.normalization(log_eta, on=comp_xs),        # the ratio is unaffected
-                                       T.systematic(log_dtheta, basis=dydtheta, on=[comp_xs, comp_ay])])
+# one comparison per quantity; the model is the quantity itself
+rhos = [rx.Parameter(f"rho_{i}", prior=stats.norm(r_i.mean(), 10.0)) for i in range(n)]
+comps = [rx.Comparison(rx.Dataset(np.full(len(r_i), i), r_i, N_i * sigma_i, label=f"q{i}"),
+                       rx.Model(lambda x, rho: np.full(len(x), rho), [rho_i]))
+         for i, (r_i, rho_i) in enumerate(zip(products, rhos))]
+frac = sigma_N / N                                  # fractional normalisation errors
+corr = np.array([[1, c], [c, 1]])                   # the correlation matrix of the N_i
+
+def normalisations(c):                              # C_I: built from the prediction
+    u = np.concatenate([f * ym for f, ym in zip(frac, c.split(c.ym))])
+    which = np.concatenate([np.full(s.stop - s.start, k) for k, s in enumerate(c.segments)])
+    return np.outer(u, u) * corr[np.ix_(which, which)]
+
+c_I = rx.Constraint(comps, terms=[rx.Term(normalisations, kind="matrix", on=comps)])
+c_F = rx.Constraint(comps, terms=[rx.Term(normalisations_from(y), kind="matrix", on=comps)])  # Peelle: from the data
 ```
 
 Expected behaviour:
 
-- Two datasets, two comparisons, one constraint; the shared systematic is a
-  mode spanning both comparisons (case A of recipe 5).
-- A normalisation error affects the cross section and not a ratio
-  observable; an angle-calibration error affects both through their
-  angular derivatives, which the basis supplies from `c.ym` and `c.x`.
-- A spanning term sees the *gathered* stack, so a basis that differentiates
-  along the grid must not straddle the seam between comparisons: it takes
-  the derivative within each of `c.segments` (`c.split(c.ym)` cuts a
-  support-length array per comparison; `c.labels` names them).
-- The multi-quantity extension of the Peelle treatment applies: build the
-  mode from predictions, not data.
+- One `Constraint`, one `matrix` term spanning every comparison.  A
+  spanning term sees the gathered stack, so the term reads its per-quantity
+  pieces through `c.segments` / `c.split` and pairs them with the
+  normalisation correlation matrix.
+- With the covariance built from the *data* (`C_F`, eq. 11 of the
+  reference) the posterior mean under a flat prior is the generalised
+  least-squares solution and is biased low: `<rho_1>_F = qbar_1 N_1 / (1 +
+  xi)` with `xi = (q_1 - q_1')^2 sigma_N1^2 var(alpha_1) / (N_1^2 sigma_1^2
+  sigma_1'^2)`, and `<rho_2>_F` is pulled down through `c` even though
+  `alpha_2` was measured once; the variances and the covariance are
+  deflated in their normalisation parts (eqs. 13-17).  The fast tier pins
+  these closed forms exactly.
+- With the covariance built from the *estimate* (`C_I`, eq. 12: the
+  weighted means, in rxmc a constant term built from a first estimate and
+  refit, recipe 27) the means are `qbar_i N_i` and the variances
+  `var(alpha_i) N_i^2 + sigma_Ni^2 qbar_i^2`, with covariance
+  `c qbar_1 qbar_2 sigma_N1 sigma_N2` (eqs. 18-22): no puzzle.
+- The *live* term reading `c.ym` is the generative model's marginal
+  likelihood, not `C_I`: its covariance grows with the prediction, so the
+  log-determinant pulls the mode below the exact values (5 % in the
+  two-quantity case, 9 % in the five-quantity one, against 22 % for
+  `C_F`), and under a flat prior the `1 / rho` tail pulls the mean above
+  them.  A proper prior on the quantities, or the refit, removes the pull.
+- The five-quantity numerical study of the reference (its Table I: `q_i`
+  = {1.0, 1.5}, {1.8}, {2.2, 2.4}, {1.9, 1.5}, {1.4, 1.2}; `N_i` = 1, 1.1,
+  1.25, 1.15, 1.05; `sigma_i = 0.1 q_i`, `sigma_Ni = 0.2 N_i`, `c = 0.8`)
+  reproduces its Fig. 1: `C_F` gives lower means and smaller standard
+  deviations on every lattice point, `C_I` agrees with the exact values
+  (both exact in the fast tier, being generalised least squares).  The
+  notebook `correlated_observations` recreates the figure.
+- Analysing powers are *not* an instance of this recipe: a ratio of cross
+  sections has a fixed normalisation, so nothing correlated can be inferred
+  for it.  The real-data case of the reference (`237Np(n,f)` measured
+  relative to `235U(n,f)` by three experiments, converted with the standard
+  and its covariance) has the same structure with the standard's covariance
+  as `B`.
 
 Reference: Neudecker, Frühwirth, Kawano, Leeb, *Adequate treatment of
-correlated experimental data in nuclear data evaluations*, Nucl. Data Sheets
-118, 364 (2014).
+correlated experimental data in nuclear data evaluations avoiding Peelle's
+Pertinent Puzzle*, Nucl. Data Sheets 118, 364 (2014).
 
 ## 38. The classic normal hierarchical model (eight schools)
 

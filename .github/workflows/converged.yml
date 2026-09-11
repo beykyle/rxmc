@@ -1,0 +1,42 @@
+name: Converged tier
+
+# The numeric claims that need a converged sampler, and the example notebooks.
+# Required for pushes and pull requests into main; run by hand on any branch
+# with workflow_dispatch.  There is deliberately no schedule.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  converged:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install validation dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -e '.[validation]' pytest-xdist
+      - name: Run the converged tier
+        run: python -m pytest -m slow --durations=10
+      - name: Run the notebooks
+        run: |
+          if [ -d examples ] && ls examples/*.ipynb >/dev/null 2>&1; then
+            python -m pytest -n 4 --nbmake --nbmake-timeout=2400 examples
+          else
+            echo "no notebooks yet"
+          fi

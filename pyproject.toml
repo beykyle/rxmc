@@ -97,10 +97,11 @@ known-first-party = ["rxmc", "helpers", "common", "oracle"]
 [tool.pytest.ini_options]
 # bare `pytest` runs the fast tier: unit tests plus the sampler-free and
 # short-chain assertions of every recipe test.  The converged tier is marked
-# `slow` and runs on a schedule with `pytest -m slow`; the notebooks with
-# `pytest --nbmake examples`.  See docs/groundup_design.md section 9.
+# `slow` and runs with `pytest -m slow`, together with the notebooks
+# (`pytest --nbmake examples`), in the "Converged tier" workflow required on
+# pushes and pull requests to main.  See docs/groundup_design.md section 9.
 testpaths = ["test"]
 addopts = "-m 'not slow'"
 markers = [
-  "slow: converged-chain tier; deselected by default, run nightly with -m slow",
+  "slow: converged-chain tier; deselected by default, run with -m slow on pushes and PRs to main",
 ]

@@ -18,3 +18,4 @@ a test.  The 0.x package is preserved at tag ``v0.1.0`` and on branch
    installation
    groundup_design
    recipes
+   examples

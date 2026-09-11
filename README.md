@@ -32,6 +32,7 @@ Python ≥ 3.12; `jitr >= 3.0` from PyPI.
 ```bash
 python -m isort --check-only src test && python -m black --check src test && python -m ruff check src test
 python -m pytest            # fast tier
-python -m pytest -m slow    # converged tier, run nightly in CI
+python -m pytest -m slow    # converged tier: required on pushes and PRs to main
+python -m pytest -n 4 --nbmake --nbmake-timeout=2400 examples   # the notebooks, same workflow
 sphinx-build -W docs docs/_build/html
 ```
