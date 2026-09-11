@@ -884,21 +884,29 @@ deselects it by default (`addopts = -m "not slow"`, §9).
 Nine notebooks, each naming the current one it inherits.  Every notebook
 is driven by emcee or dynesty.
 
-| notebook | inherits | driver | new content |
-|---|---|---|---|
-| `linear_calibration` | linear_calibration_demo | emcee | prior predictive, posterior, predictive band with `problem.columns` |
-| `error_models` | systematic_err_demo | emcee | the five-model ladder; two-constraint section with case B via shared `Parameter` |
-| `normalization_and_covariance_structure` | normalization_inference | emcee | ρᵢ as `omp \| scale(rho_i)`; the four-case gallery via `matrix(theta)` |
-| `correlated_observations` | correlated_observations | emcee | case A vs B, toy and n+⁴⁰Ca |
-| `gp_discrepancy` | gp_discrepancy | emcee | `kernel` term; `total_predictive_band(problem, term, ...)`; the same defect fit with a sampled `omp + delta` mean correction for contrast |
-| `robust_likelihoods` | robust_likelihoods | emcee | Student-t vs Gaussian; ν bounded on the `Parameter` |
-| `measurement_to_calibration` | measurement_to_calibration + 30s_optical_potential_calibration + the tempering/coverage section of overconfidence | dynesty | `from_measurement`, `reported_terms`, the singular-covariance error, `Constraint(weight=)`, `coverage_curve` |
-| `alpha_ca_error_model_comparison` | **new** (the `design.md` recipe table) | dynesty | log space, `Parameter(prior=)`, masks, `complement`, `heldout_log_predictive`, `logz_summary` / `compare_logz` with `log_jacobian`, shared noise (B) and coupled normalisation (A) across two datasets, the bbb shim shown but not run |
-| `hierarchical_calibration` | **new** (recipes 24, 35, 38) | dynesty | hierarchy on the physics parameters; see below |
+| notebook | inherits | driver | new content | runtime |
+|---|---|---|---|---|
+| `linear_calibration` | linear_calibration_demo | emcee | prior predictive, posterior, predictive band with `problem.columns`, the coverage curve | 23 s |
+| `error_models` | systematic_err_demo | emcee | the ladder on one comparison, the Peelle matrix as a fixed `Term`, offsets known and free; two-constraint section with case B via a shared `Parameter` | 153 s |
+| `normalization_and_covariance_structure` | normalization_inference | emcee | ρᵢ as `quartic \| tf.scale(rho_i)` against `reported_terms()`; the four-case gallery via `matrix(theta)` | 328 s |
+| `correlated_observations` | correlated_observations | emcee | case A vs B on the toy; Neudecker et al. (2014) §II.A and §II.B recreated: the multi-quantity Peelle puzzle with a spanning `matrix` term built through `c.split` | 141 s |
+| `gp_discrepancy` | gp_discrepancy | emcee (toy), dynesty (reaction) | `kernel` term; `total_predictive_band(problem, term, ...)`; the same defect fit with a sampled Legendre mean correction for contrast; n+⁴⁰Ca with the surface absorption missing | 617 s |
+| `robust_likelihoods` | robust_likelihoods | emcee | Student-t vs Gaussian; ν bounded on the `Parameter`; a global error scale and a USU offset per technique | 154 s |
+| `measurement_to_calibration` | measurement_to_calibration + 30s_optical_potential_calibration + the tempering/coverage section of overconfidence | dynesty | `from_measurement`, `reported_terms`, the singular-covariance error, `Constraint(weight=)`, `coverage_curve`, emcee and `dill` as other drivers, the KDUQ `model_error` spelling | 182 s |
+| `alpha_ca_error_model_comparison` | **new** (the `jitr` quickstart's α+⁴⁴Ca data, EXFOR F0567) | dynesty | real data without errors, a four-parameter potential, log space with `log_jacobian`, the `L0`/`E0`/`L2y`/`Lgp` ladder by evidence, `masked_where`/`complement` with `heldout_log_predictive` and held-out coverage | 1197 s (alongside another notebook) |
+| `hierarchical_calibration` | **new** (recipes 24, 35, 38) | dynesty | eight schools non-centred; the hierarchy on the physics parameters; see below | 937 s (alongside another notebook) |
+
+Runtimes are single-process wall times on an eight-core laptop with the
+kernels run one at a time; the converged-tier workflow runs four at once
+with a 40-minute timeout each.  The reaction notebooks are driven by
+dynesty because emcee mixes poorly on optical-model posteriors.
 
 **`hierarchical_calibration` in detail.**  The truth is
-`y = a0(E) + a1(E) x + a2(E) x²`, measured by J synthetic datasets at known
-energies `E_j` (in `meta`) plus one held-out dataset at a new energy.  The
+`y = a0(E) + a1(E) x + a2(E) x²`, measured by J = 7 synthetic datasets at
+known energies `E_j` (in `meta`) plus one held-out dataset at a new energy
+bracketed by two fitted ones (a hierarchy learns the spread of deviations
+it has seen; an unmodelled peak between its datasets is the few-datasets
+caveat below, not a prediction it can make).  The
 true coefficient mappings `a_k(E)` are a smooth trend plus non-monotonic
 bumps.  Three fits of the same data:
 

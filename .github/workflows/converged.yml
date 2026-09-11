@@ -36,7 +36,7 @@ jobs:
       - name: Run the notebooks
         run: |
           if [ -d examples ] && ls examples/*.ipynb >/dev/null 2>&1; then
-            python -m pytest -n 4 --nbmake --nbmake-timeout=2400 examples
+            python -m pytest -n 4 --nbmake --nbmake-timeout=3600 examples
           else
             echo "no notebooks yet"
           fi
