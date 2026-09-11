@@ -47,13 +47,12 @@ def test_two_observables_one_constraint_one_spanning_mode():
 
     def dy_dtheta(c):
         # angle-calibration mode: the slope of each prediction in angle.  A
-        # spanning term sees the gathered stack, so the finite difference must
-        # not straddle the seam: split by the per-point dataset metadata.
-        u = np.empty(len(c))
-        for q in np.unique(c.meta("quantity")):
-            rows = c.meta("quantity") == q
-            u[rows] = np.gradient(c.ym[rows], c.x[rows])
-        return u
+        # spanning term sees the gathered stack, so the finite difference is
+        # taken within each comparison's segment, not across the seam.
+        assert c.labels == ("xs", "ay")
+        return np.concatenate(
+            [np.gradient(ym, x) for x, ym in zip(c.split(c.x), c.split(c.ym))]
+        )
 
     c = Constraint(
         [comp_xs, comp_ay],

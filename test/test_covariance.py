@@ -276,3 +276,51 @@ def test_chol_logdet_on_a_diagonal():
     L, logdet = chol_logdet(np.diag([1.0, 4.0, 9.0]))
     np.testing.assert_allclose(np.diag(L), [1.0, 2.0, 3.0])
     assert logdet == pytest.approx(np.log(36.0))
+
+
+class TestSegments:
+    """A spanning term sees the rows of each block it touches, in stack order."""
+
+    def setup_method(self):
+        self.x, self.y, self.ym = grid(9, seed=3)
+        self.offsets = [slice(0, 3), slice(3, 6), slice(6, 9)]
+
+    def capture(self, rows, active=None):
+        seen = {}
+
+        def fn(c):
+            seen["segments"], seen["labels"] = c.segments, c.labels
+            seen["x"] = c.split(c.x)
+            return np.ones(len(c))
+
+        terms = [statistical(0.1 * np.ones(9)), Term(fn, kind="mode")]
+        cov, _ = build(
+            terms,
+            self.x,
+            self.y,
+            self.offsets,
+            active=active,
+            rows=[np.arange(9), rows],
+            labels=["L0", "L1", "L2"],
+        )
+        cov.matrix(self.ym, np.zeros(0))
+        return seen
+
+    def test_whole_stack(self):
+        seen = self.capture(np.arange(9))
+        assert seen["segments"] == (slice(0, 3), slice(3, 6), slice(6, 9))
+        assert seen["labels"] == ("L0", "L1", "L2")
+        np.testing.assert_array_equal(seen["x"][1], self.x[3:6])
+
+    def test_partial_support_skips_untouched_blocks(self):
+        # blocks 0 and 2 only: the support is 6 rows in two segments
+        seen = self.capture(np.r_[0:3, 6:9])
+        assert seen["segments"] == (slice(0, 3), slice(3, 6))
+        assert seen["labels"] == ("L0", "L2")
+        np.testing.assert_array_equal(seen["x"][1], self.x[6:9])
+
+    def test_masked_rows_stay_in_the_segment_view(self):
+        # fn sees every row of its support (masking selects after evaluation),
+        # so the segments describe the unmasked support
+        seen = self.capture(np.arange(9), active=np.r_[0:2, 3:9])
+        assert seen["segments"] == (slice(0, 3), slice(3, 6), slice(6, 9))

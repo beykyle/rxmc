@@ -86,15 +86,49 @@ class TermContext:
     while a *constant* term is evaluated before any prediction exists, so a
     mis-declared constant term fails loudly.  ``len(c)`` is the number of
     points; :meth:`meta` gives per-point dataset metadata (``c.meta("Elab")``).
+
+    A term spanning several comparisons sees their rows *gathered* into one
+    stack, in constraint order.  :attr:`segments` are the slices of that stack
+    belonging to each comparison, :attr:`labels` their labels, and
+    :meth:`split` cuts any support-length array along them, so a basis that
+    differentiates or smooths along the grid can stay within one comparison::
+
+        def slope(c):  # angle-calibration mode: the slope of each prediction
+            return np.concatenate([np.gradient(ym, x) for x, ym in
+                                   zip(c.split(c.x), c.split(c.ym))])
     """
 
     x: np.ndarray
     y: np.ndarray
     ym: np.ndarray | None = None
     _meta: Mapping[str, np.ndarray] | None = None
+    _segments: tuple | None = None
+    _labels: tuple | None = None
 
     def __len__(self) -> int:
         return len(self.y)
+
+    @property
+    def segments(self) -> tuple:
+        """Slices of the support, one per comparison it spans, in constraint order.
+
+        A term evaluated outside a problem (as in tests) has one segment.
+        """
+        return (slice(0, len(self)),) if self._segments is None else self._segments
+
+    @property
+    def labels(self) -> tuple:
+        """The label of each segment's comparison (``str(comparison.data.label)``)."""
+        return ("",) * len(self.segments) if self._labels is None else self._labels
+
+    def split(self, a) -> list:
+        """``a[s] for s in segments``: views of a support-length array per comparison."""
+        a = np.asarray(a)
+        if a.shape[0] != len(self):
+            raise ValueError(
+                f"split expects an array of length {len(self)}, got shape {a.shape}"
+            )
+        return [a[s] for s in self.segments]
 
     def meta(self, key: str) -> np.ndarray:
         """The owning dataset's ``meta[key]``, one value per point of the support."""
@@ -192,8 +226,14 @@ class Term:
 
     # -- evaluation -----------------------------------------------------------
 
-    def context(self, x, y, ym=None, meta=None, *values) -> TermContext:
-        """The :class:`TermContext` this term sees on its support at ``values``."""
+    def context(
+        self, x, y, ym=None, meta=None, *values, segments=None, labels=None
+    ) -> TermContext:
+        """The :class:`TermContext` this term sees on its support at ``values``.
+
+        ``segments``/``labels`` describe the comparisons the support spans (see
+        :attr:`TermContext.segments`); omitted, the support is one segment.
+        """
         self._check_count(values)
         x = np.asarray(x, dtype=float)
         if not self.coords.is_identity:
@@ -203,9 +243,13 @@ class Term:
             y=np.asarray(y, dtype=float),
             ym=None if ym is None else np.asarray(ym, dtype=float),
             _meta=meta,
+            _segments=None if segments is None else tuple(segments),
+            _labels=None if labels is None else tuple(labels),
         )
 
-    def value(self, x, y, ym=None, *values, meta=None) -> np.ndarray:
+    def value(
+        self, x, y, ym=None, *values, meta=None, segments=None, labels=None
+    ) -> np.ndarray:
         """The raw array ``fn`` returns (std vector, mode vector, or block)."""
         n = len(y)
         if not callable(self.fn):
@@ -215,7 +259,7 @@ class Term:
                     f"got {self.fn.shape}"
                 )
             return self.fn
-        c = self.context(x, y, ym, meta, *values)
+        c = self.context(x, y, ym, meta, *values, segments=segments, labels=labels)
         v = np.asarray(self.fn(c, *values[: self._n_fn_params]), dtype=float)
         if v.shape != self.expected_shape(n):
             raise ValueError(

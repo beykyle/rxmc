@@ -403,3 +403,42 @@ class TestRecipeHalves:
         np.testing.assert_allclose(right.value(x, y, ym_), s * ym_)
         np.testing.assert_allclose(wrong.value(x, y, ym_), s * y)
         assert not np.allclose(right.value(x, y, ym_), wrong.value(x, y, ym_))
+
+
+class TestSegments:
+    """A term's view of the comparisons its support spans."""
+
+    def test_one_segment_outside_a_problem(self):
+        seen = {}
+
+        def fn(c):
+            seen["segments"], seen["labels"] = c.segments, c.labels
+            seen["split"] = c.split(c.x)
+            return np.ones(len(c))
+
+        Term(fn, kind="mode").value(np.arange(3.0), np.zeros(3), np.zeros(3))
+        assert seen["segments"] == (slice(0, 3),) and seen["labels"] == ("",)
+        np.testing.assert_array_equal(seen["split"][0], np.arange(3.0))
+
+    def test_explicit_segments_and_split(self):
+        def fn(c):
+            assert c.labels == ("a", "b")
+            parts = c.split(c.ym)
+            assert [len(p) for p in parts] == [2, 3]
+            return np.concatenate([p - p.mean() for p in parts])
+
+        t = Term(fn, kind="mode")
+        ym = np.array([1.0, 3.0, 10.0, 20.0, 30.0])
+        v = t.value(
+            np.zeros(5),
+            np.zeros(5),
+            ym,
+            segments=[slice(0, 2), slice(2, 5)],
+            labels=["a", "b"],
+        )
+        np.testing.assert_allclose(v, [-1.0, 1.0, -10.0, 0.0, 10.0])
+
+    def test_split_checks_length(self):
+        c = TermContext(x=np.zeros(3), y=np.zeros(3))
+        with pytest.raises(ValueError, match="length 3"):
+            c.split(np.zeros(4))

@@ -481,7 +481,10 @@ Expected behaviour:
 - A plain array is a fixed contribution, factored once.  Shape and
   symmetry are checked at construction against the term's `on`.
 - A callable sees a `TermContext` with `x` (through `coords`), `y`, `ym`,
-  and `len(c)`; it returns a vector for `diag`/`mode` or a matrix.
+  `len(c)`, per-point `c.meta(key)`, and, for a term spanning several
+  comparisons, `c.segments`/`c.labels`/`c.split(a)` giving the rows of
+  each comparison in the gathered stack; it returns a vector for
+  `diag`/`mode` or a matrix.
 - Fitting correlated data with the correct `Term(C)` instead of its
   diagonal is the difference between an honest and an overconfident
   posterior (`normalization_inference` gallery).
@@ -1085,9 +1088,9 @@ Expected behaviour:
   observable; an angle-calibration error affects both through their
   angular derivatives, which the basis supplies from `c.ym` and `c.x`.
 - A spanning term sees the *gathered* stack, so a basis that differentiates
-  along the grid must not straddle the seam between comparisons: it splits
-  the rows by a per-point dataset field such as `c.meta("quantity")`
-  (recipe 22), which `from_measurement` fills in.
+  along the grid must not straddle the seam between comparisons: it takes
+  the derivative within each of `c.segments` (`c.split(c.ym)` cuts a
+  support-length array per comparison; `c.labels` names them).
 - The multi-quantity extension of the Peelle treatment applies: build the
   mode from predictions, not data.
 

@@ -50,9 +50,18 @@ def chol_logdet(Sigma):
 class _Entry:
     """One term placed on rows of the stack, with its gather into theta."""
 
-    __slots__ = ("term", "rows", "gather", "pos", "keep", "block")
+    __slots__ = (
+        "term",
+        "rows",
+        "gather",
+        "pos",
+        "keep",
+        "block",
+        "segments",
+        "labels",
+    )
 
-    def __init__(self, term, rows, gather, active, offsets):
+    def __init__(self, term, rows, gather, active, offsets, labels):
         self.term = term
         self.rows = np.asarray(rows, dtype=int)
         self.gather = np.asarray(gather, dtype=int)
@@ -68,6 +77,17 @@ class _Entry:
             if np.any((self.rows >= o.start) & (self.rows < o.stop))
         }
         self.block = blocks.pop() if len(blocks) == 1 else None
+        # the term's rows are in stack order, so each block's rows are contiguous
+        # within them: slices of the support per block, and the block labels
+        counts = [
+            int(np.count_nonzero((self.rows >= o.start) & (self.rows < o.stop)))
+            for o in offsets
+        ]
+        stops = np.cumsum(counts)
+        self.segments = tuple(
+            slice(int(stop - n), int(stop)) for n, stop in zip(counts, stops) if n
+        )
+        self.labels = tuple(str(lab) for n, lab in zip(counts, labels) if n)
 
 
 def _meta_rows(meta, rows):
@@ -113,7 +133,7 @@ class StructuredCovariance:
         for term, rows, gather in entries:
             if not isinstance(term, Term):
                 raise TypeError(f"entries must hold Term objects, got {term!r}")
-            e = _Entry(term, rows, gather, self.active, self.offsets)
+            e = _Entry(term, rows, gather, self.active, self.offsets, self.labels)
             if np.any(e.keep):
                 self.entries.append(e)
         self.n_active = int(self.active.size)
@@ -159,6 +179,8 @@ class StructuredCovariance:
                 None if ym is None else ym[e.rows],
                 *values,
                 meta=_meta_rows(self.meta, e.rows),
+                segments=e.segments,
+                labels=e.labels,
             )
             pos, keep = e.pos[e.keep], e.keep
             if t.kind == "diag":

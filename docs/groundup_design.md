@@ -266,6 +266,9 @@ class TermContext:
     def __len__(self) -> int
     def meta(self, key) -> ndarray   # the owning block's data.meta[key], one value per point;
                                      # for a term spanning blocks, the per-point concatenation
+    segments: tuple[slice, ...]      # rows of each spanned comparison within the gathered support
+    labels: tuple[str, ...]          # their comparison labels, in the same order
+    def split(self, a) -> list       # a[s] for s in segments
 
 @dataclass(frozen=True)
 class Term:
