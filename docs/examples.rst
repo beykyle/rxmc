@@ -17,6 +17,7 @@ Calibration basics
 
    examples/linear_calibration.ipynb
    examples/error_models.ipynb
+   examples/sharing_error_models.ipynb
    examples/normalization_and_covariance_structure.ipynb
 
 Beyond the Gaussian

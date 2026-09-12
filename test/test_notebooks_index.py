@@ -18,7 +18,8 @@ RECIPES = ROOT / "docs" / "recipes.md"
 # design document section 9, item 8: the nine notebooks and their recipes
 NOTEBOOKS = {
     "linear_calibration": {1, 17},
-    "error_models": {2, 4, 5, 19},
+    "error_models": {2, 4, 19},
+    "sharing_error_models": {5},
     "normalization_and_covariance_structure": {3, 6, 27},
     "gp_discrepancy": {7, 8, 36},
     "robust_likelihoods": {9, 34},
