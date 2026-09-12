@@ -71,7 +71,14 @@ def test_no_latex_escape_lands_in_a_plain_string(name):
     escapes ``\r \t \a \b \f \v`` silently eat the backslash and the label.  An
     ``ast`` walk sees f-strings too, which a ``tokenize`` pass does not.
     """
-    control = {"\r": r"\r", "\t": r"\t", "\a": r"\a", "\b": r"\b", "\f": r"\f", "\v": r"\v"}
+    control = {
+        "\r": r"\r",
+        "\t": r"\t",
+        "\a": r"\a",
+        "\b": r"\b",
+        "\f": r"\f",
+        "\v": r"\v",
+    }
     nb = json.loads((EXAMPLES / f"{name}.ipynb").read_text())
     bad = []
     for i, cell in enumerate(nb["cells"]):
