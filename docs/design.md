@@ -628,7 +628,7 @@ a time unless noted.
 | `gp_discrepancy` | 7 | emcee, dynesty | mean-zero discrepancies with amplitudes growing in x: four rungs on a toy line, three on n+⁴⁰Ca missing its surface absorption; the total predictive band | 616 s |
 | `robust_likelihoods` | 9, 39 | emcee | Student-t versus Gaussian on three gross outliers; the iterative rejection loop, including the round that over-rejects and recovers | 54 s |
 | `error_scale_and_usu` | 34 | emcee | a global scale on the reported errors under both likelihoods; a USU offset on the technique we suspect | 90 s |
-| `local_optical_model_calibration` | 12, 14, 15, 16, 21, 26 | dynesty | a real EXFOR measurement to a calibrated potential; the unit contract, the singular guard, tempering, other drivers | 182 s |
+| `local_optical_model_calibration` | 4, 12, 14, 15, 16, 21, 26 | dynesty | EXFOR O1199007, p + ⁴⁰Ca at 35 MeV, which quotes no systematics: the unit contract, three error models against a potential wrong at the 30 % level, the singular guard, tempering and its coverage, other drivers | 1565 s |
 | `alpha_ca_error_model_comparison` | 10, 11, 13, 17, 18 | dynesty | real ⁴⁴Ca(α,α) data, a four-parameter potential, the ladder by evidence with the Jacobian, predictive draws carrying the covariance and their coverage, held-out backward angles scored conditionally | 1394 s |
 | `hierarchical_calibration` | 22, 24, 30, 35, 38 | dynesty | eight schools; a hierarchy on the physics parameters repairing a misspecified energy dependence, in sample and at a held-out energy | 937 s (alongside another notebook) |
 
