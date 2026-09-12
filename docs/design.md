@@ -615,7 +615,7 @@ references and `STUDY_LEGEND`, the labelled error-model forms of recipe
 
 ## 6. Notebooks
 
-Nine notebooks in `examples/`, each naming the recipes it teaches in its
+The notebooks in `examples/` each name the recipes they teach in their
 first cell.  Runtimes are wall times on an eight-core laptop, one kernel at
 a time unless noted.
 
@@ -624,10 +624,9 @@ a time unless noted.
 | `linear_calibration` | 1, 17 | emcee | the whole workflow on a line; prior and posterior predictive; the coverage curve | 23 s |
 | `error_models` | 2, 4, 5, 19 | emcee | the covariance ladder on one comparison, the Peelle matrix as a fixed term, offsets known and free, case B across two datasets | 153 s |
 | `normalization_and_covariance_structure` | 3, 6, 27 | emcee | latent scales versus reported modes on a quartic; a gallery of covariance structures from `matrix(theta)` | 328 s |
-| `correlated_observations` | 5, 37 | emcee | coupled versus independent covariances; Neudecker et al. (2014) §II.A and §II.B recreated | 141 s |
 | `gp_discrepancy` | 7, 8, 36 | emcee, dynesty | a kernel term on a toy and on n+⁴⁰Ca missing its surface absorption; the total predictive band; a sampled Legendre correction for contrast | 617 s |
 | `robust_likelihoods` | 9, 34 | emcee | Student-t versus Gaussian; a global error scale; a USU offset per technique | 154 s |
-| `measurement_to_calibration` | 12, 14, 15, 16, 21, 26 | dynesty | an EXFOR-shaped measurement to a calibrated potential; the unit contract, reported terms, the singular guard, tempering, other drivers | 182 s |
+| `local_optical_model_calibration` | 12, 14, 15, 16, 21, 26 | dynesty | a real EXFOR measurement to a calibrated potential; the unit contract, the singular guard, tempering, other drivers | 182 s |
 | `alpha_ca_error_model_comparison` | 10, 11, 13, 18 | dynesty | real ⁴⁴Ca(α,α) data, a four-parameter potential, the ladder by evidence with the Jacobian, held-out backward angles | 1197 s (alongside another notebook) |
 | `hierarchical_calibration` | 22, 24, 30, 35, 38 | dynesty | eight schools; a hierarchy on the physics parameters repairing a misspecified energy dependence, in sample and at a held-out energy | 937 s (alongside another notebook) |
 
@@ -661,7 +660,7 @@ src/rxmc/
   reactions/  elastic.py  ias.py
 test/               one file per module, the index tests, test_regression.py, helpers.py
 test/recipes/       one file per recipe; common.py, oracle.py
-examples/           nine notebooks; data/alpha_ca_ratio_ruth.csv (jitr's digitisation of EXFOR F0567)
+examples/           the notebooks and plotstyle.py; data/ (committed measurements)
 docs/               this document, recipes.md, examples.rst, api.rst, groundup_design.md (history)
 ```
 

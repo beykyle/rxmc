@@ -93,6 +93,11 @@ log_eta = rx.Parameter("log_eta", prior=stats.norm(-3, 1))
 c = rx.Constraint([comp], terms=[T.normalization(parameter=log_eta)])
 # absolute offset instead:  T.offset(parameter=log_omega)
 # a mode with any shape:     T.systematic(log_s, basis=T.x_basis(np.pi))
+
+# one magnitude per dataset: a parameter and a comparison-local mode each
+etas = [rx.Parameter(f"log_eta_{i}", prior=stats.norm(-3, 1)) for i in range(len(comps))]
+c_each = rx.Constraint(comps, terms=[T.normalization(parameter=e, on=cmp)
+                                     for e, cmp in zip(etas, comps)])
 ```
 
 Expected behaviour:
@@ -100,6 +105,13 @@ Expected behaviour:
 - One rank-one mode `exp(log_eta)**2 * outer(ym, ym)` is added.
 - The model parameters decorrelate from the overall scale of the data; the
   data's normalisation pull moves into `log_eta`.
+- One magnitude per dataset is the same spelling with one parameter and one
+  `on=` per comparison: each mode stays inside its own block, so the
+  datasets remain independent, and each `log_eta_i` is inferred from its own
+  dataset's scatter about the prediction.  This is what to do when an
+  experiment reports no systematic uncertainty at all; recipe 5 shares one
+  magnitude between datasets instead, and recipe 6 puts the scale on the
+  *mean* rather than in the covariance.
 
 ## 5. Share an error model between datasets, or couple them
 
@@ -126,7 +138,7 @@ Expected behaviour:
 - All three spellings have exactly one nuisance parameter.
 - Case B's covariance is block diagonal; case A's has a non-zero
   off-diagonal block.  The two likelihoods differ, and treating case A
-  data as case B is overconfident (`correlated_observations`).
+  data as case B is overconfident.
 - Sharing is by object: two `Parameter("log_eta")` objects would be two
   parameters and a compile error for the duplicate name.
 - Case A costs no more than case B: the cross-comparison mode goes through the
@@ -1150,8 +1162,7 @@ Expected behaviour:
   1.25, 1.15, 1.05; `sigma_i = 0.1 q_i`, `sigma_Ni = 0.2 N_i`, `c = 0.8`)
   reproduces its Fig. 1: `C_F` gives lower means and smaller standard
   deviations on every lattice point, `C_I` agrees with the exact values
-  (both exact in the fast tier, being generalised least squares).  The
-  notebook `correlated_observations` recreates the figure.
+  (both exact in the fast tier, being generalised least squares).
 - Analysing powers are *not* an instance of this recipe: a ratio of cross
   sections has a fixed normalisation, so nothing correlated can be inferred
   for it.  The real-data case of the reference (`237Np(n,f)` measured
@@ -1224,6 +1235,47 @@ Analysis*, 3rd ed., CRC Press (2013), Chapter 5.
 
 ---
 
+## 39. Iterative outlier rejection
+
+*A few points are gross outliers.  I want to reject them and refit, the way
+KDUQ does, rather than let a heavy tail absorb them.*
+
+```python
+mask = np.ones(d.n, dtype=bool)
+for _ in range(max_rounds):                  # an outer loop of problems
+    p = rx.Problem([c.masked([mask])])
+    theta = map_estimate(p)                  # or a chain, and its posterior mean
+    pull = np.abs(d.y - p.constraints[0].ym(theta)) / d.y_err
+    keep = pull < 3.0
+    if np.array_equal(keep, mask):
+        break                                # the mask has stopped moving
+    mask = keep
+rejected = c.masked([mask]).complement()     # what went, for the record
+```
+
+Expected behaviour:
+
+- Masks are compiled, so rejection is an *outer* loop: every round is a new
+  `Problem` over the same `Comparison`, `Term` and `Parameter` objects, and
+  the parameters keep their columns (recipe 11).  A mask that moved inside
+  the chain would be mutable state inside a spec, which the design refuses
+  (*What this API does not express*).
+- The loop either reaches a fixed point or cycles between two masks; cap the
+  rounds, and report which points went and after how many rounds.  Given the
+  starting mask and a deterministic fit it is reproducible.
+- Rejection and a heavy tail are different answers to the same question.
+  `StudentT` (recipe 9) keeps every point and widens; rejection commits to a
+  subset and fits it tightly.  Score them the same way, by holding out
+  (recipe 11) or by evidence (recipe 18), and note that the evidence of a
+  fit to a subset is not comparable with the evidence of a fit to all of it.
+- Nothing is deleted: the rejected points stay in the declaration and
+  `complement()` names them, so a later round can take them back.
+
+Reference: Pruitt, Escher, Rahman, *Uncertainty-quantified phenomenological
+optical potentials for single-nucleon scattering*, Phys. Rev. C 107, 014602
+(2023), [arXiv:2211.07741](https://arxiv.org/abs/2211.07741), which rejects
+points more than 3σ from the current model between rounds.
+
 ## What this API does not express
 
 Each item names the assumption that breaks, the nearest workaround, and
@@ -1238,8 +1290,8 @@ the size of the addition that would lift it.
 - **Chain-dependent masks.**  KDUQ's iterative rejection of points more
   than 3σ from the current model, updated during the walk, needs a mask
   that depends on chain state.  Masks are compiled.  Workaround: an outer
-  loop of problems with the mask refit between runs.  Addition refused by
-  design: it is mutable state inside a spec.
+  loop of problems with the mask refit between runs, which is recipe 39.
+  Addition refused by design: it is mutable state inside a spec.
 - **Per-point latent variables.**  Errors-in-variables in `x` (Berkson),
   explicit latent function values on a mesh (Schnabel et al. 2021), or a
   sampled per-point scale in a scale mixture.  Expressible in principle as

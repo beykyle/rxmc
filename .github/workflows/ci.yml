@@ -26,9 +26,9 @@ jobs:
           python -m pip install -e '.[validation]'
       - name: Check source formatting and imports
         run: |
-          python -m isort --check-only src test
-          python -m black --check src test
-          python -m ruff check src test
+          python -m isort --check-only src test examples/*.py
+          python -m black --check src test examples/*.py
+          python -m ruff check src test examples/*.py
       - name: Check notebook formatting and imports
         run: |
           if [ -d examples ] && ls examples/*.ipynb >/dev/null 2>&1; then

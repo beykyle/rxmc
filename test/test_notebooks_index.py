@@ -1,4 +1,4 @@
-"""The example notebooks name the recipes they teach, and all nine exist.
+"""The example notebooks name the recipes they teach, and every one listed exists.
 
 Design document section 9 item 8: a notebook must cite at least one recipe;
 its first cell carries ``Recipes: N, M, ...`` and every number is a heading
@@ -20,10 +20,9 @@ NOTEBOOKS = {
     "linear_calibration": {1, 17},
     "error_models": {2, 4, 5, 19},
     "normalization_and_covariance_structure": {3, 6, 27},
-    "correlated_observations": {5, 37},
     "gp_discrepancy": {7, 8, 36},
     "robust_likelihoods": {9, 34},
-    "measurement_to_calibration": {12, 14, 15, 16, 21, 26},
+    "local_optical_model_calibration": {12, 14, 15, 16, 21, 26},
     "alpha_ca_error_model_comparison": {10, 11, 13, 18},
     "hierarchical_calibration": {22, 24, 30, 35, 38},
 }

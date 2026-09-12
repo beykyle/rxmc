@@ -18,7 +18,6 @@ Calibration basics
    examples/linear_calibration.ipynb
    examples/error_models.ipynb
    examples/normalization_and_covariance_structure.ipynb
-   examples/correlated_observations.ipynb
 
 Beyond the Gaussian
 -------------------
@@ -35,6 +34,6 @@ Reactions and studies
 .. toctree::
    :maxdepth: 1
 
-   examples/measurement_to_calibration.ipynb
+   examples/local_optical_model_calibration.ipynb
    examples/alpha_ca_error_model_comparison.ipynb
    examples/hierarchical_calibration.ipynb
