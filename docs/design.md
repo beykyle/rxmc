@@ -630,7 +630,7 @@ a time unless noted.
 | `error_scale_and_usu` | 34 | emcee | a global scale on the reported errors under both likelihoods; a USU offset on the technique we suspect | 90 s |
 | `local_optical_model_calibration` | 4, 12, 14, 15, 16, 21, 26 | dynesty | EXFOR O1199007, p + ⁴⁰Ca at 35 MeV, which quotes no systematics: the unit contract, three error models against a potential wrong at the 30 % level, the singular guard, tempering and its coverage, other drivers | 1565 s |
 | `alpha_ca_error_model_comparison` | 10, 11, 13, 17, 18 | dynesty | real ⁴⁴Ca(α,α) data, a four-parameter potential, the ladder by evidence with the Jacobian, predictive draws carrying the covariance and their coverage, held-out backward angles scored conditionally | 1394 s |
-| `hierarchical_calibration` | 22, 24, 30, 35, 38 | dynesty | eight schools; a hierarchy on the physics parameters repairing a misspecified energy dependence, in sample and at a held-out energy | 937 s (alongside another notebook) |
+| `hierarchical_calibration` | 22, 24, 30, 35, 38 | dynesty | eight schools, with the shrinkage explained rather than assumed; a hierarchy on the physics parameters recovering the evidence a misspecified energy dependence threw away, scored in sample and at a held-out energy | 748 s |
 
 **`hierarchical_calibration` in detail.**  The truth is
 `y = a0(E) + a1(E) x + a2(E) x²`, measured by seven synthetic datasets at
