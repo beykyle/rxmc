@@ -28,6 +28,7 @@ Beyond the Gaussian
 
    examples/gp_discrepancy.ipynb
    examples/robust_likelihoods.ipynb
+   examples/error_scale_and_usu.ipynb
 
 Reactions and studies
 ---------------------

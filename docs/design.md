@@ -626,7 +626,8 @@ a time unless noted.
 | `sharing_error_models` | 5 | emcee | two experiments with opposite normalisation defects: sharing a parameter, a mode per dataset, one mode spanning both, and the assembled covariance seen directly | 78 s |
 | `normalization_and_covariance_structure` | 3, 6, 27 | emcee | latent scales versus reported modes on a quartic; a gallery of covariance structures from `matrix(theta)` | 328 s |
 | `gp_discrepancy` | 7, 8, 36 | emcee, dynesty | a kernel term on a toy and on n+⁴⁰Ca missing its surface absorption; the total predictive band; a sampled Legendre correction for contrast | 617 s |
-| `robust_likelihoods` | 9, 34 | emcee | Student-t versus Gaussian; a global error scale; a USU offset per technique | 154 s |
+| `robust_likelihoods` | 9, 39 | emcee | Student-t versus Gaussian on three gross outliers; the iterative rejection loop, including the round that over-rejects and recovers | 54 s |
+| `error_scale_and_usu` | 34 | emcee | a global scale on the reported errors under both likelihoods; a USU offset on the technique we suspect | 90 s |
 | `local_optical_model_calibration` | 12, 14, 15, 16, 21, 26 | dynesty | a real EXFOR measurement to a calibrated potential; the unit contract, the singular guard, tempering, other drivers | 182 s |
 | `alpha_ca_error_model_comparison` | 10, 11, 13, 18 | dynesty | real ⁴⁴Ca(α,α) data, a four-parameter potential, the ladder by evidence with the Jacobian, held-out backward angles | 1197 s (alongside another notebook) |
 | `hierarchical_calibration` | 22, 24, 30, 35, 38 | dynesty | eight schools; a hierarchy on the physics parameters repairing a misspecified energy dependence, in sample and at a held-out energy | 937 s (alongside another notebook) |
