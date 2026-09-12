@@ -5,6 +5,7 @@ its first cell carries ``Recipes: N, M, ...`` and every number is a heading
 of ``docs/recipes.md``.  Nothing here executes a notebook.
 """
 
+import ast
 import json
 import pathlib
 import re
@@ -20,7 +21,7 @@ NOTEBOOKS = {
     "linear_calibration": {1, 17},
     "error_models": {2, 4, 19},
     "sharing_error_models": {5},
-    "normalization_and_covariance_structure": {3, 6, 27},
+    "normalization_and_covariance_structure": {3, 4, 6, 27},
     "gp_discrepancy": {7, 8, 36},
     "robust_likelihoods": {9, 39},
     "error_scale_and_usu": {34},
@@ -60,6 +61,28 @@ def test_each_notebook_exists_and_cites_its_recipes(name):
         f"{name} cites {sorted(cited)}; the design's section 9 says "
         f"{sorted(NOTEBOOKS[name])} (update both or neither)"
     )
+
+
+@pytest.mark.parametrize("name", sorted(NOTEBOOKS))
+def test_no_latex_escape_lands_in_a_plain_string(name):
+    r"""``f"$\rho$"`` is a carriage return, and matplotlib then fails to parse it.
+
+    Every LaTeX macro in a notebook must sit in a raw string, or the Python
+    escapes ``\r \t \a \b \f \v`` silently eat the backslash and the label.  An
+    ``ast`` walk sees f-strings too, which a ``tokenize`` pass does not.
+    """
+    control = {"\r": r"\r", "\t": r"\t", "\a": r"\a", "\b": r"\b", "\f": r"\f", "\v": r"\v"}
+    nb = json.loads((EXAMPLES / f"{name}.ipynb").read_text())
+    bad = []
+    for i, cell in enumerate(nb["cells"]):
+        if cell["cell_type"] != "code":
+            continue
+        for node in ast.walk(ast.parse("".join(cell["source"]))):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                for ch, shown in control.items():
+                    if ch in node.value:
+                        bad.append(f"cell {i}: {shown} in {node.value[:40]!r}")
+    assert not bad, f"{name}: a LaTeX escape outside a raw string: {bad}"
 
 
 def test_no_stray_notebooks():

@@ -624,7 +624,7 @@ a time unless noted.
 | `linear_calibration` | 1, 17 | emcee | the whole workflow on a line; prior and posterior predictive; the coverage curve | 23 s |
 | `error_models` | 2, 4, 19 | emcee | the covariance ladder on one comparison, the Peelle matrix as a fixed term, offsets known, free and ignored | 89 s |
 | `sharing_error_models` | 5 | emcee | two experiments with opposite normalisation defects: sharing a parameter, a mode per dataset, one mode spanning both, and the assembled covariance seen directly | 78 s |
-| `normalization_and_covariance_structure` | 3, 6, 27 | emcee | latent scales versus reported modes on a quartic; a gallery of covariance structures from `matrix(theta)` | 328 s |
+| `normalization_and_covariance_structure` | 3, 4, 6, 27 | emcee | six treatments of five experiments' normalisations, one of them badly mis-quoted and alone in its range; Peelle's puzzle in the two-point case it was found in; a gallery of covariance structures from `matrix(theta)` | 353 s |
 | `gp_discrepancy` | 7, 8, 36 | emcee, dynesty | a kernel term on a toy and on n+⁴⁰Ca missing its surface absorption; the total predictive band; a sampled Legendre correction for contrast | 617 s |
 | `robust_likelihoods` | 9, 39 | emcee | Student-t versus Gaussian on three gross outliers; the iterative rejection loop, including the round that over-rejects and recovers | 54 s |
 | `error_scale_and_usu` | 34 | emcee | a global scale on the reported errors under both likelihoods; a USU offset on the technique we suspect | 90 s |
