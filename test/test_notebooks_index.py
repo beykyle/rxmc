@@ -22,11 +22,11 @@ NOTEBOOKS = {
     "error_models": {2, 4, 19},
     "sharing_error_models": {5},
     "normalization_and_covariance_structure": {3, 4, 6, 27},
-    "gp_discrepancy": {7, 8, 36},
+    "gp_discrepancy": {7},
     "robust_likelihoods": {9, 39},
     "error_scale_and_usu": {34},
-    "local_optical_model_calibration": {12, 14, 15, 16, 21, 26},
-    "alpha_ca_error_model_comparison": {10, 11, 13, 18},
+    "local_optical_model_calibration": {4, 12, 14, 15, 16, 21, 26},
+    "alpha_ca_error_model_comparison": {10, 11, 13, 17, 18},
     "hierarchical_calibration": {22, 24, 30, 35, 38},
 }
 
