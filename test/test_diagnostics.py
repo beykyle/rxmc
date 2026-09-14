@@ -46,29 +46,61 @@ class TestPredictiveDraws:
     def test_draw_covariance_recovers_sigma(self):
         p, _ = line_problem([noise(Parameter("log_eps", prior=stats.norm(-2, 1)))])
         row = np.array([1.0, 2.0, np.log(0.4)])
-        draws = predictive_draws(p, row, n_rep=40000, rng=0)
+        draws = predictive_draws(p, row, n_rep=40000, rng=0, return_draws=True)
         assert draws.shape == (40000, 5)
         np.testing.assert_allclose(draws.mean(axis=0), Y, atol=0.02)
         np.testing.assert_allclose(np.cov(draws.T), np.diag(ERR**2 + 0.16), atol=0.02)
 
+    def test_terms_select_part_of_the_error_model(self):
+        """Model plus discrepancy and model plus everything are different objects."""
+        eps = noise(Parameter("log_eps", prior=stats.norm(-2, 1)))
+        p, _ = line_problem([eps])
+        row = np.array([1.0, 2.0, np.log(0.4)])
+        c = p.constraints[0]
+        np.testing.assert_allclose(c.matrix(row), np.diag(ERR**2 + 0.16))
+        np.testing.assert_allclose(
+            c.matrix(row, terms=[eps], statistical=False), np.diag(np.full(5, 0.16))
+        )
+        np.testing.assert_allclose(c.matrix(row, terms=[]), np.diag(ERR**2))
+        draws = predictive_draws(
+            p,
+            row,
+            terms=[eps],
+            statistical=False,
+            n_rep=40000,
+            rng=0,
+            return_draws=True,
+        )
+        np.testing.assert_allclose(
+            np.cov(draws.T), np.diag(np.full(5, 0.16)), atol=0.02
+        )
+        with pytest.raises(ValueError, match="not a term of this constraint"):
+            c.matrix(row, terms=[noise(Parameter("other", prior=stats.norm(0, 1)))])
+        with pytest.raises(ValueError, match="cannot be combined with a term"):
+            predictive_draws(p, row, statistical=False, given=p, return_draws=True)
+
     def test_model_only_returns_ym_and_assembles_nothing(self):
         p, _ = line_problem()
         with patch.object(StructuredCovariance, "matrix") as m:
-            d = predictive_draws(p, [[1.0, 2.0], [0.0, 1.0]], model_only=True)
+            d = predictive_draws(
+                p, [[1.0, 2.0], [0.0, 1.0]], model_only=True, return_draws=True
+            )
         m.assert_not_called()
         np.testing.assert_allclose(d[0], Y)
         np.testing.assert_allclose(d[1], X)
 
     def test_one_row_masks_and_width_check(self):
         p, _ = line_problem(masks=[np.array([True, False, True, False, True])])
-        d = predictive_draws(p, [1.0, 2.0], n_rep=3, rng=1)
+        d = predictive_draws(p, [1.0, 2.0], n_rep=3, rng=1, return_draws=True)
         assert d.shape == (3, 3)
         with pytest.raises(ValueError, match=r"\(n, 2\)"):
-            predictive_draws(p, [[1.0, 2.0, 3.0]])
+            predictive_draws(p, [[1.0, 2.0, 3.0]], return_draws=True)
 
     def test_student_t_draws_follow_the_multivariate_t(self):
         p, _ = line_problem(likelihood=StudentT(Parameter("nu", bounds=(1, 30))))
-        draws = predictive_draws(p, [1.0, 2.0, 6.0], n_rep=100000, rng=0)
+        draws = predictive_draws(
+            p, [1.0, 2.0, 6.0], n_rep=100000, rng=0, return_draws=True
+        )
         # a multivariate t with scale diag(ERR**2) has covariance nu/(nu-2) times it
         np.testing.assert_allclose(draws.var(axis=0), 1.5 * ERR**2, rtol=0.05)
         # one mixing scale per draw: the points' |residuals| move together
@@ -86,7 +118,7 @@ class TestPredictiveDraws:
     def test_tiny_variances_not_inflated(self):
         d = Dataset(X, Y, np.full(5, 1e-9), label="tiny")
         p = Problem([Constraint([Comparison(d, poly(1))])])
-        draws = predictive_draws(p, [1.0, 2.0], n_rep=2000, rng=3)
+        draws = predictive_draws(p, [1.0, 2.0], n_rep=2000, rng=3, return_draws=True)
         assert np.all(draws.std(axis=0) < 1e-8)
 
 
@@ -141,8 +173,10 @@ class TestHeldout:
         # the conditional equals the marginal when nothing spans the split
         np.testing.assert_allclose(heldout_log_predictive(held, samples, given=fit), lp)
         np.testing.assert_allclose(
-            predictive_draws(held, samples, given=fit, model_only=True),
-            predictive_draws(held, samples, model_only=True),
+            predictive_draws(
+                held, samples, given=fit, model_only=True, return_draws=True
+            ),
+            predictive_draws(held, samples, model_only=True, return_draws=True),
         )
 
     def test_conditional_under_a_spanning_matrix_term(self):
@@ -161,7 +195,9 @@ class TestHeldout:
         assert lp[0] == pytest.approx(manual_mvn_loglike(self.d.y[H], mean, cov))
         # and it is not the marginal
         assert lp[0] != pytest.approx(heldout_log_predictive(held, theta)[0])
-        draws = predictive_draws(held, theta, n_rep=40000, rng=0, given=fit)
+        draws = predictive_draws(
+            held, theta, n_rep=40000, rng=0, given=fit, return_draws=True
+        )
         np.testing.assert_allclose(draws.mean(axis=0), mean, atol=0.02)
         np.testing.assert_allclose(np.cov(draws.T), cov, atol=0.03)
         # the conditional is exactly the joint over the full data divided by the fit
@@ -192,7 +228,9 @@ class TestHeldout:
         ym = theta[1] * self.d.x
         F, H = slice(0, 2), slice(2, 4)
         mean = ym[H] + S[H, F] @ np.linalg.solve(S[F, F], 3.0 * self.d.y[F] - ym[F])
-        draws = predictive_draws(held, theta, constraint=1, given=fit, model_only=True)
+        draws = predictive_draws(
+            held, theta, constraint=1, given=fit, model_only=True, return_draws=True
+        )
         np.testing.assert_allclose(draws[0], mean)
 
     def test_given_needs_no_marginal_priors_and_keeps_doubly_masked_rows_out(self):

@@ -425,7 +425,9 @@ Everything takes `(problem, samples)` with `samples` of shape
 give.
 
 ```python
-predictive_draws(problem, samples, constraint=0, *, n_rep=1, rng=None, model_only=False, given=None)
+predictive_draws(problem, samples, constraint=0, *, terms=None, statistical=True,
+                 n_rep=1, rng=None, model_only=False, given=None,
+                 levels=(16, 50, 84), return_draws=False)
 coverage_curve(draws, y, levels=None); coverage_error(draws, y, levels=None)
 sharpness(draws, percentiles=(16, 84), transform=None)
 heldout_log_predictive(heldout_problem, samples, *, given=None)
@@ -434,8 +436,12 @@ logz_summary(logz, logzerr); compare_logz(a, b, sigma=2.0)
 
 gp_posterior_predictive(kernel, theta, X_train, residuals, X_pred, *, train_noise_var=None, jitter=1e-10)
 predictive_band(draws, levels=(16, 50, 84))
-total_predictive_band(problem, term, predictor, x_pred, samples, *, noise_std=0.0,
-                      train_noise_var=None, levels=(16, 84), n_draws=400, rng=None, physical=False)
+grid_draws(problem, predictor, x_pred, samples, constraint=0, *, comparison=None,
+           terms=None, model_only=False, joint=True, physical=False,
+           n_rep=1, rng=None, levels=(16, 50, 84), return_draws=False)
+gp_predictive_draws(problem, term, predictor, x_pred, samples, *, terms=None,
+                    conditioned=False, joint=True, noise_std=0.0, train_noise_var=None,
+                    physical=False, n_rep=1, rng=None, levels=(16, 50, 84), return_draws=False)
 ```
 
 A held-out problem built from `complement()` has the *marginal*
@@ -445,12 +451,45 @@ span it (a GP over several experiments), `given=fit_problem` makes both
 functions compute the Gaussian conditional `p(y_held | y_fit, θ)` under
 the full covariance; without a spanning term it equals the marginal.
 
-`total_predictive_band` locates the `KernelTerm` in the problem, takes its
-training rows, comparison space, kernel and amplitude columns from there,
-conditions the discrepancy on the residuals with every *other* term of the
-constraint as the regression noise, evaluates the amplitude at `x_pred`
-through a `TermContext`, and returns percentiles in the comparison space
-of the term's comparisons, or in physical units with `physical=True`.
+The three draw functions share one return convention: a percentile band
+`(len(levels), n_points)` by default, the draws with `return_draws=True`.
+Coverage, sharpness and held-out scoring consume draws.
+
+`predictive_draws` works at the measured points, where every term is
+defined.  `grid_draws` is its counterpart on a grid that was never
+measured: per row it evaluates the predictor there, re-evaluates every
+selected term from its own definition in a `TermContext` whose `x` is the
+grid, whose `y` and `ym` are the model's prediction and whose `meta` is the
+predictor's, sums the pieces into one covariance and draws `ym + s L z`
+(`s` the likelihood's `predictive_scale`).  At the measured points, with
+every term a function, it draws from the same distribution as
+`predictive_draws`.  A term that is an array — the statistical diagonals the
+compiler builds, a fixed `Term(array)`, a per-point magnitude — has no value
+at a new `x`, and `grid_draws` raises and names it rather than drop it:
+leaving the reported errors out silently would hand back a band narrower
+than the one the likelihood used.  With several comparisons in the
+constraint, `terms=None` needs `comparison=`, which also fixes the
+comparison space.
+
+`gp_predictive_draws` locates the `KernelTerm` in the problem and takes
+its constraint, rows, comparison space and parameter columns from there;
+unconditioned it is `grid_draws` on that constraint.  A kernel term
+declares a *mean-zero* discrepancy, so the likelihood is the marginal
+`y ~ N(ym(θ), Σ(θ))`; the matching predictive draws whole correlated curves
+`ym(θ) + L(θ) z` from the inferred covariance about the model's own
+prediction.  `conditioned=True` instead conditions the discrepancy on the
+residuals with every *other* term of the constraint as the regression noise
+— regression on top of the model rather than a statement about its error.
+`joint=False` falls back to per-point draws; the joint draws make a
+functional summary well posed.
+
+`terms=` (on the three draw functions, `CompiledConstraint.matrix` and
+`StructuredCovariance.matrix`, with `statistical=` for the diagonals the
+compiler builds at the measured points) chooses which pieces of the error
+model a draw carries: the model alone, model plus discrepancy, and model plus
+discrepancy plus experimental uncertainty are different objects, and only
+the last is comparable with data.  Percentiles come back in the comparison
+space, or in physical units with `physical=True`.
 
 ### 2.12 `reactions/`
 
@@ -521,7 +560,7 @@ samples = run(p_fit)                                  # rows in p_fit.names orde
 # the GP spans the cut, so score and draw from p(y_held | y_fit, theta): given=
 lp = rx.diagnostics.heldout_log_predictive(p_held, samples, given=p_fit)
 score = rx.diagnostics.log_posterior_predictive(lp)
-draws = rx.diagnostics.predictive_draws(p_held, samples, n_rep=4, given=p_fit)
+draws = rx.diagnostics.predictive_draws(p_held, samples, n_rep=4, given=p_fit, return_draws=True)
 ```
 
 The labels `L0`, `E0`, `L2y`, `Lgp` are the error-model ladder of recipe
@@ -553,7 +592,11 @@ test that pins it.  Recipe numbers refer to `recipes.md`.
 | sampled mean discrepancy | `omp + Model(delta_fn, phi)`; alone or with `kernel` | test_model, recipe 8 |
 | multiplicative `x`-dependent correction | `omp * Model(g_fn, phi)` | test_model |
 | GP discrepancy in `x` or momentum transfer, with amplitude | `kernel(k, on=comp, coords=..., amplitude=..., amplitude_params=...)` | test_terms::TestStudyForms, recipe 7 |
-| total predictive band from the problem alone | `total_predictive_band(problem, term, predictor, x_pred, samples)` | test_predictive, recipe 7 |
+| posterior predictive on a new grid, error model included | `grid_draws(problem, predictor, x_pred, samples)`; `model_only=True`; `comparison=` | test_predictive::TestGridDraws, recipe 40 |
+| point-by-point errors refused on a new grid | `grid_draws` raises naming the term | test_predictive, recipe 40 |
+| GP discrepancy on a grid from the problem alone; GP regression instead | `gp_predictive_draws(problem, term, predictor, x_pred, samples)`; `conditioned=True` | test_predictive, recipe 7 |
+| band by default, draws on request | `levels=`, `return_draws=True` on all three draw functions | test_predictive, test_diagnostics |
+| choosing which terms a predictive draw carries | `terms=[...]`, `statistical=False` | test_predictive, test_diagnostics, recipe 17 |
 | hyperparameters shared across datasets, values from `meta` | same objects in one term per comparison; `c.meta("Elab")`; `kernel(params=)` | test_terms, test_problem, recipe 22 |
 | discrepancy correlated across energies | one `matrix` term `on=comps` from `c.meta` and `c.x`; dense path | test_covariance, recipe 23 |
 | term spanning comparisons reading its pieces | `c.segments`, `c.labels`, `c.split(a)` | test_terms, test_covariance, recipe 37 |
@@ -621,15 +664,15 @@ a time unless noted.
 
 | notebook | recipes | driver | content | runtime |
 |---|---|---|---|---|
-| `linear_calibration` | 1, 17 | emcee | the whole workflow on a line; prior and posterior predictive; the coverage curve | 23 s |
+| `linear_calibration` | 1, 2, 17, 40 | emcee | the whole workflow on a line with an inferred constant noise; prior and posterior predictive on a new grid with `grid_draws`, the model's band against a measurement's, and why reported per-point errors cannot go there; coverage of both | 23 s |
 | `error_models` | 2, 4, 19 | emcee | the covariance ladder on one comparison, the Peelle matrix as a fixed term, offsets known, free and ignored | 89 s |
 | `sharing_error_models` | 5 | emcee | two experiments with opposite normalisation defects: sharing a parameter, a mode per dataset, one mode spanning both, and the assembled covariance seen directly | 78 s |
 | `normalization_and_covariance_structure` | 3, 4, 6, 27 | emcee | six treatments of five experiments' normalisations, one of them badly mis-quoted and alone in its range; Peelle's puzzle in the two-point case it was found in; a gallery of covariance structures from `matrix(theta)` | 353 s |
-| `gp_discrepancy` | 7 | emcee, dynesty | mean-zero discrepancies with amplitudes growing in x: four rungs on a toy line, three on n+⁴⁰Ca missing its surface absorption; the total predictive band | 616 s |
+| `gp_discrepancy` | 7 | emcee, dynesty | mean-zero discrepancies with amplitudes growing in x: four rungs on a toy line, three on n+⁴⁰Ca missing its surface absorption; the three predictive objects (model plus discrepancy, plus experimental, and the conditioned regression it does not use), with the equations | 483 s |
 | `robust_likelihoods` | 9, 39 | emcee | Student-t versus Gaussian on three gross outliers; the iterative rejection loop, including the round that over-rejects and recovers | 54 s |
 | `error_scale_and_usu` | 34 | emcee | a global scale on the reported errors under both likelihoods; a USU offset on the technique we suspect | 90 s |
 | `local_optical_model_calibration` | 4, 12, 14, 15, 16, 21, 26 | dynesty | EXFOR O1199007, p + ⁴⁰Ca at 35 MeV, which quotes no systematics: the unit contract, three error models against a potential wrong at the 30 % level, the singular guard, tempering and its coverage, other drivers | 1565 s |
-| `alpha_ca_error_model_comparison` | 10, 11, 13, 17, 18 | dynesty | real ⁴⁴Ca(α,α) data, a four-parameter potential, the ladder by evidence with the Jacobian, predictive draws carrying the covariance and their coverage, held-out backward angles scored conditionally | 1394 s |
+| `alpha_ca_error_model_comparison` | 7, 10, 11, 13, 17, 18 | dynesty | real ⁴⁴Ca(α,α) data, a four-parameter potential, a five-rung ladder by evidence with the Jacobian (the last rung a GP whose amplitude grows with angle), predictive draws carrying the covariance and their coverage, the mean-zero discrepancy envelope that says *where* the potential fails, held-out backward angles scored conditionally | 1280 s |
 | `hierarchical_calibration` | 22, 24, 30, 35, 38 | dynesty | eight schools, with the shrinkage explained rather than assumed; a hierarchy on the physics parameters recovering the evidence a misspecified energy dependence threw away, scored in sample and at a held-out energy | 748 s |
 
 **`hierarchical_calibration` in detail.**  The truth is

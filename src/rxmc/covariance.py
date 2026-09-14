@@ -352,7 +352,16 @@ class StructuredCovariance:
             d2 -= float(s @ s)
         return d2, float(logdet)
 
-    def matrix(self, ym, theta=()):
-        """The dense covariance on the active rows, for display and tests."""
+    def matrix(self, ym, theta=(), entries=None):
+        """The dense covariance on the active rows, for display and tests.
+
+        ``entries`` restricts the sum to a subset of :attr:`entries` (the
+        objects themselves, compared by identity): the covariance of *part* of
+        the error model, as a predictive draw of the model plus its discrepancy
+        but not the experimental errors needs.  Default: every entry.  A subset
+        is assembled directly, without the constant-piece cache.
+        """
         theta = np.asarray(theta, dtype=float)
-        return self._dense_matrix(*self._assemble(ym, theta))
+        if entries is None:
+            return self._dense_matrix(*self._assemble(ym, theta))
+        return self._dense_matrix(*self._pieces(entries, ym, theta))

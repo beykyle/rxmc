@@ -5,13 +5,14 @@ angle or in momentum transfer, learned from the residuals.
 """
 
 import numpy as np
+import pytest
 from scipy import stats
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel, Matern
 
 from common import TRUE, line, linear_posterior
 from rxmc import Comparison, Constraint, Dataset, KernelTerm, Parameter, Problem
 from rxmc import terms as T
-from rxmc.predictive import total_predictive_band
+from rxmc.predictive import gp_predictive_draws, grid_draws
 from rxmc.reactions import momentum_transfer
 
 X = np.linspace(0.3, 2.5, 12)
@@ -74,7 +75,8 @@ def test_the_band_finds_the_kernel_columns_itself():
     comp = Comparison(d, model)
     log_eps = Parameter("log_eps", prior=stats.norm(-3, 1))
     gp = T.kernel(RBF(0.5), on=comp)
-    p = Problem([Constraint([comp], terms=[T.noise(log_eps), gp])])
+    eps = T.noise(log_eps)
+    p = Problem([Constraint([comp], terms=[eps, gp])])
     # a chain in problem.names order with the nuisance column between the
     # model parameters and the kernel hyperparameter
     rng = np.random.default_rng(1)
@@ -87,12 +89,52 @@ def test_the_band_finds_the_kernel_columns_itself():
         ]
     )
     x_fine = np.linspace(0.0, 3.0, 50)
-    band = total_predictive_band(
-        p, gp, model.bind(x_fine, d.meta), x_fine, chain, rng=0
+    pred = model.bind(x_fine, d.meta)
+    band = gp_predictive_draws(p, gp, pred, x_fine, chain, terms=[gp], rng=0)
+    assert band.shape == (3, 50) and np.all(np.isfinite(band))
+    assert np.all(band[2] > band[0])
+    # the discrepancy is mean-zero, so the band is an envelope *about the model*:
+    # it says where and by how much the model may be wrong, not what the data is
+    assert np.all((band[0] < line_y(x_fine)) & (line_y(x_fine) < band[2]))
+    # unconditioned, it is grid_draws with the kernel named: nothing GP-specific
+    np.testing.assert_allclose(
+        band, grid_draws(p, pred, x_fine, chain, terms=[gp], rng=0)
     )
-    assert band.shape == (2, 50) and np.all(np.isfinite(band))
-    assert np.all(band[1] > band[0])
-    # inside the data the band is narrow, outside it relaxes to the prior width
+    # the inferred noise is a function of x too, so a measurement's band exists
+    full = grid_draws(p, pred, x_fine, chain, terms=[eps, gp], rng=0)
+    assert full.shape == (3, 50) and np.all(np.isfinite(full))
+    # the reported errors exist only at the measured points
+    with pytest.raises(ValueError, match="reported statistical"):
+        grid_draws(p, pred, x_fine, chain)
+
+
+def line_y(x):
+    return TRUE[0] * x + TRUE[1]
+
+
+def test_conditioning_turns_the_band_into_regression_on_the_residuals():
+    """``conditioned=True`` is the other object: a data-driven fit on top."""
+    d = defect_data()
+    model = line()
+    comp = Comparison(d, model)
+    log_eps = Parameter("log_eps", prior=stats.norm(-3, 1))
+    gp = T.kernel(RBF(0.5), on=comp)
+    p = Problem([Constraint([comp], terms=[T.noise(log_eps), gp])])
+    rng = np.random.default_rng(1)
+    chain = np.column_stack(
+        [
+            TRUE[0] + 0.02 * rng.standard_normal(30),
+            TRUE[1] + 0.02 * rng.standard_normal(30),
+            np.full(30, np.log(0.05)),
+            np.full(30, np.log(0.5)),
+        ]
+    )
+    x_fine = np.linspace(0.0, 3.0, 50)
+    band = gp_predictive_draws(
+        p, gp, model.bind(x_fine, d.meta), x_fine, chain,
+        terms=[gp], levels=(16, 84), rng=0, conditioned=True,
+    )  # fmt: skip
+    # conditioning pins the discrepancy where there is data and relaxes outside
     inside = (x_fine > 0.5) & (x_fine < 2.3)
     assert np.median((band[1] - band[0])[inside]) < np.median(
         (band[1] - band[0])[~inside]

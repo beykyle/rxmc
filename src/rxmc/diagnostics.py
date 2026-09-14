@@ -5,7 +5,7 @@ matrix of posterior ``samples`` of shape ``(n, problem.ndim)`` in
 ``problem.names`` order (what emcee's ``get_chain(flat=True)``, dynesty's
 ``samples_equal()`` and black-box-bayes give) and never touches a sampler:
 
-* :func:`predictive_draws` — draws from the posterior predictive of a
+* :func:`predictive_draws` — the posterior predictive (band or draws) of a
   constraint's likelihood on its active points (``N(ym(theta), Sigma(theta))``,
   or the multivariate t of :class:`~rxmc.likelihood.StudentT`), or the
   model-only predictive ``ym(theta)``.
@@ -181,12 +181,16 @@ def predictive_draws(
     samples,
     constraint: int = 0,
     *,
+    terms=None,
+    statistical: bool = True,
     n_rep: int = 1,
     rng=None,
     model_only: bool = False,
     given: Problem | None = None,
+    levels=(16, 50, 84),
+    return_draws: bool = False,
 ) -> np.ndarray:
-    """Posterior-predictive draws on a constraint's active points.
+    """Posterior-predictive band, or draws, on a constraint's active points.
 
     For each posterior row ``theta_i`` the constraint gives ``ym_i`` and
     ``Sigma_i``; ``n_rep`` draws ``ym_i + s L_i z`` (``z ~ N(0, I)``) are taken,
@@ -196,6 +200,19 @@ def predictive_draws(
     ``model_only=True`` the rows are ``ym_i`` themselves and no covariance is
     assembled.
 
+    ``terms`` and ``statistical`` choose which pieces of the error model the
+    draws carry (:meth:`~rxmc.problem.CompiledConstraint.entries_for`).  The
+    default, every term, is the only one comparable with the measured data;
+    dropping the experimental terms gives the model plus its discrepancy
+    alone.
+
+    The result is a percentile band by default, like
+    :func:`~rxmc.predictive.grid_draws` and
+    :func:`~rxmc.predictive.gp_predictive_draws`; :func:`coverage_curve`,
+    :func:`coverage_error` and :func:`sharpness` need the draws, so pass
+    ``return_draws=True`` for them.  To predict at points that were never
+    measured, use :func:`~rxmc.predictive.grid_draws`.
+
     Parameters
     ----------
     problem : Problem
@@ -203,6 +220,10 @@ def predictive_draws(
         Posterior rows in ``problem.names`` order (a 1-D array is one row).
     constraint : int, optional
         Index into ``problem.constraints``.
+    terms : sequence of Term, optional
+        Terms of the constraint, by identity; ``None`` means all of them.
+    statistical : bool, optional
+        Whether the reported statistical diagonals join them.
     n_rep : int, optional
         Draws per posterior row (ignored when ``model_only``).
     rng : numpy.random.Generator or seed, optional
@@ -214,11 +235,16 @@ def predictive_draws(
         term spans the two (module docstring): draws then come from the
         conditional ``N(mu_c, Sigma_c)`` of the held-out rows given the fitted
         data.
+    levels : sequence of float, optional
+        Percentiles of the band.
+    return_draws : bool, optional
+        Return the draws instead of the band.
 
     Returns
     -------
     np.ndarray
-        In comparison space: shape ``(n * n_rep, n_active)``, or
+        In comparison space: the band, ``(len(levels), n_active)``; with
+        ``return_draws`` the draws, ``(n * n_rep, n_active)``, or
         ``(n, n_active)`` when ``model_only``.
     """
     rng = np.random.default_rng(rng)
@@ -226,13 +252,19 @@ def predictive_draws(
     n = samples.shape[0]
     c = problem.constraints[constraint]
     N = c.n_active
+    if given is not None and not (terms is None and statistical):
+        raise ValueError(
+            "given= conditions on the fitted data under the full covariance of "
+            "the spanning term, so it cannot be combined with a term selection; "
+            "drop terms=/statistical= or drop given="
+        )
     cond = None if given is None else _Conditional(problem, given, constraint)
 
     if model_only:
         out = np.empty((n, N))
         for i in range(n):
             out[i] = cond(samples[i])[0] if cond else c.ym(samples[i])[c.active]
-        return out
+        return out if return_draws else np.percentile(out, levels, axis=0)
 
     out = np.empty((n * n_rep, N))
     for i in range(n):
@@ -240,12 +272,13 @@ def predictive_draws(
         if cond:
             mu, Sigma = cond(theta)
         else:
-            mu, Sigma = c.ym(theta)[c.active], c.matrix(theta)
+            mu = c.ym(theta)[c.active]
+            Sigma = c.matrix(theta, terms=terms, statistical=statistical)
         L = _psd_factor(Sigma)
         z = rng.standard_normal((n_rep, N))
         z *= c.likelihood.predictive_scale(rng, n_rep, *theta[c.like_gather])[:, None]
         out[i * n_rep : (i + 1) * n_rep] = mu + z @ L.T
-    return out
+    return out if return_draws else np.percentile(out, levels, axis=0)
 
 
 def coverage_curve(draws, y, levels=None) -> np.ndarray:

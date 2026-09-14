@@ -180,8 +180,15 @@ gp = T.kernel(Matern(1.0, nu=2.5), on=comp, coords=lambda x: x / np.pi,
 q = lambda x: rx.reactions.momentum_transfer(x, d.meta["k"])
 gp_q = T.kernel(RBF(1.0), on=comp, coords=q, amplitude=lambda c, lA, r: np.exp(lA) * c.x ** (r / 2),
                 amplitude_params=(log_A, r))
-c = rx.Constraint([comp], terms=[gp])
-band = rx.predictive.total_predictive_band(problem, gp, omp.bind(x_fine, d.meta), x_fine, samples)
+eps = T.noise(rx.Parameter("log_eps", prior=stats.norm(-3, 1)))
+c = rx.Constraint([comp], terms=[eps, gp])
+pred = omp.bind(x_fine, d.meta)
+# the model's own prediction with correlated draws from the inferred covariance
+band = rx.predictive.grid_draws(problem, pred, x_fine, samples, terms=[gp])
+# what a measurement would show: the experimental terms too (recipe 40)
+full = rx.predictive.grid_draws(problem, pred, x_fine, samples, terms=[gp, eps])
+# GP regression on the residuals instead
+fit = rx.predictive.gp_predictive_draws(problem, gp, pred, x_fine, samples, conditioned=True)
 ```
 
 Expected behaviour:
@@ -191,14 +198,25 @@ Expected behaviour:
   bounded by the log of the kernel's bounds, so it compiles with a uniform
   prior there (`params=` for any other prior).
 - `kernel()` returns a `KernelTerm`, a `Term` that also carries the kernel,
-  so the predictive band can condition the discrepancy from the term alone.
+  so the predictive band can be built from the term alone.
 - The model parameters relax from their biased values toward the truth
-  (`gp_discrepancy`); the learned discrepancy tracks the true defect.
-- `total_predictive_band` finds the kernel's columns from the term itself;
-  no column arithmetic.  It conditions on the residuals of the training rows
-  with everything *else* in the constraint's covariance (statistical errors,
-  noise, modes) as the regression noise, and predicts in the comparison
-  space of the term's comparisons (`physical=True` maps back).
+  (`gp_discrepancy`); the inferred envelope contains the true defect.
+- The kernel declares a **mean-zero** discrepancy, so the likelihood is the
+  marginal `y ~ N(ym(θ), Σ(θ))` and `θ` is inferred with the discrepancy
+  integrated out.  `grid_draws` with the kernel among its `terms` matches
+  that: whole correlated curves drawn from the inferred covariance about the model's own
+  prediction, one per posterior row.  That is a statement about where and by
+  how much *the model* fails.
+- `gp_predictive_draws(..., conditioned=True)` gives the other object, the GP posterior mean given the
+  residuals — data-driven regression on top of the model, which interpolates
+  the residuals rather than describing the model's error.
+  `gp_posterior_predictive` is the same conditioning on bare arrays.
+- `gp_predictive_draws` finds the kernel's constraint, rows and columns
+  from the term itself; no column arithmetic.  Unconditioned it is exactly
+  `grid_draws` on that constraint.  Both predict in the comparison space
+  (`physical=True` maps back), and `return_draws=True` gives the
+  draws themselves, which is what a functional summary (a simultaneous band,
+  an extremum, an integral) needs — well posed only because the draw is joint.
 - Every error-model form of the α+Ca study reproduces a hand-built dense
   matrix (`TestStudyForms`).
 
@@ -371,9 +389,10 @@ grid for plotting, with the solver set up once per grid.*
 omp = rx.reactions.ElasticXS("dXS/dA", central, spin_orbit, args_from_params, params,
                              lmax=20, wavelengths_beyond_range=2.0, zeros_per_node=5)
 comp = rx.Comparison(d, omp)                                   # bound to d.x, d.meta
-fine = omp.bind(np.deg2rad(np.linspace(0.5, 179.5, 200)), d.meta)
-ys = [fine(*s[problem.columns(omp.params)]) for s in samples[::50]]
-band = rx.predictive.predictive_band(ys, levels=(5, 50, 95))
+x_fine = np.deg2rad(np.linspace(0.5, 179.5, 200))
+fine = omp.bind(x_fine, d.meta)
+band = rx.predictive.grid_draws(problem, fine, x_fine, samples[::50], model_only=True,
+                                levels=(5, 50, 95))
 ```
 
 Expected behaviour:
@@ -423,16 +442,31 @@ Expected behaviour:
 contain 68 % of the points, and how wide are they?*
 
 ```python
-draws = rx.diagnostics.predictive_draws(problem, samples, constraint=0, n_rep=4)
+band = rx.diagnostics.predictive_draws(problem, samples, constraint=0, n_rep=4)   # (16, 50, 84) %
+draws = rx.diagnostics.predictive_draws(problem, samples, n_rep=4, return_draws=True)
 cov = rx.diagnostics.coverage_curve(draws, problem.constraints[0].y[problem.constraints[0].active])
 err = rx.diagnostics.coverage_error(draws, y_active)
 width = rx.diagnostics.sharpness(draws, transform=np.exp)      # widths in physical space for a log fit
+# the model plus its discrepancy alone, without the experimental uncertainty
+model_side = rx.diagnostics.predictive_draws(problem, samples, terms=[gp], statistical=False)
 ```
 
 Expected behaviour:
 
 - Draws are `ym(theta) + L z` on the active points in comparison space;
   `model_only=True` returns `ym(theta)` and assembles no covariance.
+- The return is a percentile band by default, the draws with
+  `return_draws=True` — the convention `grid_draws` and
+  `gp_predictive_draws` share.  Coverage and sharpness need the draws.
+  At points that were never measured, use `grid_draws` (recipe 40).
+- `terms=` and `statistical=` choose which pieces of the error model a draw
+  carries; the default is all of them.  Model plus discrepancy and model plus
+  discrepancy plus experimental uncertainty are different objects, and only
+  the second is what measured data should be compared against — so a coverage
+  or sharpness check always uses the default.  The first answers a different
+  question: what the fit says about the *model's* prediction.  The same two
+  arguments select on `constraints[i].matrix(theta)`; `given=` conditions
+  under the full covariance and cannot be combined with a selection.
 - Coverage is near nominal for a correct error model and clearly below
   it for an overconfident one.
 - `logz_summary` reports the max of the replicate half-range and the
@@ -1276,11 +1310,68 @@ optical potentials for single-nucleon scattering*, Phys. Rev. C 107, 014602
 (2023), [arXiv:2211.07741](https://arxiv.org/abs/2211.07741), which rejects
 points more than 3σ from the current model between rounds.
 
+## 40. Predict on a new grid, error model included
+
+*I have a posterior, and I want predictions at `x` I never measured — a fine
+plotting grid, an extrapolation — carrying the uncertainty my error model
+declares, not only the spread of the model curves.*
+
+```python
+log_sigma = rx.Parameter("log_sigma", prior=stats.norm(np.log(0.2), 1.0))
+c = rx.Constraint([comp], terms=[T.noise(log_sigma)], statistical=False)
+problem = rx.Problem([c])
+pred = line.bind(x_fine)
+model_band = rx.predictive.grid_draws(problem, pred, x_fine, samples, model_only=True)
+full_band = rx.predictive.grid_draws(problem, pred, x_fine, samples, n_rep=2)
+draws = rx.predictive.grid_draws(problem, pred, x_fine, samples, return_draws=True)
+# several experiments in one constraint: say which one the grid stands for
+band_a = rx.predictive.grid_draws(problem_ab, pred, x_fine, samples, comparison=comp_a)
+```
+
+Expected behaviour:
+
+- For each row the model is evaluated on the grid and every selected term is
+  re-evaluated there from its own definition, with the model's prediction
+  standing in for `c.y` and the predictor's `meta` for `c.meta`; one
+  correlated draw is taken from the sum (times the likelihood's
+  `predictive_scale`, so a Student-t draws a t).  At the measured points with
+  every term a function, it draws from the same distribution as
+  `predictive_draws`.
+- Any term that is a function of the `TermContext` travels: `noise`,
+  `noise_fraction`, `model_error`, `normalization`/`offset`/`systematic` with
+  a parameter or a scalar magnitude, a `kernel`, and a user's
+  `Term(fn, params, kind="matrix")`.
+- A term that is an array has no value at a new `x`: the reported
+  statistical errors (`statistical=True`), a fixed `Term(array)`, a per-point
+  `magnitude=`, a function closing over the measured rows.  Drawing it would
+  invent the error of a measurement nobody made, so `grid_draws` raises and
+  names the term.  The remedies are `predictive_draws` at the data, an
+  explicit `terms=[...]` (`model_only=True` for the model alone), or an error
+  model that is a function of `x`, as above.  Interpolating reported errors is
+  a modelling choice, and is written as such a function.
+- `model_only=True` and the default are different objects: the uncertainty of
+  the *curve* and the uncertainty of a *measurement* at that `x`.  At the data
+  the first under-covers and the second is calibrated (recipe 17).  A
+  discrepancy (recipe 7) is a third source, between the two.
+- With several comparisons in the constraint, `terms=None` needs
+  `comparison=`: a term belonging to one experiment, drawn on a grid, means a
+  future measurement by that experiment.
+- The band is the default return, `(len(levels), len(x_pred))`, as for
+  `predictive_draws` and `gp_predictive_draws`; `return_draws=True` gives the
+  draws, whole correlated curves, so a functional summary is well posed.
+
 ## What this API does not express
 
 Each item names the assumption that breaks, the nearest workaround, and
 the size of the addition that would lift it.
 
+- **Reported point-by-point errors at a new `x`.**  A statistical error
+  quoted for each measured point has no value where nothing was measured, so
+  `grid_draws` refuses to carry it (recipe 40).  Workaround: an error model
+  that is a function of `x` — inferred noise, or an interpolation of the
+  reported errors written as a `Term` of `c.x` — which is a modelling choice
+  the user makes explicitly.  Addition refused by design: the library would be
+  inventing the error of a measurement nobody made.
 - **Non-elliptical likelihoods.**  Poisson counts, censored points and upper
   limits, and two-component good/bad mixtures `(1 − β) N + β t` (Hanson
   2007) are not functionals of `(d2, logdet, n)`.  Workaround: none that is

@@ -56,7 +56,7 @@ class Predictor:
         ``fn(*values) -> np.ndarray`` on that grid.
     meta : mapping, optional
         The dataset metadata the model was bound with; a term evaluated at the
-        predictor's grid (:func:`~rxmc.predictive.total_predictive_band`) reads
+        predictor's grid (:func:`~rxmc.predictive.grid_draws`) reads
         it through ``c.meta(key)``.
     """
 

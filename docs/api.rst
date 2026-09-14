@@ -108,9 +108,10 @@ Predictive
    :toctree: generated/
    :nosignatures:
 
+   rxmc.predictive.grid_draws
+   rxmc.predictive.gp_predictive_draws
    rxmc.predictive.gp_posterior_predictive
    rxmc.predictive.predictive_band
-   rxmc.predictive.total_predictive_band
 
 Reactions
 ---------

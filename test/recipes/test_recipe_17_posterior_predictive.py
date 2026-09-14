@@ -27,14 +27,16 @@ def test_draws_are_ym_plus_correlated_noise_in_comparison_space():
     log_eps = Parameter("log_eps", prior=stats.norm(-2, 1))
     p = Problem([Constraint([Comparison(d, line())], terms=[T.noise(log_eps)])])
     theta = np.array([*TRUE, np.log(0.2)])
-    draws = predictive_draws(p, theta, n_rep=20000, rng=0)
+    draws = predictive_draws(p, theta, n_rep=20000, rng=0, return_draws=True)
     ym = TRUE[0] * d.x + TRUE[1]
     np.testing.assert_allclose(draws.mean(0), ym, atol=0.01)
     np.testing.assert_allclose(
         np.cov(draws.T), p.constraints[0].matrix(theta), atol=0.01
     )
     # model_only: the predictions themselves, no covariance
-    np.testing.assert_allclose(predictive_draws(p, theta, model_only=True)[0], ym)
+    np.testing.assert_allclose(
+        predictive_draws(p, theta, model_only=True, return_draws=True)[0], ym
+    )
 
 
 def big_dataset(err_scale=1.0, seed=3, n=200):
@@ -49,7 +51,7 @@ def test_coverage_is_nominal_for_the_right_error_model_and_low_for_an_overconfid
     d = big_dataset()
     p = Problem([Constraint([Comparison(d, line())])])
     s = oracle_samples(p, 400, rng=0)  # exact posterior rows stand in for a chain
-    draws = predictive_draws(p, s, n_rep=4, rng=1)
+    draws = predictive_draws(p, s, n_rep=4, rng=1, return_draws=True)
     y_active = p.constraints[0].y[p.constraints[0].active]
     np.testing.assert_allclose(
         coverage_curve(draws, y_active, levels), levels, atol=0.1
@@ -58,7 +60,7 @@ def test_coverage_is_nominal_for_the_right_error_model_and_low_for_an_overconfid
     # the same data with the errors claimed five times smaller
     tight = Problem([Constraint([Comparison(big_dataset(err_scale=0.2), line())])])
     draws_tight = predictive_draws(
-        tight, oracle_samples(tight, 400, rng=0), n_rep=4, rng=1
+        tight, oracle_samples(tight, 400, rng=0), n_rep=4, rng=1, return_draws=True
     )
     assert np.all(coverage_curve(draws_tight, y_active, levels) < levels - 0.2)
 
@@ -68,7 +70,9 @@ def test_sharpness_in_physical_units_for_a_log_fit():
     comp = Comparison(d, line(), space=tf.log)
     log_eps = Parameter("log_eps", prior=stats.norm(-2, 1))
     p = Problem([Constraint([comp], terms=[T.noise(log_eps)], statistical=False)])
-    draws = predictive_draws(p, np.array([*TRUE, np.log(0.1)]), n_rep=2000, rng=2)
+    draws = predictive_draws(
+        p, np.array([*TRUE, np.log(0.1)]), n_rep=2000, rng=2, return_draws=True
+    )
     width_log = sharpness(draws)
     width = sharpness(draws, transform=np.exp)
     assert np.all(width > 0) and np.all(width_log > 0)

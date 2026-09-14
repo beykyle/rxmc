@@ -44,7 +44,7 @@ samples = sampler.get_chain(discard=300, flat=True)
 print(samples[:, problem.columns(m)].mean(), samples[:, problem.columns(b)].mean())
 
 # the posterior predictive on the data points, with the error model
-draws = rx.diagnostics.predictive_draws(problem, samples[::20], n_rep=2)
+draws = rx.diagnostics.predictive_draws(problem, samples[::20], n_rep=2, return_draws=True)
 print(rx.diagnostics.coverage_curve(draws, data.y, [0.68]))
 ```
 

@@ -21,6 +21,11 @@ comparison, a dataset, a sequence of them, or ``None`` for the whole
 constraint; :class:`~rxmc.problem.Problem` resolves that to rows when it
 compiles.  The same term may be placed in several constraints.
 
+A term whose ``fn`` is a function of the context is defined wherever the model
+is, so :func:`~rxmc.predictive.grid_draws` can evaluate it on a grid that was
+never measured.  A term that is an array — the reported statistical errors, a
+fixed covariance, a per-point ``magnitude=`` — exists only at the measured rows.
+
 Two mechanisms are expressed here (see ``docs/groundup_design.md``):
 
 * **Correlating comparisons** — a ``mode`` or ``matrix`` term whose ``on``
@@ -291,7 +296,7 @@ class Term:
 class KernelTerm(Term):
     """A :func:`kernel` term that also carries what GP conditioning needs.
 
-    :func:`~rxmc.predictive.total_predictive_band` reads these to predict the
+    :func:`~rxmc.predictive.gp_predictive_draws` reads these to condition the
     discrepancy at new points; the covariance machinery treats a
     ``KernelTerm`` exactly as a ``matrix`` :class:`Term`.
 

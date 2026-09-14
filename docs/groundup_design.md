@@ -312,7 +312,7 @@ model_error(parameter, averaging=True, log=True, on=None)
 systematic(parameter, basis, log=True, basis_params=(), on=None, coords=None)
 kernel(kernel, coords=None, amplitude=None, amplitude_params=(), jitter=1e-10,
        prefix="discrepancy", params=None, on=None) -> KernelTerm
-# KernelTerm(Term) adds kernel, n_kernel, amplitude, jitter so predictive.total_predictive_band
+# KernelTerm(Term) adds kernel, n_kernel, amplitude, jitter so predictive.gp_predictive_draws
 #          can condition the discrepancy from the term alone.  A derived hyperparameter is
 #          bounded by the log of the kernel's bounds (a uniform prior in log-theta).
 # params=: the hyperparameter Parameter objects, one per free element in kernel.theta order;
@@ -581,7 +581,8 @@ gone.
 
 ```python
 # diagnostics.py
-predictive_draws(problem, samples, constraint=0, *, n_rep=1, rng=None, model_only=False, given=None)
+predictive_draws(problem, samples, constraint=0, *, terms=None, statistical=True, n_rep=1, rng=None,
+                 model_only=False, given=None, levels=(16, 50, 84), return_draws=False)
 coverage_curve(draws, y, levels=None); coverage_error(draws, y, levels=None)
 sharpness(draws, percentiles=(16, 84), transform=None)
 heldout_log_predictive(heldout_problem, samples, *, given=None)   # Problem([fit.complement()])
@@ -595,9 +596,12 @@ logz_summary(logz, logzerr); compare_logz(a, b, sigma=2.0)
 # predictive.py
 gp_posterior_predictive(kernel, theta, X_train, residuals, X_pred, *, train_noise_var=None, jitter=1e-10)
 predictive_band(draws, levels=(16, 50, 84))
-total_predictive_band(problem, term, predictor, x_pred, samples, *, noise_std=0.0,
-                      train_noise_var=None, levels=(16, 84), n_draws=400, rng=None,
-                      physical=False)
+grid_draws(problem, predictor, x_pred, samples, constraint=0, *, comparison=None, terms=None,
+           model_only=False, joint=True, physical=False, n_rep=1, rng=None,
+           levels=(16, 50, 84), return_draws=False)
+gp_predictive_draws(problem, term, predictor, x_pred, samples, *, terms=None, conditioned=False,
+                    joint=True, noise_std=0.0, train_noise_var=None, physical=False,
+                    n_rep=1, rng=None, levels=(16, 50, 84), return_draws=False)
 # term is the KernelTerm; its columns and the predictor's come from problem.columns.  The
 # conditioning noise defaults to the constraint's covariance minus the kernel block; the
 # band is in the comparison space of the term's comparisons unless physical=True.
@@ -795,7 +799,7 @@ What comes across from `src/rxmc` on `api_generalisation`, by file.
 | `Observation.__init__` transform handling and `_check_finite` | → `Comparison.__post_init__`; error names `data.label` |
 | `Constraint._validate_constant_covariance` message | → compile error raised by `StructuredCovariance.factor_constant_parts`, remedies updated to the new spellings |
 | `model_comparison.predictive_draws`, `heldout_log_predictive` | take `(problem, samples)`; read `CompiledConstraint.ym`, `.matrix`, `.log_likelihood` |
-| `predictive.total_predictive_band` | take `(problem, term, predictor, ...)`; columns from `problem.columns` |
+| `predictive.total_predictive_band` (now `grid_draws` and `gp_predictive_draws`) | take `(problem, term, predictor, ...)`; columns from `problem.columns` |
 | `ParameterConfig.prior_transform` cursor | → per-slot map in `assemble_prior` |
 | `ElasticDifferentialXSObservation.from_measurement`, `IsobaricAnalogPNObservation.from_measurement` | one free `from_measurement`; Rutherford from kinematics |
 | `PhysicalModel.Polynomial` | → `polynomial(order)` factory |
@@ -894,7 +898,7 @@ is driven by emcee or dynesty.
 | `error_models` | systematic_err_demo | emcee | the ladder on one comparison, the Peelle matrix as a fixed `Term`, offsets known and free; two-constraint section with case B via a shared `Parameter` | 153 s |
 | `normalization_and_covariance_structure` | normalization_inference | emcee | ρᵢ as `quartic \| tf.scale(rho_i)` against `reported_terms()`; the four-case gallery via `matrix(theta)` | 328 s |
 | `correlated_observations` | correlated_observations | emcee | case A vs B on the toy; Neudecker et al. (2014) §II.A and §II.B recreated: the multi-quantity Peelle puzzle with a spanning `matrix` term built through `c.split` | 141 s |
-| `gp_discrepancy` | gp_discrepancy | emcee (toy), dynesty (reaction) | `kernel` term; `total_predictive_band(problem, term, ...)`; the same defect fit with a sampled Legendre mean correction for contrast; n+⁴⁰Ca with the surface absorption missing | 617 s |
+| `gp_discrepancy` | gp_discrepancy | emcee (toy), dynesty (reaction) | `kernel` term; `gp_predictive_draws(problem, term, ...)`; the same defect fit with a sampled Legendre mean correction for contrast; n+⁴⁰Ca with the surface absorption missing | 617 s |
 | `robust_likelihoods` | robust_likelihoods | emcee | Student-t vs Gaussian; ν bounded on the `Parameter`; a global error scale and a USU offset per technique | 154 s |
 | `measurement_to_calibration` | measurement_to_calibration + 30s_optical_potential_calibration + the tempering/coverage section of overconfidence | dynesty | `from_measurement`, `reported_terms`, the singular-covariance error, `Constraint(weight=)`, `coverage_curve`, emcee and `dill` as other drivers, the KDUQ `model_error` spelling | 182 s |
 | `alpha_ca_error_model_comparison` | **new** (the `jitr` quickstart's α+⁴⁴Ca data, EXFOR F0567) | dynesty | real data without errors, a four-parameter potential, log space with `log_jacobian`, the `L0`/`E0`/`L2y`/`Lgp` ladder by evidence, `masked_where`/`complement` with `heldout_log_predictive` and held-out coverage | 1197 s (alongside another notebook) |
@@ -964,7 +968,7 @@ Dropped: `sampling_algos` (in-package samplers), `calibration_config_emcee_dynes
   `Predictor.__reduce__` rebuilds it from `(model, x, meta)`; the factory
   closures in `terms.py` pickle under `dill` as they are.
 - **G7 Analysis on `(problem, samples)`**: `predictive_draws`,
-  `heldout_log_predictive`, `total_predictive_band` selecting columns via
+  `heldout_log_predictive`, `grid_draws`/`gp_predictive_draws` selecting columns via
   `problem.columns`.
 - **G8 The α+Ca and hierarchical notebooks** and the bbb `posterior.py` shim.
 - **G9 Docs**: `design.md` rewritten from this document; API reference
@@ -1036,7 +1040,7 @@ recipe test it unlocks pass.
 6. **`diagnostics`, `predictive`.**  Ported: GP-versus-sklearn,
    `predictive_draws` covariance recovery, `heldout_log_predictive`,
    `logz_summary` and `compare_logz`.  Recipe tests unlocked: 7
-   (`total_predictive_band` finds the kernel columns itself), 17, 18, 28,
+   (`gp_predictive_draws` finds the kernel columns itself), 17, 18, 28,
    30, 31.
 7. **CI wiring.**  The heading-to-file check between `recipes.md` and
    `test/recipes/` is itself a test (`test/test_recipes_index.py`: one

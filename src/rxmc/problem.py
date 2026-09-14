@@ -434,9 +434,14 @@ class CompiledConstraint:
             (o, index.add_all(c.predictor.params), c)
             for o, c in zip(self.offsets, comps)
         ]
-        terms = list(constraint.terms)
-        if constraint.statistical:
-            terms = [statistical(c.y_err, on=c) for c in comps] + terms
+        # the reported statistical diagonals are built here, not by the user, so
+        # a term selection names them with statistical=True rather than by object
+        self.statistical_terms = (
+            [statistical(c.y_err, on=c) for c in comps]
+            if constraint.statistical
+            else []
+        )
+        terms = self.statistical_terms + list(constraint.terms)
         entries = [
             (t, constraint.support(t.on), index.add_all(t.params)) for t in terms
         ]
@@ -490,9 +495,38 @@ class CompiledConstraint:
             return np.inf
         return float(self.likelihood.chi2(*s, self.n_active, *theta[self.like_gather]))
 
-    def matrix(self, theta) -> np.ndarray:
-        """The dense covariance on the active points at ``theta``."""
-        return self.covariance.matrix(self.ym(theta), theta)
+    def entries_for(self, terms=None, statistical: bool = True):
+        """Covariance entries of a term selection, or ``None`` for all of them.
+
+        ``terms`` are :class:`~rxmc.terms.Term` objects declared on this
+        constraint, matched *by identity*; ``None`` means every declared term.
+        ``statistical`` says whether the reported statistical diagonals join
+        them.  ``None`` is returned for the full selection so the caller takes
+        the cached path.
+        """
+        if terms is None and statistical:
+            return None
+        chosen = list(self.source.terms) if terms is None else list(terms)
+        for t in chosen:
+            if not any(t is u for u in self.source.terms):
+                raise ValueError(
+                    f"{t!r} is not a term of this constraint; terms= selects among "
+                    "the terms it was declared with (the reported statistical "
+                    "errors are selected with statistical=True/False instead)"
+                )
+        if statistical:
+            chosen = self.statistical_terms + chosen
+        return [e for e in self.covariance.entries if any(e.term is t for t in chosen)]
+
+    def matrix(self, theta, *, terms=None, statistical: bool = True) -> np.ndarray:
+        """The dense covariance on the active points at ``theta``.
+
+        ``terms`` and ``statistical`` select part of the error model; see
+        :meth:`entries_for`.  The default is the covariance the likelihood uses.
+        """
+        return self.covariance.matrix(
+            self.ym(theta), theta, entries=self.entries_for(terms, statistical)
+        )
 
     def __repr__(self):
         return f"CompiledConstraint({self.labels}, n_active={self.n_active})"

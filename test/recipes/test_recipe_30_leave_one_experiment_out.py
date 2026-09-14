@@ -28,7 +28,7 @@ def test_held_out_draws_coverage_and_tolerance():
     for i in range(3):
         fit, held, _ = split(i)
         s = oracle_samples(fit, 300, rng=i)
-        draws = predictive_draws(held, s, n_rep=4, rng=i)
+        draws = predictive_draws(held, s, n_rep=4, rng=i, return_draws=True)
         h = held.constraints[0]
         assert draws.shape == (1200, DATA[i].n) and h.n_active == DATA[i].n
         tol = np.percentile(np.abs(draws - draws.mean(0)), 90, axis=0)
@@ -49,8 +49,10 @@ def test_a_discrepancy_fit_to_the_other_experiments_carries_into_the_prediction(
     fit, held, full = split(2, terms=[spanning_gp])
     theta = np.array(TRUE)
     # the marginal held-out block ignores what the fitted experiments taught the GP
-    marginal = predictive_draws(held, theta, model_only=True)[0]
-    conditional = predictive_draws(held, theta, model_only=True, given=fit)[0]
+    marginal = predictive_draws(held, theta, model_only=True, return_draws=True)[0]
+    conditional = predictive_draws(
+        held, theta, model_only=True, given=fit, return_draws=True
+    )[0]
     np.testing.assert_allclose(marginal, TRUE[0] * DATA[2].x + TRUE[1])
     assert not np.allclose(conditional, marginal)
     # the conditional density is the joint divided by the fit, exactly
@@ -59,5 +61,5 @@ def test_a_discrepancy_fit_to_the_other_experiments_carries_into_the_prediction(
     # ...which the marginal is not, because the GP spans the split
     assert heldout_log_predictive(held, theta)[0] != pytest.approx(lp)
     s = oracle_samples(fit, 200, rng=0)
-    draws = predictive_draws(held, s, n_rep=4, rng=0, given=fit)
+    draws = predictive_draws(held, s, n_rep=4, rng=0, given=fit, return_draws=True)
     assert draws.shape == (800, DATA[2].n) and np.all(np.isfinite(draws))
