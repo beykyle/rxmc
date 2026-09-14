@@ -1,3 +1,7 @@
+---
+orphan: true
+---
+
 # A ground-up rxmc: declare, then compile
 
 This document guides a rewrite of `rxmc` from a blank repository.  It is the
@@ -132,10 +136,14 @@ composed onto a `Model`, and the coordinates a `Term` is evaluated in.
 ### 2.3 `units.py` and `data.py`
 
 ```python
-# units.py — the one pint registry and the unit contract
-ureg = UnitRegistry()
-XS_UNIT = ureg.barn / ureg.steradian          # every cross section stored in b/sr
-RUTHERFORD_UNIT = ureg.millibarn / ureg.steradian   # what jitr reports
+# units.py — the unit contract, without a unit library
+XS_UNIT = "b/sr"                              # every cross section stored in b/sr
+RUTHERFORD_UNIT = "mb/sr"                     # what jitr reports
+MB_PER_B = 1000.0
+def parse_unit(label) -> tuple[float, str]    # (factor into the internal unit, kind)
+# x4i3 converts every EXFOR cross section to barns while parsing and exfor_tools
+# labels the result "barns/ster", "b" or "unitless"; parse_unit maps that fixed
+# vocabulary (plus the obvious spellings) and rejects anything else loudly.
 MB_PER_B = 1000.0
 DEFAULT_LMAX = 20
 def check_angle_grid(angles_rad, name) -> None
@@ -162,7 +170,7 @@ workspace, no identity key.
 `from_measurement` is the single EXFOR adapter.  It reads the
 `exfor_tools.Distribution` fields (`x, y, Einc, quantity, y_units,
 statistical_err, systematic_norm_err, systematic_offset_err, subentry`),
-converts units once through `ureg`, divides every dimensionful error by the
+converts units once through `parse_unit`, divides every dimensionful error by the
 conversion factor `norm`, passes the fractional normalisation error through
 untouched, converts angles to radians, and fills `meta` with `reaction`,
 `Elab`, `quantity`, `k` (and `ExIAS` for the (p,n) channel).  The
@@ -262,6 +270,9 @@ class TermContext:
     def __len__(self) -> int
     def meta(self, key) -> ndarray   # the owning block's data.meta[key], one value per point;
                                      # for a term spanning blocks, the per-point concatenation
+    segments: tuple[slice, ...]      # rows of each spanned comparison within the gathered support
+    labels: tuple[str, ...]          # their comparison labels, in the same order
+    def split(self, a) -> list       # a[s] for s in segments
 
 @dataclass(frozen=True)
 class Term:
@@ -300,7 +311,10 @@ noise_fraction(parameter, log=True, on=None)
 model_error(parameter, averaging=True, log=True, on=None)
 systematic(parameter, basis, log=True, basis_params=(), on=None, coords=None)
 kernel(kernel, coords=None, amplitude=None, amplitude_params=(), jitter=1e-10,
-       prefix="discrepancy", params=None, on=None)
+       prefix="discrepancy", params=None, on=None) -> KernelTerm
+# KernelTerm(Term) adds kernel, n_kernel, amplitude, jitter so predictive.gp_predictive_draws
+#          can condition the discrepancy from the term alone.  A derived hyperparameter is
+#          bounded by the log of the kernel's bounds (a uniform prior in log-theta).
 # params=: the hyperparameter Parameter objects, one per free element in kernel.theta order;
 #          None derives fresh ones named f"{prefix}_{name}".  Pass the same objects to share
 #          hyperparameters between per-block kernels.  Two kernel terms with derived
@@ -567,19 +581,30 @@ gone.
 
 ```python
 # diagnostics.py
-predictive_draws(problem, samples, constraint=0, *, n_rep=1, rng=None, model_only=False)
+predictive_draws(problem, samples, constraint=0, *, terms=None, statistical=True, n_rep=1, rng=None,
+                 model_only=False, given=None, levels=(16, 50, 84), return_draws=False)
 coverage_curve(draws, y, levels=None); coverage_error(draws, y, levels=None)
 sharpness(draws, percentiles=(16, 84), transform=None)
-heldout_log_predictive(heldout_problem, samples)          # Problem([fit.complement()], priors=...)
+heldout_log_predictive(heldout_problem, samples, *, given=None)   # Problem([fit.complement()])
+# given=: the fitted problem.  A held-out problem's own likelihood is the marginal of its
+#         rows, wrong when a term spans fit and held-out rows (a GP over experiments);
+#         given= computes the Gaussian conditional p(y_held | y_fit, theta) under the full
+#         covariance, which equals the marginal when nothing spans.
 log_posterior_predictive(logp_samples, logw=None)
 logz_summary(logz, logzerr); compare_logz(a, b, sigma=2.0)
 
 # predictive.py
 gp_posterior_predictive(kernel, theta, X_train, residuals, X_pred, *, train_noise_var=None, jitter=1e-10)
 predictive_band(draws, levels=(16, 50, 84))
-total_predictive_band(problem, term, predictor, x_pred, samples, *, noise_std=0.0,
-                      train_noise_var=None, levels=(16, 84), n_draws=400, rng=None)
-# term is the kernel Term; its columns and the predictor's come from problem.columns
+grid_draws(problem, predictor, x_pred, samples, constraint=0, *, comparison=None, terms=None,
+           model_only=False, joint=True, physical=False, n_rep=1, rng=None,
+           levels=(16, 50, 84), return_draws=False)
+gp_predictive_draws(problem, term, predictor, x_pred, samples, *, terms=None, conditioned=False,
+                    joint=True, noise_std=0.0, train_noise_var=None, physical=False,
+                    n_rep=1, rng=None, levels=(16, 50, 84), return_draws=False)
+# term is the KernelTerm; its columns and the predictor's come from problem.columns.  The
+# conditioning noise defaults to the constraint's covariance minus the kernel block; the
+# band is in the comparison space of the term's comparisons unless physical=True.
 ```
 
 ## 3. Worked example: the α+Ca study shape
@@ -705,7 +730,7 @@ rewrite: a capability is done when its row has a test.
 | global error scale and USU modes (new, reference) | `diag` term scaling `c.meta("y_err")` with `statistical=False`; `offset(parameter=, on=blocks_of_technique)`; recipe 34 | test_terms |
 | energy-dependent parameters (new, reference) | per-block `Model` instances closing over `meta`, shared coefficient objects; recipe 35 | test_model |
 | discrepancy on a physical basis, Legendre (new, reference) | `systematic` modes or `omp + Model(basis_sum)`; recipe 36 | test_terms |
-| correlated systematics between observables of one measurement (new, reference) | two blocks, one constraint, spanning mode; recipe 37 | test_covariance |
+| correlated normalisations between quantities of one experiment, Peelle's puzzle in more than one dimension (new, reference) | one comparison per quantity, one constraint, a spanning `matrix` term built from `c.split(c.ym)`; recipe 37 | test_covariance |
 | classic normal hierarchical model, BDA3 ch. 5 (new, reference) | marginalised as `noise(log_tau)`, non-centred as a `Model` over `[mu, log_tau, *etas]`, centred as a joint block; recipe 38 | test_problem (marginalised and non-centred agree on `mu, tau`; a parameter on a fully masked block is sampled from its prior) |
 | SafeBayes: learn the tempering exponent (new, reference) | driver loop over `replace(c, weight=η)` and `c.masked(prefix)`; next-point density as a log-likelihood difference; recipe 25 | test_problem (`replace` keeps names; `ll(prefix i+1) − ll(prefix i)` equals the Gaussian conditional) |
 | hyperprior: per-dataset parameters with a sampled spread (new) | joint block `(children + [hyper], obj)` with `logpdf` and `prior_transform` | test_problem (children uncovered without the block; `prior_transform` round trip) |
@@ -757,7 +782,7 @@ What comes across from `src/rxmc` on `api_generalisation`, by file.
 | `transforms.py` | `Transform` (minus `contextual`, `_unpack`), `as_transform`, `identity`, `log`, `exp`, `_safe_log`, `_reciprocal`, `scale` | `transforms.py` |
 | `likelihood_model.py` | `Likelihood`, `GaussianLikelihood`→`Gaussian`, `StudentT`, `Chi2`, `log_likelihood` | `likelihood.py` |
 | `covariance.py` | `TermContext`, `chol_logdet`, `as_2d`, bases `ones`, `ym`, `averaging`, `x_basis`, `exp_growth`, `constant_amplitude`, `exp_growth_amplitude`; helpers `_masked`, `_full`, `_coefficient`, `_scaled_term`, `_kernel_params`; factories `statistical_term`, `offset_term`, `normalization_term`, `noise_term`, `noise_fraction_term`, `model_error_term`, `systematic_term`, `kernel_term` (drop the `_term` suffix, `support=`→`on=`) | `terms.py` |
-| `observation_from_measurement.py` | `ureg`, `XS_UNIT`, `RUTHERFORD_UNIT`, `MB_PER_B`, `DEFAULT_LMAX`, `check_angle_grid`, `measurement_kwargs` | `units.py`, `data.py` |
+| `observation_from_measurement.py` | `XS_UNIT`, `RUTHERFORD_UNIT`, `MB_PER_B`, `DEFAULT_LMAX`, `check_angle_grid`, `measurement_kwargs`; the pint registry is replaced by a fixed label table | `units.py`, `data.py` |
 | `elastic_diffxs_observation.py` | `set_up_solver`, the `calculate_normalization` conversion table, `momentum_transfer` | `reactions/elastic.py`, `data.py` |
 | `ias_pn_observation.py` | `set_up_solver` | `reactions/ias.py` |
 | `elastic_diffxs_model.py` | `_xs` body, `extract_dXS_dA`, `extract_dXS_dRuth`, `extract_Ay` | `reactions/elastic.py` |
@@ -774,7 +799,7 @@ What comes across from `src/rxmc` on `api_generalisation`, by file.
 | `Observation.__init__` transform handling and `_check_finite` | → `Comparison.__post_init__`; error names `data.label` |
 | `Constraint._validate_constant_covariance` message | → compile error raised by `StructuredCovariance.factor_constant_parts`, remedies updated to the new spellings |
 | `model_comparison.predictive_draws`, `heldout_log_predictive` | take `(problem, samples)`; read `CompiledConstraint.ym`, `.matrix`, `.log_likelihood` |
-| `predictive.total_predictive_band` | take `(problem, term, predictor, ...)`; columns from `problem.columns` |
+| `predictive.total_predictive_band` (now `grid_draws` and `gp_predictive_draws`) | take `(problem, term, predictor, ...)`; columns from `problem.columns` |
 | `ParameterConfig.prior_transform` cursor | → per-slot map in `assemble_prior` |
 | `ElasticDifferentialXSObservation.from_measurement`, `IsobaricAnalogPNObservation.from_measurement` | one free `from_measurement`; Rutherford from kinematics |
 | `PhysicalModel.Polynomial` | → `polynomial(order)` factory |
@@ -798,7 +823,7 @@ The bodies below encode behaviour, not API, and port with renamed calls:
 
 - `test_covariance.py`: `TestTermKinds`, `TestTermCoords`, `TestFactories`
   (including `test_old_observation_covariance_equivalence`),
-  `TestKernelTerm`, `TestStudyForms` (every α+Ca error-model form against
+  `TestKernelTerm`, `TestStudyForms` (every form of the α+Ca error-model ladder, whose legend is the table in recipe 18, against
   a hand-built dense matrix), `test_custom_term_direct`.
 - `test_likelihood_model.py`: the closed-form Student-t and `Chi2` values.
 - `test_constraint.py`: `TestComparisonSpaceTransform` (delta method,
@@ -852,7 +877,7 @@ examples/        9 notebooks (§7)
 docs/            design.md rewritten from this document once the code lands
 ```
 
-Runtime dependencies: `numpy`, `scipy`, `pint`, `jitr>=3.0`,
+Runtime dependencies: `numpy`, `scipy`, `jitr>=3.0`,
 `exfor-tools`.  `pandas` and `scikit-learn` leave `requirements.txt`
 (neither is imported; kernels stay duck-typed and sklearn moves to the
 `examples` extra).  Extras: `examples` (emcee, dynesty, corner, matplotlib,
@@ -867,21 +892,29 @@ deselects it by default (`addopts = -m "not slow"`, §9).
 Nine notebooks, each naming the current one it inherits.  Every notebook
 is driven by emcee or dynesty.
 
-| notebook | inherits | driver | new content |
-|---|---|---|---|
-| `linear_calibration` | linear_calibration_demo | emcee | prior predictive, posterior, predictive band with `problem.columns` |
-| `error_models` | systematic_err_demo | emcee | the five-model ladder; two-constraint section with case B via shared `Parameter` |
-| `normalization_and_covariance_structure` | normalization_inference | emcee | ρᵢ as `omp \| scale(rho_i)`; the four-case gallery via `matrix(theta)` |
-| `correlated_observations` | correlated_observations | emcee | case A vs B, toy and n+⁴⁰Ca |
-| `gp_discrepancy` | gp_discrepancy | emcee | `kernel` term; `total_predictive_band(problem, term, ...)`; the same defect fit with a sampled `omp + delta` mean correction for contrast |
-| `robust_likelihoods` | robust_likelihoods | emcee | Student-t vs Gaussian; ν bounded on the `Parameter` |
-| `measurement_to_calibration` | measurement_to_calibration + 30s_optical_potential_calibration + the tempering/coverage section of overconfidence | dynesty | `from_measurement`, `reported_terms`, the singular-covariance error, `Constraint(weight=)`, `coverage_curve` |
-| `alpha_ca_error_model_comparison` | **new** (the `design.md` recipe table) | dynesty | log space, `Parameter(prior=)`, masks, `complement`, `heldout_log_predictive`, `logz_summary` / `compare_logz` with `log_jacobian`, shared noise (B) and coupled normalisation (A) across two datasets, the bbb shim shown but not run |
-| `hierarchical_calibration` | **new** (recipes 24, 35, 38) | dynesty | hierarchy on the physics parameters; see below |
+| notebook | inherits | driver | new content | runtime |
+|---|---|---|---|---|
+| `linear_calibration` | linear_calibration_demo | emcee | prior predictive, posterior, predictive band with `problem.columns`, the coverage curve | 23 s |
+| `error_models` | systematic_err_demo | emcee | the ladder on one comparison, the Peelle matrix as a fixed `Term`, offsets known and free; two-constraint section with case B via a shared `Parameter` | 153 s |
+| `normalization_and_covariance_structure` | normalization_inference | emcee | ρᵢ as `quartic \| tf.scale(rho_i)` against `reported_terms()`; the four-case gallery via `matrix(theta)` | 328 s |
+| `correlated_observations` | correlated_observations | emcee | case A vs B on the toy; Neudecker et al. (2014) §II.A and §II.B recreated: the multi-quantity Peelle puzzle with a spanning `matrix` term built through `c.split` | 141 s |
+| `gp_discrepancy` | gp_discrepancy | emcee (toy), dynesty (reaction) | `kernel` term; `gp_predictive_draws(problem, term, ...)`; the same defect fit with a sampled Legendre mean correction for contrast; n+⁴⁰Ca with the surface absorption missing | 617 s |
+| `robust_likelihoods` | robust_likelihoods | emcee | Student-t vs Gaussian; ν bounded on the `Parameter`; a global error scale and a USU offset per technique | 154 s |
+| `measurement_to_calibration` | measurement_to_calibration + 30s_optical_potential_calibration + the tempering/coverage section of overconfidence | dynesty | `from_measurement`, `reported_terms`, the singular-covariance error, `Constraint(weight=)`, `coverage_curve`, emcee and `dill` as other drivers, the KDUQ `model_error` spelling | 182 s |
+| `alpha_ca_error_model_comparison` | **new** (the `jitr` quickstart's α+⁴⁴Ca data, EXFOR F0567) | dynesty | real data without errors, a four-parameter potential, log space with `log_jacobian`, the `L0`/`E0`/`L2y`/`Lgp` ladder by evidence, `masked_where`/`complement` with `heldout_log_predictive` and held-out coverage | 1197 s (alongside another notebook) |
+| `hierarchical_calibration` | **new** (recipes 24, 35, 38) | dynesty | eight schools non-centred; the hierarchy on the physics parameters; see below | 937 s (alongside another notebook) |
+
+Runtimes are single-process wall times on an eight-core laptop with the
+kernels run one at a time; the converged-tier workflow runs four at once
+with a 40-minute timeout each.  The reaction notebooks are driven by
+dynesty because emcee mixes poorly on optical-model posteriors.
 
 **`hierarchical_calibration` in detail.**  The truth is
-`y = a0(E) + a1(E) x + a2(E) x²`, measured by J synthetic datasets at known
-energies `E_j` (in `meta`) plus one held-out dataset at a new energy.  The
+`y = a0(E) + a1(E) x + a2(E) x²`, measured by J = 7 synthetic datasets at
+known energies `E_j` (in `meta`) plus one held-out dataset at a new energy
+bracketed by two fitted ones (a hierarchy learns the spread of deviations
+it has seen; an unmodelled peak between its datasets is the few-datasets
+caveat below, not a prediction it can make).  The
 true coefficient mappings `a_k(E)` are a smooth trend plus non-monotonic
 bumps.  Three fits of the same data:
 
@@ -935,7 +968,7 @@ Dropped: `sampling_algos` (in-package samplers), `calibration_config_emcee_dynes
   `Predictor.__reduce__` rebuilds it from `(model, x, meta)`; the factory
   closures in `terms.py` pickle under `dill` as they are.
 - **G7 Analysis on `(problem, samples)`**: `predictive_draws`,
-  `heldout_log_predictive`, `total_predictive_band` selecting columns via
+  `heldout_log_predictive`, `grid_draws`/`gp_predictive_draws` selecting columns via
   `problem.columns`.
 - **G8 The α+Ca and hierarchical notebooks** and the bbb `posterior.py` shim.
 - **G9 Docs**: `design.md` rewritten from this document; API reference
@@ -960,7 +993,8 @@ recipe test it unlocks pass.
    the harvest.  Then: a `pyproject` in the current shape with the `slow`
    marker registered and deselected by default; ruff, black and isort
    configuration carried over; the CI workflow (fast tier on pull
-   requests, `pytest -m slow` and nbmake on a schedule); a trusted-
+   requests, `pytest -m slow` and nbmake in the converged workflow that
+   gates `main`); a trusted-
    publishing workflow that uploads to PyPI on tag push.
 1. **`params`, `transforms`, `units`, `likelihood`, `terms`** (verbatim
    harvest plus the stateless `Term`).  Ported: `TestTermKinds`,
@@ -1006,12 +1040,15 @@ recipe test it unlocks pass.
 6. **`diagnostics`, `predictive`.**  Ported: GP-versus-sklearn,
    `predictive_draws` covariance recovery, `heldout_log_predictive`,
    `logz_summary` and `compare_logz`.  Recipe tests unlocked: 7
-   (`total_predictive_band` finds the kernel columns itself), 17, 18, 28,
+   (`gp_predictive_draws` finds the kernel columns itself), 17, 18, 28,
    30, 31.
 7. **CI wiring.**  The heading-to-file check between `recipes.md` and
-   `test/recipes/`; `pytest test` runs both suites; the fast tier must
-   finish in a few minutes on a laptop (patched solvers, small `J` and
-   `n`).
+   `test/recipes/` is itself a test (`test/test_recipes_index.py`: one
+   file per heading and vice versa, each file's docstring quoting its
+   recipe, the recipe-18 legend equal to the tests' legend), so bare
+   `pytest` runs it with both suites; the fast tier must finish in a few
+   minutes on a laptop (patched solvers, small `J` and `n`), and CI lists
+   its ten slowest tests.
 8. **Notebooks 1–9.**  Each notebook names the recipes it is the tutorial
    for: `linear_calibration` (1, 17); `error_models` (2, 4, 5, 19);
    `normalization_and_covariance_structure` (3, 6, 27);
@@ -1049,8 +1086,10 @@ preference for assertions that need no sampler at all.
   (coverage within 0.05 of nominal, `τ` recovered within its interval,
   evidence differences), record the seed, R-hat and effective sample
   size so a failure is diagnosable, and run the notebooks through nbmake.
-  They are deselected by default; pull-request CI runs the fast tier and a
-  scheduled job runs `pytest -m slow`.
+  They are deselected by default; every push runs the fast tier, and a
+  separate "Converged tier" workflow runs `pytest -m slow` and the
+  notebooks on pushes and pull requests into `main` (and by hand with
+  `workflow_dispatch`).  There is no scheduled run.
 - **Rules.**  The fast tier has a budget of a few minutes and zero
   tolerated flakiness.  A flaky fast assertion is demoted to `slow`, never
   loosened until it passes.  Every recipe test file has at least one fast

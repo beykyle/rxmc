@@ -1,301 +1,156 @@
 # rxmc
 
-> **The 1.0 rewrite is in progress on branch [`rewrite`](https://github.com/beykyle/rxmc/tree/rewrite)**, guided by
-> [`docs/groundup_design.md`](docs/groundup_design.md) and [`docs/recipes.md`](docs/recipes.md).
-> This 0.x package is preserved at tag `v0.1.0` and on branch `legacy/0.x`.
+`rxmc` calibrates reaction models to experimental data by Bayesian
+inference, with the error model declared as part of the problem: which
+errors are statistical and which are correlated, whether a normalisation is
+inferred or marginalised, whether the model is allowed a discrepancy, which
+points are held out.  A reviewer can read the declaration and write down the
+likelihood.  The library owns no sampler: a compiled problem exposes the
+densities and the prior transform that emcee, dynesty or black-box-bayes
+need.
 
-`rxmc` is an orchestration layer for Bayesian calibration of reaction models to
-large data sets with flexible, composable covariance modeling.
+##  Documentation
 
-It is built around two complementary workflows:
-
-1. **External-sampler orchestration** via `rxmc.config.CalibrationConfig`
-   for drivers such as
-   [`black-box-bayes`](https://github.com/beykyle/black-box-bayes/).
-2. **In-package end-to-end prototyping** via `rxmc.walker.Walker`
-   for smaller problems where you want to run the full MCMC workflow locally.
-
-The package composes:
-
-- curated experimental data as `Observation` objects,
-- model predictions via `PhysicalModel`,
-- uncertainty declared as additive covariance `Term`s (statistical,
-  systematic, unknown-noise, and Gaussian-process discrepancy modes) via
-  `rxmc.covariance`,
-- maximal blocks of mutually-correlated data via `Constraint`,
-- and full calibration problems via `Evidence`.
+The documentation website, including API reference is https://beykyle.github.io/rxmc/.
 
 ## Quickstart
 
+Declare, compile, hand to a sampler, read the chain back by name.
+
 ```python
+import emcee
 import numpy as np
 from scipy import stats
-import rxmc
 
-# measured data: pure data plus (optional) reported systematics as metadata
-obs = rxmc.observation.Observation(
-    x=x, y=y, y_stat_err=y_err, y_sys_err_normalization=0.04
-)
+import rxmc as rx
 
-# a constraint owns one multivariate likelihood over its stacked observations;
-# every correlated mode is an explicit covariance term - nothing is folded in
-# silently.  Here: the reported normalisation systematic plus an unknown
-# constant noise inferred alongside the model
-log_eps = rxmc.params.Parameter("log_eps")
-constraint = rxmc.constraint.Constraint(
-    [obs],
-    model,
-    extra_terms=[*obs.systematic_terms(), rxmc.covariance.noise_term(log_eps)],
-)
-evidence = rxmc.evidence.Evidence([constraint])
+# a model with parameters and priors
+m = rx.Parameter("m", prior=stats.norm(0.0, 5.0))
+b = rx.Parameter("b", prior=stats.norm(0.0, 5.0))
+line = rx.Model(lambda x, m, b: m * x + b, [m, b])
 
-# calibrate with the in-package Gibbs walker (or wrap in CalibrationConfig
-# for emcee / dynesty)
-prior = stats.multivariate_normal(mean=prior_mean, cov=prior_cov)
-walker = rxmc.walker.Walker(
-    rxmc.param_sampling.BatchedAdaptiveMetropolisSampler(
-        params=model.params,
-        starting_location=prior.mean,
-        prior=prior,
-        initial_proposal_cov=prior.cov / 100,
-    ),
-    evidence,
-    rng=np.random.default_rng(1),
-)
-walker.walk(n_steps=10_000, burnin=1_000, batch_size=1_000)
+# data with reported statistical errors
+rng = np.random.default_rng(0)
+x = np.linspace(0.0, 1.0, 20)
+data = rx.Dataset(x, 0.6 * x + 2.0 + rng.normal(0.0, 0.1, x.size), np.full(x.size, 0.1))
+
+# one comparison, one likelihood, one compiled problem
+problem = rx.Problem([rx.Constraint([rx.Comparison(data, line)])])
+print(problem.names)  # ['m', 'b']
+
+sampler = emcee.EnsembleSampler(16, problem.ndim, problem.log_posterior)
+sampler.run_mcmc(problem.sample_prior(16, rng=1), 1000)
+samples = sampler.get_chain(discard=300, flat=True)
+print(samples[:, problem.columns(m)].mean(), samples[:, problem.columns(b)].mean())
+
+# the posterior predictive on the data points, with the error model
+draws = rx.diagnostics.predictive_draws(problem, samples[::20], n_rep=2, return_draws=True)
+print(rx.diagnostics.coverage_curve(draws, data.y, [0.68]))
 ```
 
-> **Note — behavior change from pre-0.1 versions:** an `Observation`'s
-> reported systematic errors are never folded into the covariance
-> automatically. The default constraint covariance is the statistical diagonal
-> only; systematics enter explicitly, e.g. via
-> `obs.systematic_terms()` passed to `Constraint(extra_terms=...)`.
+The error model is a sum of covariance *terms* on the constraint.  A
+normalisation the experiment did not report, inferred alongside the model:
 
-> **Note — jitr:** this version requires
-> [jitr](https://github.com/beykyle/lagrange-rmatrix) ≥ 3.0 (workspaces take
-> potential *arrays* on `ws.radial_grid()`); `requirements.txt` pins
-> `jitr>=3.0` from PyPI. Python ≥ 3.12.
+```python
+from rxmc import terms as T
 
+log_eta = rx.Parameter("log_eta", prior=stats.norm(-2.0, 1.0))
+problem = rx.Problem([rx.Constraint([rx.Comparison(data, line)], terms=[T.normalization(log_eta)])])
+print(problem.names)  # ['m', 'b', 'log_eta']
+```
+
+## A reaction model
+
+A jitr optical potential is a `Model` whose solver is built from the
+dataset's kinematics.  EXFOR measurements arrive through
+`from_measurement`, which converts units and keeps the reported systematics
+as inert metadata until asked for.  Optical-model posteriors are correlated
+and sometimes multimodal, so drive them with nested sampling.
+
+```python
+from types import SimpleNamespace
+
+import dynesty
+import jitr
+from jitr.optical_potentials.potential_forms import thomas_safe, woods_saxon_safe
+
+reaction = jitr.reactions.ElasticReaction(target=(40, 20), projectile=(1, 0))
+R = 1.2 * 40 ** (1 / 3)
+
+
+def central(r, V, W, a):
+    return -(V + 1j * W) * woods_saxon_safe(r, R, a)
+
+
+def spin_orbit(r, Vso, Rso, aso):
+    return Vso * thomas_safe(r, Rso, aso) / jitr.utils.constants.WAVENUMBER_PION**2
+
+
+params = [
+    rx.Parameter("V", prior=stats.norm(48.0, 5.0), bounds=(0.0, np.inf)),
+    rx.Parameter("W", prior=stats.norm(4.0, 3.0), bounds=(0.0, np.inf)),
+    rx.Parameter("a", prior=stats.norm(0.65, 0.1), bounds=(0.3, 1.2)),
+]
+omp = rx.reactions.ElasticXS(
+    "dXS/dA", central, spin_orbit, lambda ws, *v: (tuple(v), (6.0, R, 0.45)), params, lmax=10
+)
+
+# an EXFOR-shaped measurement (exfor_tools.Distribution has these fields); here mock data
+angles = np.linspace(10.0, 150.0, 12)
+truth = omp.bind(np.deg2rad(angles), {"reaction": reaction, "Elab": 14.1})(48.0, 4.0, 0.65)
+measurement = SimpleNamespace(
+    x=angles, y=1e3 * truth * (1 + rng.normal(0, 0.05, angles.size)), Einc=14.1,
+    quantity="dXS/dA", y_units="mb/sr", statistical_err=1e3 * truth * 0.05,
+    systematic_norm_err=0.04, systematic_offset_err=None, subentry="mock",
+)
+d = rx.from_measurement(measurement, reaction=reaction)
+comp = rx.Comparison(d, omp)
+problem = rx.Problem([rx.Constraint([comp], terms=comp.reported_terms())])
+
+sampler = dynesty.NestedSampler(problem.log_likelihood, problem.prior_transform, problem.ndim, nlive=50)
+sampler.run_nested(dlogz=5.0, print_progress=False)
+print(problem.names, sampler.results.logz[-1])
+```
+
+## Where to go next
+
+- [`docs/recipes.md`](docs/recipes.md): every supported use case with its
+  spelling and expected behaviour.  Each recipe is a test under
+  `test/recipes/`.
+- [`examples/`](examples/): nine notebooks, the tutorials for the recipes,
+  from a line to an error-model comparison on real α + ⁴⁴Ca data and a
+  hierarchical calibration.
+- [`docs/design.md`](docs/design.md): the maintainer's description of the
+  library, its rules and its testing tiers.
+- The documentation website, including API reference, at
+  https://beykyle.github.io/rxmc/.
 
 ## Installation
 
-### Development / local use
+Python 3.12 or later; the runtime dependencies are `numpy`, `scipy`,
+`jitr >= 3.0` and `exfor-tools`.  Until the 1.0 pre-releases are on PyPI
+(`pip install --pre rxmc`), install from GitHub:
 
 ```bash
 git clone git@github.com:beykyle/rxmc.git
 cd rxmc
-pip install -ve .
+python -m venv .venv && source .venv/bin/activate
+pip install -e '.[examples]'        # or '.[validation]' to run the tests
 ```
 
-It is strongly recommended to use an isolated environment.
+1.0 is a rewrite and does not run 0.x code.  The 0.x package is preserved at
+tag [`v0.1.0`](https://github.com/beykyle/rxmc/tree/v0.1.0) and on branch
+[`legacy/0.x`](https://github.com/beykyle/rxmc/tree/legacy/0.x); pin it with
+`pip install git+https://github.com/beykyle/rxmc@v0.1.0`.
 
-### `venv`
+## Validation
 
 ```bash
-python -m venv .rxmc
-source .rxmc/bin/activate
-pip install -r requirements.txt
-pip install -ve .
+python -m isort --check-only src test && python -m black --check src test && python -m ruff check src test
+python -m pytest            # fast tier
+python -m pytest -m slow    # converged tier: required on pushes and PRs to main
+python -m pytest -n 4 --nbmake --nbmake-timeout=3600 examples   # the notebooks, same workflow
+sphinx-build -W docs docs/_build/html
 ```
 
-### `uv`:
-
-```bash
-uv env create
-uv env use python
-uv install -e .
-```
-
-### Optional extras
-
-Install the example notebook runtime dependencies with:
-
-```bash
-pip install -ve '.[examples]'
-```
-
-Install the full validation toolchain with:
-
-```bash
-pip install -ve '.[validation]'
-```
-
-## Supported workflow 1: external samplers with `CalibrationConfig`
-
-`CalibrationConfig` packages a calibration problem into a flat parameter space
-for external drivers. It exposes the interface expected by
-`black-box-bayes`-style tooling:
-
-- `ndim`
-- `starting_location(nwalkers)`
-- `log_posterior(theta)`
-- `log_likelihood(theta)`
-- `prior_transform(u)`
-- `log_posterior_batch(thetas)` (optional convenience interface)
-- `parameter_names`
-
-Typical flow:
-
-1. Build `Observation` objects from your measurements.
-2. Define a `PhysicalModel`.
-3. Declare correlated uncertainty as covariance `Term`s (and pick a
-   likelihood functional: Gaussian, Student-t, or chi-squared).
-4. Combine them into `Constraint` objects and then `Evidence`.
-5. Wrap the problem in `ParameterConfig` and `CalibrationConfig`.
-6. Hand the resulting object to an external sampler.
-
-This is the recommended path for larger production calibrations.
-
-## Supported workflow 2: in-package MCMC with `Walker`
-
-`Walker` is the smaller-scale, in-package path. It coordinates:
-
-- one sampler for the physical-model parameters, and
-- optional additional samplers for parametric likelihood sectors.
-
-It alternates between these sectors in a Gibbs-style workflow and is useful
-for:
-
-- prototyping new likelihood models,
-- validating new observation/model compositions,
-- and running smaller end-to-end inference problems without introducing an
-  external orchestration layer.
-
-## Core concepts
-
-### `Observation`
-
-Pure measured data — `x`, `y`, and the statistical error on `y` — plus the
-measurement's reported systematic magnitudes retained as inert metadata
-(`y_sys_err_normalization`, `y_sys_err_offset`). It contributes only its
-statistical diagonal by default; `obs.systematic_terms()` turns the
-metadata into explicit covariance terms when you ask.
-
-An observation also owns its **comparison space**: `Observation(x, y,
-transform=rxmc.transforms.log)` takes raw `y`, compares in log space (errors
-propagated by the delta method) and the constraint transforms the model
-prediction to match. A point-level `mask` (or `obs.masked_where(...)`) selects
-which points enter a likelihood — fit/held-out splits without rebuilding
-anything.
-
-### `PhysicalModel`
-
-Maps model parameters to predicted observables for a given `Observation`.
-A parametric `transform=` (e.g. `rxmc.transforms.scale()` or
-`per_observation_scaling(observations)`) adds latent normalization parameters
-(Kennedy–O'Hagan style) to any model.
-
-### Covariance `Term`s (`rxmc.covariance`)
-
-Every uncertainty beyond the statistical diagonal is an explicit additive
-contribution to the constraint's stacked covariance. There is one generic
-`Term(fn, params, kind=...)` — `fn` is a numpy-style callable of the term's
-local `x`/`y`/`ym` and its parameters, `kind` is `"diag"`, `"mode"` or
-`"matrix"`, and an optional `coords` transform changes the coordinate the term
-lives in. Factory helpers cover the common modes in one line:
-
-- `normalization_term` / `offset_term` / `systematic_term` — correlated
-  modes, fixed magnitude or free nuisance, prediction-, unit- or user-basis
-  scaled,
-- `noise_term` / `noise_fraction_term` — unknown statistical noise (with an
-  optional parametric basis, e.g. noise growing with angle),
-- `model_error_term` — uncorrelated model error,
-- `kernel_term` — Gaussian-process model discrepancy using sklearn kernels,
-  optionally in transformed coordinates and with a parametric amplitude.
-
-A term whose support spans several observations *couples* them (correlated
-datasets); referencing the same `Parameter` object in two terms *shares* one
-sampled value between them. `support=None` (the default) means the whole
-constraint.
-
-### Likelihood functionals
-
-`GaussianLikelihood` (default), `StudentT` (heavy-tailed, with a
-degrees-of-freedom parameter), and `Chi2` are thin functionals over the same
-stacked covariance.
-
-### `Constraint`
-
-The maximal block of mutually-correlated data: observations, a physical model,
-a covariance assembled from terms, and a likelihood functional.
-
-### `Evidence`
-
-Aggregates multiple independent constraints that share the same physical-model
-parameterization.
-
-### Model comparison (`rxmc.model_comparison`)
-
-Sampler-agnostic posterior-predictive draws, coverage/sharpness checks,
-held-out scoring on `constraint.complement()`, and log-evidence bookkeeping
-(`logz_summary`, `compare_logz`, `log_jacobian` for comparing fits done in
-different comparison spaces).
-
-## Examples and tutorials
-
-The `examples/` directory contains richer notebooks and demos. The most useful
-entry points are:
-
-- `examples/linear_calibration_demo.ipynb` for the basic workflow,
-- `examples/systematic_err_demo.ipynb` for the error-model catalog and
-  systematic-error handling,
-- `examples/measurement_to_calibration.ipynb` for the EXFOR-measurement →
-  calibration path (units, retained systematics, guardrails),
-- `examples/30s_optical_potential_calibration.ipynb` for a realistic optical
-  potential calibration example,
-- `examples/correlated_observations.ipynb` for correlated datasets and shared
-  systematics (including across cross-section experiments),
-- `examples/gp_discrepancy.ipynb` for Gaussian-process model discrepancy,
-- `examples/robust_likelihoods.ipynb` for Student-t vs Gaussian likelihoods,
-- `examples/normalization_inference.ipynb` for normalization-focused modeling,
-- `examples/sampling_algos.ipynb` for sampling comparisons.
-
-## Documentation
-
-The full API reference and rendered example notebooks are hosted at
-**https://beykyle.github.io/rxmc/**.
-
-To build the documentation locally:
-
-```bash
-pip install -ve '.[docs]'
-cd docs && make html
-# then open docs/_build/html/index.html
-```
-
-## Testing
-
-Run the full validation matrix with:
-
-```bash
-python -m isort --check-only src test
-python -m black --check src test
-python -m ruff check src test
-python -m nbqa isort --check examples/*.ipynb
-python -m black --check --ipynb examples/*.ipynb
-python -m ruff check examples/*.ipynb
-python -m pytest
-```
-
-If you want to apply the formatting fixes locally instead of only checking them:
-
-```bash
-python -m isort src test
-python -m black src test
-python -m ruff check --fix src test
-python -m nbqa isort examples/*.ipynb
-python -m black --ipynb examples/*.ipynb
-```
-
-Run only the unit tests with:
-
-```bash
-python -m pytest test
-```
-
-Run only the notebooks with:
-
-```bash
-python -m pytest examples
-```
-
+The three Python blocks of this README are executed by `test/test_readme.py`.

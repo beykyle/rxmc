@@ -1,52 +1,49 @@
-import unittest
+"""Identity semantics and validation of :class:`rxmc.Parameter`."""
 
 import numpy as np
+import pytest
+from scipy import stats
 
-from rxmc.params import Parameter
-
-
-class TestParameterHashing(unittest.TestCase):
-    def test_equal_parameters_hash_equal(self):
-        a = Parameter("g", float, unit="MeV", latex_name="g", bounds=(0.0, 1.0))
-        b = Parameter("g", float, unit="MeV", latex_name="g", bounds=(0.0, 1.0))
-        self.assertEqual(a, b)
-        self.assertEqual(hash(a), hash(b))
-
-    def test_unequal_parameters_differ(self):
-        a = Parameter("g")
-        self.assertNotEqual(a, Parameter("h"))
-        self.assertNotEqual(a, Parameter("g", unit="MeV"))
-        self.assertNotEqual(a, Parameter("g", bounds=(0.0, 1.0)))
-        self.assertNotEqual(a, "g")
-
-    def test_usable_in_set_and_dict(self):
-        a = Parameter("a")
-        b = Parameter("b")
-        self.assertEqual(len({a, b, Parameter("a")}), 2)
-        table = {a: 1, b: 2}
-        self.assertEqual(table[Parameter("a")], 1)
-
-    def test_bounds_coerced_to_float_tuple(self):
-        for bounds in ([0, 2], np.array([0.0, 2.0]), (0, 2)):
-            p = Parameter("x", bounds=bounds)
-            self.assertEqual(p.bounds, (0.0, 2.0))
-            self.assertIsInstance(p.bounds, tuple)
-            self.assertTrue(all(isinstance(b, float) for b in p.bounds))
-
-    def test_default_bounds_are_infinite(self):
-        self.assertEqual(Parameter("x").bounds, (-np.inf, np.inf))
-
-    def test_bad_bounds_length_raises(self):
-        with self.assertRaises(ValueError):
-            Parameter("x", bounds=(0.0, 1.0, 2.0))
-
-    def test_repr_contains_fields(self):
-        r = repr(Parameter("V", float, unit="MeV", latex_name=r"V_0", bounds=(0, 9)))
-        self.assertIn("'V'", r)
-        self.assertIn("MeV", r)
-        self.assertIn("V_0", r)
-        self.assertIn("(0.0, 9.0)", r)
+from rxmc import Parameter
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_identity_is_equality():
+    p, q = Parameter("a"), Parameter("a")
+    assert p == p
+    assert p != q  # same name, distinct objects: two parameters
+    assert len({p, q}) == 2
+    assert {p: 1, q: 2}[p] == 1
+
+
+def test_bounds_coerced_and_validated():
+    p = Parameter("a", bounds=(1, 3))
+    assert p.bounds == (1.0, 3.0)
+    assert all(isinstance(b, float) for b in p.bounds)
+    with pytest.raises(ValueError, match="lower < upper"):
+        Parameter("a", bounds=(1.0, 0.0))
+    with pytest.raises(ValueError, match="lower, upper"):
+        Parameter("a", bounds=(1.0,))
+
+
+def test_default_bounds_infinite():
+    p = Parameter("a")
+    assert p.bounds == (-np.inf, np.inf)
+
+
+def test_name_required():
+    with pytest.raises(ValueError):
+        Parameter("")
+
+
+def test_prior_and_labels():
+    prior = stats.norm(0, 1)
+    p = Parameter("V", prior=prior, unit="MeV", latex=r"V_0")
+    assert p.prior is prior
+    assert p.unit == "MeV"
+    assert p.label == r"V_0"
+    assert Parameter("W").label == "W"
+
+
+def test_repr_names_the_parameter():
+    assert "V" in repr(Parameter("V"))
+    assert "prior=set" in repr(Parameter("V", prior=stats.norm()))
