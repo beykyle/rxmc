@@ -25,8 +25,8 @@ NOTEBOOKS = {
     "gp_discrepancy": {7},
     "robust_likelihoods": {9, 12, 39},
     "error_scale_and_usu": {34},
-    "local_optical_model_calibration": {4, 12, 14, 15, 16, 21, 26},
-    "alpha_ca_error_model_comparison": {7, 10, 11, 13, 17, 18},
+    "local_optical_model_calibration": {10, 14, 15, 16, 17, 18, 19, 21, 40},
+    "alpha_ca_error_model_comparison": {7, 10, 13, 17, 18, 19, 40},
     "hierarchical_calibration": {22, 24, 30, 35, 38},
 }
 
