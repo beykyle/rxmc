@@ -363,6 +363,10 @@ units with nothing lost.*
 ```python
 d = rx.from_measurement(m, reaction=reaction, quantity="dXS/dA")      # or "dXS/dRuth", "Ay"
 d_ias = rx.from_measurement(m, reaction=reaction, ExIAS=Ex)           # (p,n) IAS channel
+d_dict = rx.from_measurement({"x": deg, "y": y, "statistical_err": dy, "Einc": E,
+                              "quantity": "dXS/dRuth", "y_units": "no-dim",
+                              "systematic_norm_err": 0.0, "systematic_offset_err": 0.0},
+                             reaction=reaction)                       # or a plain dict
 ```
 
 Expected behaviour:
@@ -379,6 +383,8 @@ Expected behaviour:
   to, raise at conversion time.
 - Angles must be in the CM frame: a measurement whose `x_units` is
   `LAB-degrees` raises; convert it to CM first.
+- Any object with the `Distribution` field names works, and so does a
+  `dict` with those keys; a missing field raises, naming it.
 
 ## 15. Evaluate a reaction model on any grid
 

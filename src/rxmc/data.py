@@ -16,6 +16,7 @@ through its own ``coords`` transform.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any, Mapping
 
 import numpy as np
@@ -119,6 +120,28 @@ _QUANTITY_KIND = {
 }
 
 
+_REQUIRED_FIELDS = (
+    "x",
+    "y",
+    "Einc",
+    "quantity",
+    "y_units",
+    "statistical_err",
+    "systematic_norm_err",
+    "systematic_offset_err",
+)
+
+
+def _as_record(measurement):
+    """A measurement's fields as attributes, whether it is an object or a mapping."""
+    if isinstance(measurement, Mapping):
+        measurement = SimpleNamespace(**measurement)
+    missing = [f for f in _REQUIRED_FIELDS if not hasattr(measurement, f)]
+    if missing:
+        raise ValueError(f"measurement is missing the field(s) {missing}")
+    return measurement
+
+
 def from_measurement(
     measurement, *, reaction=None, quantity=None, ExIAS=None
 ) -> Dataset:
@@ -128,7 +151,9 @@ def from_measurement(
     is refused, and a measurement without ``x_units`` is taken as CM), ``y``,
     ``Einc``, ``quantity``, ``y_units``,
     ``statistical_err``, ``systematic_norm_err``, ``systematic_offset_err`` and
-    ``subentry`` from ``measurement`` (any object with those attributes).  Angles
+    ``subentry`` from ``measurement``: an object with those attributes, or a
+    mapping (a plain ``dict``) with those keys.  ``x_units`` and ``subentry``
+    are optional; a missing required field raises, naming it.  Angles
     are stored in radians, cross sections in b/sr, ratios and analysing powers
     as they are.  Every dimensionful error (statistical, absolute offset) is
     converted with the data; the fractional normalisation error passes through
@@ -138,8 +163,9 @@ def from_measurement(
 
     Parameters
     ----------
-    measurement : object
-        An ``exfor_tools.distribution.Distribution`` or anything shaped like it.
+    measurement : object or Mapping
+        An ``exfor_tools.distribution.Distribution``, anything shaped like it,
+        or a ``dict`` of the same fields.
     reaction : jitr.reactions.Reaction, optional
         Needed for the kinematics in ``meta`` and for any conversion between
         ``dXS/dA`` and ``dXS/dRuth`` (the Rutherford cross section is a closed
@@ -151,6 +177,7 @@ def from_measurement(
     """
     from .units import MB_PER_B, check_angle_grid, parse_unit
 
+    measurement = _as_record(measurement)
     measured = measurement.quantity
     target = measured if quantity is None else quantity
     for q in (measured, target):

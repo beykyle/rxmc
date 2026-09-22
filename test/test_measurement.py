@@ -54,6 +54,26 @@ def test_construction_in_internal_units():
     )
 
 
+def test_a_dict_is_a_measurement():
+    fields = vars(measurement(subentry="E1234-002"))
+    from_dict = from_measurement(dict(fields), reaction=P_CA)
+    from_object = from_measurement(measurement(subentry="E1234-002"), reaction=P_CA)
+    np.testing.assert_allclose(from_dict.x, from_object.x)
+    np.testing.assert_allclose(from_dict.y, from_object.y)
+    np.testing.assert_allclose(from_dict.y_err, from_object.y_err)
+    assert from_dict.label == from_object.label
+    assert from_dict.norm_err == from_object.norm_err
+
+
+def test_a_missing_field_is_named():
+    fields = vars(measurement())
+    del fields["Einc"]
+    with pytest.raises(ValueError, match="Einc"):
+        from_measurement(fields)
+    with pytest.raises(ValueError, match="Einc"):
+        from_measurement(SimpleNamespace(**fields))
+
+
 def test_lab_frame_angles_are_refused():
     with pytest.raises(ValueError, match="LAB frame"):
         from_measurement(measurement(x_units="LAB-degrees"), reaction=P_CA)
