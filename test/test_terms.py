@@ -15,12 +15,11 @@ from rxmc.terms import (
     exp_growth,
     exp_growth_amplitude,
     kernel,
-    model_error,
     noise,
-    noise_fraction,
     normalization,
     offset,
     ones,
+    proportional_error,
     statistical,
     systematic,
     x_basis,
@@ -231,19 +230,23 @@ class TestFactories:
             self.S([noise(Parameter("e"), log=False)], [(0.4,)]), 0.16 * np.eye(3)
         )
 
-    def test_unknown_noise_fraction(self):
-        S = self.S([noise_fraction(Parameter("e"))], [(np.log(0.4),)])
+    def test_unknown_proportional_error(self):
+        S = self.S([proportional_error(Parameter("e"))], [(np.log(0.4),)])
         assert np.allclose(S, np.diag((0.4 * self.ym) ** 2))
 
     def test_unknown_normalization_error(self):
         S = self.S([normalization(parameter=Parameter("n"))], [(np.log(0.05),)])
         assert np.allclose(S, 0.05**2 * np.outer(self.ym, self.ym))
 
-    def test_unknown_model_error(self):
-        S = self.S([model_error(Parameter("g"), averaging=True)], [(np.log(0.1),)])
+    def test_averaged_proportional_error(self):
+        S = self.S(
+            [proportional_error(Parameter("g"), averaging=True)], [(np.log(0.1),)]
+        )
         z = 0.5 * (self.y + self.ym)
         assert np.allclose(S, np.diag((0.1 * z) ** 2))
-        S = self.S([model_error(Parameter("g"), averaging=False)], [(np.log(0.1),)])
+        S = self.S(
+            [proportional_error(Parameter("g"), averaging=False)], [(np.log(0.1),)]
+        )
         assert np.allclose(S, np.diag((0.1 * self.ym) ** 2))
 
     def test_fixed_normalization_systematic(self):

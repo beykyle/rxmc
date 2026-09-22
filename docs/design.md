@@ -239,8 +239,7 @@ statistical(y_err, on=None)
 offset(parameter=None, magnitude=None, mask=None, log=True, on=None)
 normalization(parameter=None, magnitude=None, mask=None, log=True, on=None)
 noise(parameter, log=True, basis=None, basis_params=(), on=None, coords=None)
-noise_fraction(parameter, log=True, on=None)
-model_error(parameter, averaging=True, log=True, on=None)
+proportional_error(parameter, averaging=False, log=True, on=None)
 systematic(parameter, basis, log=True, basis_params=(), on=None, coords=None)
 kernel(kernel, coords=None, amplitude=None, amplitude_params=(), jitter=1e-10,
        prefix="discrepancy", params=None, on=None) -> KernelTerm
@@ -248,7 +247,7 @@ kernel(kernel, coords=None, amplitude=None, amplitude_params=(), jitter=1e-10,
 #                       constant_amplitude, exp_growth_amplitude(scale)
 ```
 
-`noise` and `noise_fraction` are additive on top of the reported diagonal;
+`noise` and `proportional_error` are additive on top of the reported diagonal;
 `Constraint(statistical=False)` makes them replace it.  `normalization`
 reads `c.ym`, never `c.y`.  `kernel` derives one `Parameter` per free
 hyperparameter element in sklearn's log-theta space, bounded by the log of
@@ -541,7 +540,7 @@ gp = T.kernel(Matern(0.1, nu=2.5), on=comp_log, coords=lambda x: x / np.pi,
               amplitude=T.constant_amplitude, amplitude_params=(log_A,), params=[log_ell])
 ladder = {
     "L0":  rx.Constraint([comp_log], terms=[T.noise(log_eps)], statistical=False),
-    "E0":  rx.Constraint([comp_lin], terms=[T.noise_fraction(log_eps)], statistical=False),
+    "E0":  rx.Constraint([comp_lin], terms=[T.proportional_error(log_eps)], statistical=False),
     "L2y": rx.Constraint([comp_log], terms=[T.noise(log_eps), T.normalization(log_eta)], statistical=False),
     "Lgp": rx.Constraint([comp_log], terms=[T.noise(log_eps), gp], statistical=False),
 }
@@ -581,7 +580,7 @@ test that pins it.  Recipe numbers refer to `recipes.md`.
 | user-defined model `y = m x + b` | `Model(lambda x, m, b: m*x + b, [m, b])` | test_model |
 | `polynomial(order)` | `polynomial(order)` | test_model |
 | statistical diagonal only; `chi2` | default `Constraint`; `problem.chi2(theta)` | test_problem, recipe 1 |
-| unknown fractional / constant noise | `noise_fraction(log_eps)`, `noise(log_eps)` | test_terms, recipe 2 |
+| unknown proportional / constant noise | `proportional_error(log_eps)`, `noise(log_eps)` | test_terms, recipe 2 |
 | inferred noise replacing reported statistics | `Constraint(statistical=False, terms=[noise(...)])` | test_constraint, recipe 2 |
 | reported normalisation / offset as modes | `comparison.reported_terms()`; `normalization(magnitude=)`, `offset(magnitude=)` | test_constraint, test_regression, recipe 3 |
 | free normalisation / offset nuisance | `normalization(log_eta)`, `offset(log_omega)` | test_terms, recipe 4 |
@@ -602,7 +601,7 @@ test that pins it.  Recipe numbers refer to `recipes.md`.
 | term spanning comparisons reading its pieces | `c.segments`, `c.labels`, `c.split(a)` | test_terms, test_covariance, recipe 37 |
 | correlated normalisations between quantities | one comparison per quantity, a spanning `matrix` term from `c.split(c.ym)`; the reference's closed forms | test_recipe_37 |
 | Peelle's Pertinent Puzzle | `normalization()` reads `c.ym`; the estimate-built refit; the log-determinant pull of the live term | recipes 27, 37 |
-| unaccounted-for model error per data type (KDUQ) | `model_error(delta_T, averaging=True, on=comp)`; scalings as `Constraint(weight=)` | test_terms, recipe 26 |
+| unaccounted-for model error per data type (KDUQ) | `proportional_error(delta_T, averaging=True, on=comp)`; scalings as `Constraint(weight=)` | test_terms, recipe 26 |
 | tempering | `Constraint(weight=)` | test_problem, recipe 12 |
 | Student-t with bounded ν; `Chi2` | `StudentT(nu=Parameter("nu", bounds=(1, 100)))`; `Chi2()` | test_likelihood, recipe 9 |
 | log-space comparison, delta-method errors, Jacobian | `Comparison(d, m, space=log)`; `problem.log_jacobian()` | test_constraint, recipe 10 |

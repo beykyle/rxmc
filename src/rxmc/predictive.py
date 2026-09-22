@@ -9,8 +9,8 @@ question, and this module answers it:
   evaluated on the grid, every selected covariance term is re-evaluated there
   from its own definition, and one correlated draw is taken from the sum.  Any
   term that is a function of the :class:`~rxmc.terms.TermContext` travels:
-  inferred noise, :func:`~rxmc.terms.noise_fraction`,
-  :func:`~rxmc.terms.model_error`, normalisation, offset and systematic modes,
+  inferred noise, :func:`~rxmc.terms.proportional_error`, normalisation,
+  offset and systematic modes,
   a parametric ``Term(fn, params, kind="matrix")`` and a Gaussian-process
   :func:`~rxmc.terms.kernel`.
 * :func:`gp_predictive_draws` — the same draws for a kernel term, with the

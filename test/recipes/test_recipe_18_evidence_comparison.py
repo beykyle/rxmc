@@ -45,7 +45,7 @@ def error_models(d, model):
     return {
         "L0": Constraint([comp_log], terms=[T.noise(log_eps)], statistical=False),
         "E0": Constraint(
-            [comp_lin], terms=[T.noise_fraction(log_eps)], statistical=False
+            [comp_lin], terms=[T.proportional_error(log_eps)], statistical=False
         ),
         "L2y": Constraint(
             [comp_log],

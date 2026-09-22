@@ -21,9 +21,9 @@ from rxmc.terms import (
     exp_growth_amplitude,
     kernel,
     noise,
-    noise_fraction,
     normalization,
     offset,
+    proportional_error,
     systematic,
     x_basis,
 )
@@ -137,7 +137,7 @@ def study_form(label, x, y, ym, X=np.pi, k=2.7) -> StudyForm:
             label, STUDY_LEGEND[label], [L0], [(np.log(err),)], err**2 * eye
         )
     if label == "E0":
-        t = noise_fraction(log_err)
+        t = proportional_error(log_err)
         return StudyForm(
             label, STUDY_LEGEND[label], [t], [(np.log(err),)], np.diag((err * ym) ** 2)
         )

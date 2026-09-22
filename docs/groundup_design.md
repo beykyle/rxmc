@@ -307,8 +307,7 @@ statistical(y_err, on=None)
 offset(magnitude=None, parameter=None, mask=None, log=True, on=None)
 normalization(magnitude=None, parameter=None, mask=None, log=True, on=None)
 noise(parameter, log=True, basis=None, basis_params=(), on=None, coords=None)
-noise_fraction(parameter, log=True, on=None)
-model_error(parameter, averaging=True, log=True, on=None)
+proportional_error(parameter, averaging=False, log=True, on=None)
 systematic(parameter, basis, log=True, basis_params=(), on=None, coords=None)
 kernel(kernel, coords=None, amplitude=None, amplitude_params=(), jitter=1e-10,
        prefix="discrepancy", params=None, on=None) -> KernelTerm
@@ -706,12 +705,12 @@ rewrite: a capability is done when its row has a test.
 | user-defined model `y = m x + b` (linear_calibration_demo) | `Model(lambda x, m, b: m*x + b, [m, b])` | test_model |
 | `Polynomial(order)` (normalization_inference) | `polynomial(order)` | test_model |
 | statistical diagonal only; `chi2 / n` (linear_calibration_demo) | default `Constraint`; `problem.chi2(theta)` | test_problem |
-| unknown fractional / constant noise (systematic_err_demo, sampling_algos) | `noise_fraction(log_eps)`, `noise(log_eps)` | test_terms::TestFactories |
+| unknown fractional / constant noise (systematic_err_demo, sampling_algos) | `proportional_error(log_eps)`, `noise(log_eps)` | test_terms::TestFactories |
 | inferred noise *replacing* reported statistics (prose today) | `Constraint(statistical=False, terms=[noise(...)])` | test_constraint |
 | reported normalisation / offset as fixed modes (measurement_to_calibration) | `block.reported_terms()`; `normalization(magnitude=)`, `offset(magnitude=)` | test_constraint::reported_terms, regression number |
 | free normalisation / offset nuisance (systematic_err_demo) | `normalization(parameter=log_eta)`, `offset(parameter=log_omega)` | test_terms |
 | fixed dense covariance; fixed diagonal (systematic_err_demo, normalization_inference gallery) | `Term(C, on=b)`, `Term(sig, kind="diag", on=b)` | test_terms::TestTermKinds |
-| case B: one parameter, two block-local terms (systematic_err_demo, correlated_observations) | `noise_fraction(log_eps, on=b1), noise_fraction(log_eps, on=b2)`; or two constraints sharing `log_eps` | test_problem::sharing |
+| case B: one parameter, two block-local terms (systematic_err_demo, correlated_observations) | `proportional_error(log_eps, on=b1), proportional_error(log_eps, on=b2)`; or two constraints sharing `log_eps` | test_problem::sharing |
 | case A: one mode across blocks (correlated_observations) | `normalization(log_eta, on=[b1, b2])` | test_covariance::case_a, regression |
 | per-dataset Kennedy–O'Hagan scale ρᵢ (normalization_inference) | `Comparison(d_i, omp \| scale(rho_i))` | test_model, test_constraint |
 | single global ρ (test only) | `omp \| scale(rho)` on every block | test_model |
@@ -719,7 +718,7 @@ rewrite: a capability is done when its row has a test.
 | multiplicative `x`-dependent correction, i.e. an additive discrepancy in log space (new) | `omp * Model(g_fn, phi)`; `scale(rho)` is the constant case | test_model (`omp * const(rho)` equals `omp \| scale(rho)`) |
 | hyperparameters shared across datasets, per-dataset values from `meta` (new) | one term per block with the same `Parameter` objects; `c.meta("Elab")`; `kernel(params=)` | test_terms (`meta` on one block and on a union), test_problem (one slot per shared object) |
 | discrepancy correlated across energies: GP over (E, θ) (new) | one `matrix` `Term` with `on=comps` building inputs from `c.meta` and `c.x`; dense path | test_covariance (dense fallback equals hand-built product kernel) |
-| unaccounted-for model error per data type, KDUQ (new, reference) | `model_error(delta_T, averaging=True, on=b)` with one `delta_T` per type; the `k/N` democratic and per-type federal scalings are `Constraint(weight=)`; recipe 26 | test_terms (shared object gives one column per type) |
+| unaccounted-for model error per data type, KDUQ (new, reference) | `proportional_error(delta_T, averaging=True, on=b)` with one `delta_T` per type; the `k/N` democratic and per-type federal scalings are `Constraint(weight=)`; recipe 26 | test_terms (shared object gives one column per type) |
 | Peelle's Pertinent Puzzle avoidance (new, reference) | `normalization()` reads `c.ym`; the `t0` variant as a constant `mode`; recipe 27 | test_terms (data-built mode reproduces the `1/(1+n s²)` bias; prediction-built does not) |
 | stacking by leave-one-dataset-out (new, reference) | `Constraint.masked` dropping a block, `heldout_log_predictive`; recipe 28 | test_diagnostics |
 | cut / modular posterior by multiple imputation (new, reference) | stage-1 `Problem`, per-draw stage-2 `Problem` with the module fixed by closure; per-module `weight`; recipe 29 | test_problem (stage-1 marginal unchanged) |
@@ -781,7 +780,7 @@ What comes across from `src/rxmc` on `api_generalisation`, by file.
 |---|---|---|
 | `transforms.py` | `Transform` (minus `contextual`, `_unpack`), `as_transform`, `identity`, `log`, `exp`, `_safe_log`, `_reciprocal`, `scale` | `transforms.py` |
 | `likelihood_model.py` | `Likelihood`, `GaussianLikelihood`→`Gaussian`, `StudentT`, `Chi2`, `log_likelihood` | `likelihood.py` |
-| `covariance.py` | `TermContext`, `chol_logdet`, `as_2d`, bases `ones`, `ym`, `averaging`, `x_basis`, `exp_growth`, `constant_amplitude`, `exp_growth_amplitude`; helpers `_masked`, `_full`, `_coefficient`, `_scaled_term`, `_kernel_params`; factories `statistical_term`, `offset_term`, `normalization_term`, `noise_term`, `noise_fraction_term`, `model_error_term`, `systematic_term`, `kernel_term` (drop the `_term` suffix, `support=`→`on=`) | `terms.py` |
+| `covariance.py` | `TermContext`, `chol_logdet`, `as_2d`, bases `ones`, `ym`, `averaging`, `x_basis`, `exp_growth`, `constant_amplitude`, `exp_growth_amplitude`; helpers `_masked`, `_full`, `_coefficient`, `_scaled_term`, `_kernel_params`; factories `statistical_term`, `offset_term`, `normalization_term`, `noise_term`, `proportional_error_term`, `systematic_term`, `kernel_term` (drop the `_term` suffix, `support=`→`on=`) | `terms.py` |
 | `observation_from_measurement.py` | `XS_UNIT`, `RUTHERFORD_UNIT`, `MB_PER_B`, `DEFAULT_LMAX`, `check_angle_grid`, `measurement_kwargs`; the pint registry is replaced by a fixed label table | `units.py`, `data.py` |
 | `elastic_diffxs_observation.py` | `set_up_solver`, the `calculate_normalization` conversion table, `momentum_transfer` | `reactions/elastic.py`, `data.py` |
 | `ias_pn_observation.py` | `set_up_solver` | `reactions/ias.py` |
@@ -900,7 +899,7 @@ is driven by emcee or dynesty.
 | `correlated_observations` | correlated_observations | emcee | case A vs B on the toy; Neudecker et al. (2014) §II.A and §II.B recreated: the multi-quantity Peelle puzzle with a spanning `matrix` term built through `c.split` | 141 s |
 | `gp_discrepancy` | gp_discrepancy | emcee (toy), dynesty (reaction) | `kernel` term; `gp_predictive_draws(problem, term, ...)`; the same defect fit with a sampled Legendre mean correction for contrast; n+⁴⁰Ca with the surface absorption missing | 617 s |
 | `robust_likelihoods` | robust_likelihoods | emcee | Student-t vs Gaussian; ν bounded on the `Parameter`; a global error scale and a USU offset per technique | 154 s |
-| `measurement_to_calibration` | measurement_to_calibration + 30s_optical_potential_calibration + the tempering/coverage section of overconfidence | dynesty | `from_measurement`, `reported_terms`, the singular-covariance error, `Constraint(weight=)`, `coverage_curve`, emcee and `dill` as other drivers, the KDUQ `model_error` spelling | 182 s |
+| `measurement_to_calibration` | measurement_to_calibration + 30s_optical_potential_calibration + the tempering/coverage section of overconfidence | dynesty | `from_measurement`, `reported_terms`, the singular-covariance error, `Constraint(weight=)`, `coverage_curve`, emcee and `dill` as other drivers, the KDUQ `proportional_error(averaging=True)` spelling | 182 s |
 | `alpha_ca_error_model_comparison` | **new** (the `jitr` quickstart's α+⁴⁴Ca data, EXFOR F0567) | dynesty | real data without errors, a four-parameter potential, log space with `log_jacobian`, the `L0`/`E0`/`L2y`/`Lgp` ladder by evidence, `masked_where`/`complement` with `heldout_log_predictive` and held-out coverage | 1197 s (alongside another notebook) |
 | `hierarchical_calibration` | **new** (recipes 24, 35, 38) | dynesty | eight schools non-centred; the hierarchy on the physics parameters; see below | 937 s (alongside another notebook) |
 

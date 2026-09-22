@@ -27,10 +27,9 @@ from rxmc.terms import (
     constant_amplitude,
     exp_growth_amplitude,
     kernel,
-    model_error,
     noise,
-    noise_fraction,
     normalization,
+    proportional_error,
     systematic,
     x_basis,
 )
@@ -413,12 +412,13 @@ class TestGridDraws:
         np.testing.assert_allclose(mean, 0.5 * X_GRID + 0.2, atol=0.005)
         np.testing.assert_allclose(cov, 0.01 * np.eye(16), atol=5e-4)
 
-    def test_fractional_noise_and_model_error_scale_with_the_prediction(self):
+    def test_proportional_errors_scale_with_the_prediction(self):
         ym = 0.5 * X_GRID + 1.2
-        for make in (noise_fraction, model_error):
-            p, model, _ = one(make(Parameter("log_f", prior=stats.norm(-2, 1))))
+        for averaging in (False, True):
+            f = Parameter("log_f", prior=stats.norm(-2, 1))
+            p, model, _ = one(proportional_error(f, averaging=averaging))
             _, cov = cov_of(p, model, np.array([0.5, 1.2, np.log(0.1)]))
-            # model_error averages y and ym; on a grid y *is* the model
+            # the averaging basis uses y and ym; on a grid y *is* the model
             np.testing.assert_allclose(np.sqrt(np.diag(cov)), 0.1 * ym, rtol=0.03)
             # a diagonal term: no correlation between grid points
             np.testing.assert_allclose(cov - np.diag(np.diag(cov)), 0.0, atol=5e-4)

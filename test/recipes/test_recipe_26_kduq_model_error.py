@@ -22,7 +22,7 @@ def build():
     model = line()
     comps = [Comparison(d, model) for d in datasets]
     terms = [
-        T.model_error(delta[d.meta["type"]], averaging=True, log=False, on=c)
+        T.proportional_error(delta[d.meta["type"]], averaging=True, log=False, on=c)
         for d, c in zip(datasets, comps)
     ]
     return types, delta, datasets, comps, terms

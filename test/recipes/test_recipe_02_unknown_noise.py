@@ -34,7 +34,8 @@ def test_statistical_false_replaces_and_default_adds():
 def test_prediction_scaled_noise_changes_with_the_model_parameters():
     d = line_data()
     log_eps = Parameter("log_eps", prior=stats.norm(-2, 2))
-    for term in (T.noise_fraction(log_eps), T.model_error(log_eps)):
+    for averaging in (False, True):
+        term = T.proportional_error(log_eps, averaging=averaging)
         p = Problem(
             [Constraint([Comparison(d, line())], terms=[term], statistical=False)]
         )

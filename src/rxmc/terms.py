@@ -35,7 +35,7 @@ Two mechanisms are expressed here (see ``docs/groundup_design.md``):
   they share one sampled value.
 
 The factory helpers (:func:`statistical`, :func:`offset`, :func:`normalization`,
-:func:`noise`, :func:`noise_fraction`, :func:`model_error`, :func:`systematic`,
+:func:`noise`, :func:`proportional_error`, :func:`systematic`,
 :func:`kernel`) are one-line conveniences that build the common terms; anything
 they cannot express is a direct ``Term(fn, params, kind=...)``.
 """
@@ -67,8 +67,7 @@ __all__ = [
     "offset",
     "normalization",
     "noise",
-    "noise_fraction",
-    "model_error",
+    "proportional_error",
     "systematic",
     "kernel",
 ]
@@ -510,20 +509,16 @@ def noise(
     )
 
 
-def noise_fraction(parameter, log=True, on=None) -> Term:
-    """Unknown fractional noise ``diag((epsilon * ym)**2)``.
+def proportional_error(parameter, averaging=False, log=True, on=None) -> Term:
+    """An unknown uncorrelated error proportional to the prediction.
+
+    ``diag((c * z)**2)`` with ``c = exp(theta)`` when ``log`` (else ``theta``)
+    and ``z = ym``, or ``z = 0.5 * (y + ym)`` when ``averaging`` (KDUQ's
+    spelling, which stays finite when ``ym`` is near zero).  Because it scales
+    with the prediction, the covariance changes with the model parameters.
 
     **Additive** on top of the reported statistical diagonal (see :func:`noise`
     for how to get replace-semantics instead).
-    """
-    return _scaled_term("diag", parameter, log, ym, on=on)
-
-
-def model_error(parameter, averaging=True, log=True, on=None) -> Term:
-    """Unknown uncorrelated model error ``diag((gamma * z)**2)``.
-
-    ``z = 0.5 * (y + ym)`` when ``averaging`` (stabilises when ``ym`` is near zero),
-    else ``z = ym``.
     """
     basis = _AVERAGING if averaging else ym
     return _scaled_term("diag", parameter, log, basis, on=on)

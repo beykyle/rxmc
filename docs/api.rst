@@ -49,8 +49,7 @@ Covariance terms
    rxmc.terms.offset
    rxmc.terms.normalization
    rxmc.terms.noise
-   rxmc.terms.noise_fraction
-   rxmc.terms.model_error
+   rxmc.terms.proportional_error
    rxmc.terms.systematic
    rxmc.terms.kernel
    rxmc.terms.ones

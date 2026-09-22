@@ -46,8 +46,8 @@ infer the noise magnitude alongside the model.*
 ```python
 log_eps = rx.Parameter("log_eps", prior=stats.norm(-2, 2))
 c = rx.Constraint([rx.Comparison(d, line)], terms=[T.noise(log_eps)], statistical=False)
-# or fractional noise:  T.noise_fraction(log_eps)
-# or model error on the average of data and prediction:  T.model_error(log_gamma)
+# or an error proportional to the prediction:  T.proportional_error(log_eps)
+# or proportional to the average of data and prediction:  T.proportional_error(log_gamma, averaging=True)
 # or noise growing along x:  T.noise(log_eps, basis=T.exp_growth(np.pi), basis_params=(slope,))
 ```
 
@@ -57,7 +57,7 @@ Expected behaviour:
   errors; with the default `statistical=True` it is *added* to them.
 - The posterior of `log_eps` reflects the residual scatter.  In the
   `sampling_algos` scenario its truth is recovered.
-- `noise_fraction` and `model_error` scale with the prediction, so the
+- `proportional_error` scales with the prediction, so the
   covariance changes with the model parameters.  That is allowed and costs
   nothing extra.
 
@@ -481,7 +481,7 @@ I want the evidence for each, comparable across comparison spaces.*
 ```python
 models = {
     "L0": rx.Constraint([comp_log], terms=[T.noise(log_eps)], statistical=False),
-    "E0": rx.Constraint([comp_lin], terms=[T.noise_fraction(log_eps)], statistical=False),
+    "E0": rx.Constraint([comp_lin], terms=[T.proportional_error(log_eps)], statistical=False),
     "L2y": rx.Constraint([comp_log], terms=[T.noise(log_eps), T.normalization(log_sys)], statistical=False),
     "Lgp": rx.Constraint([comp_log], terms=[T.noise(log_eps), gp], statistical=False),
     "L0t": rx.Constraint([comp_log], terms=[T.noise(log_eps)], statistical=False, likelihood=rx.StudentT()),
@@ -765,7 +765,7 @@ errors and scaled with the average of datum and prediction.*
 ```python
 delta = {t: rx.Parameter(f"delta_{t}", prior=stats.halfnorm(scale=s0[t])) for t in ("dxs", "ay", "sig_tot")}
 comps = [rx.Comparison(d, omp_for(d)) for d in datasets]
-terms = [T.model_error(delta[d.meta["type"]], averaging=True, log=False, on=comp)
+terms = [T.proportional_error(delta[d.meta["type"]], averaging=True, log=False, on=comp)
          for d, comp in zip(datasets, comps)]   # log=False: delta is the fraction itself
 c = rx.Constraint(comps, terms=terms)          # statistical=True: reported errors are a floor
 
@@ -1338,7 +1338,7 @@ Expected behaviour:
   every term a function, it draws from the same distribution as
   `predictive_draws`.
 - Any term that is a function of the `TermContext` travels: `noise`,
-  `noise_fraction`, `model_error`, `normalization`/`offset`/`systematic` with
+  `proportional_error`, `normalization`/`offset`/`systematic` with
   a parameter or a scalar magnitude, a `kernel`, and a user's
   `Term(fn, params, kind="matrix")`.
 - A term that is an array has no value at a new `x`: the reported
