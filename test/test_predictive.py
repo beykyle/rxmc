@@ -353,6 +353,18 @@ def cov_of(p, model, theta, x=X_GRID, n_rep=40000, rng=0, **kw):
 
 
 class TestGridDraws:
+    def test_a_scalar_reported_normalisation_travels_to_the_grid(self):
+        """In log space a 5 % normalisation is a constant mode of 0.05."""
+        model = line()
+        d = Dataset(X, Y, np.full(10, 0.05), norm_err=0.05, label="d")
+        comp = Comparison(d, model, space=log)
+        e = Parameter("e", prior=stats.norm(-9, 1))
+        c = Constraint(
+            [comp], terms=[noise(e), *comp.reported_terms()], statistical=False
+        )
+        _, cov = cov_of(Problem([c]), model, np.array([0.5, 1.2, -9.0]))
+        np.testing.assert_allclose(cov, 0.05**2, atol=2e-4)
+
     def test_the_band_is_the_percentiles_of_the_draws(self):
         """One return convention for all three draw functions."""
         eps = noise(Parameter("log_eps", prior=stats.norm(-2, 1)))

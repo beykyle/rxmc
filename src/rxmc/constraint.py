@@ -125,7 +125,10 @@ class Comparison:
         to the comparison space by the delta method: the offset is an error on
         the *data* and is linearised at the data; the normalisation multiplies
         the *prediction* and is linearised at the prediction, which needs the
-        space's inverse.
+        space's inverse.  A scalar normalisation error gives a mode that is a
+        function of the prediction alone, so it also has a value on a new grid
+        (:func:`~rxmc.predictive.grid_draws`); an offset, or a per-point
+        normalisation, is defined only at the measured points.
         """
         d, t = self.data, self.space
         terms = []
@@ -135,6 +138,11 @@ class Comparison:
                 omega = np.abs(t.derivative(d.y)) * omega
             terms.append(Term(omega, kind="mode", on=self))
         eta = _reported(d.norm_err, d.n)
+        if eta is not None and np.ndim(d.norm_err) == 0:
+            # a scalar keeps the mode a function of the prediction alone, so
+            # it can be evaluated on any grid (grid_draws), like
+            # T.normalization(magnitude=)
+            eta = float(d.norm_err)
         if eta is not None:
             if t.is_identity:
                 terms.append(Term(lambda c: eta * c.ym, kind="mode", on=self))

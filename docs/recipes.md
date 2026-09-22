@@ -1345,8 +1345,9 @@ Expected behaviour:
   `predictive_draws`.
 - Any term that is a function of the `TermContext` travels: `noise`,
   `proportional_error`, `normalization`/`offset`/`systematic` with
-  a parameter or a scalar magnitude, a `kernel`, and a user's
-  `Term(fn, params, kind="matrix")`.
+  a parameter or a scalar magnitude, a `kernel`, a user's
+  `Term(fn, params, kind="matrix")`, and the normalisation mode
+  `reported_terms()` builds from a scalar `norm_err`.
 - A term that is an array has no value at a new `x`: the reported
   statistical errors (`statistical=True`), a fixed `Term(array)`, a per-point
   `magnitude=`, a function closing over the measured rows.  Drawing it would
