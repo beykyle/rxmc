@@ -63,6 +63,15 @@ def test_each_notebook_exists_and_cites_its_recipes(name):
     )
 
 
+def _python(source) -> str:
+    """The cell's source with IPython magics and shell escapes dropped.
+
+    ``%%time`` and friends are not Python, and ``ast.parse`` chokes on them.
+    """
+    lines = [ln for ln in source if not ln.lstrip().startswith(("%", "!"))]
+    return "".join(lines)
+
+
 @pytest.mark.parametrize("name", sorted(NOTEBOOKS))
 def test_no_latex_escape_lands_in_a_plain_string(name):
     r"""``f"$\rho$"`` is a carriage return, and matplotlib then fails to parse it.
@@ -84,7 +93,7 @@ def test_no_latex_escape_lands_in_a_plain_string(name):
     for i, cell in enumerate(nb["cells"]):
         if cell["cell_type"] != "code":
             continue
-        for node in ast.walk(ast.parse("".join(cell["source"]))):
+        for node in ast.walk(ast.parse(_python(cell["source"]))):
             if isinstance(node, ast.Constant) and isinstance(node.value, str):
                 for ch, shown in control.items():
                     if ch in node.value:
