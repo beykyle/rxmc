@@ -23,7 +23,7 @@ NOTEBOOKS = {
     "sharing_error_models": {5},
     "normalization_and_covariance_structure": {3, 4, 6, 27},
     "gp_discrepancy": {7},
-    "robust_likelihoods": {9, 39},
+    "robust_likelihoods": {9, 12, 39},
     "error_scale_and_usu": {34},
     "local_optical_model_calibration": {4, 12, 14, 15, 16, 21, 26},
     "alpha_ca_error_model_comparison": {7, 10, 11, 13, 17, 18},
