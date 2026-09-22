@@ -1,59 +1,32 @@
 Installation
 ============
 
-Requirements
-------------
-
-``rxmc`` requires Python 3.10 or later. Core dependencies are listed in
-``requirements.txt`` and are installed automatically.
-
-Development / local use
------------------------
+``rxmc`` requires Python 3.12 or later.  The runtime dependencies are
+``numpy``, ``scipy``, ``jitr >= 3.0`` and ``exfor-tools``, installed
+automatically.  Until the 1.0 pre-releases appear on PyPI (``pip install
+--pre rxmc``), install from GitHub:
 
 .. code-block:: bash
 
    git clone git@github.com:beykyle/rxmc.git
    cd rxmc
-   pip install -ve .
+   python -m venv .venv && source .venv/bin/activate
+   pip install -e '.[examples]'
 
-It is strongly recommended to use an isolated environment.
+Extras:
 
-``venv``
---------
+===============  =============================================================
+``examples``     emcee, dynesty, corner, matplotlib, scikit-learn, dill,
+                 jupyter: everything the notebooks use
+``validation``   ``examples`` plus pytest, nbmake, nbqa, ruff, black, isort
+``docs``         sphinx, the pydata theme, myst-nb
+===============  =============================================================
 
-.. code-block:: bash
-
-   python -m venv .rxmc
-   source .rxmc/bin/activate
-   pip install -r requirements.txt
-   pip install -ve .
-
-``uv``
-------
-
-.. code-block:: bash
-
-   uv env create
-   uv env use python
-   uv install -e .
-
-Optional extras
----------------
-
-Install example notebook runtime dependencies:
+The 0.x package, which 1.0 replaces without backwards compatibility, is
+preserved at tag `v0.1.0 <https://github.com/beykyle/rxmc/tree/v0.1.0>`_ and
+on branch `legacy/0.x <https://github.com/beykyle/rxmc/tree/legacy/0.x>`_.
+Pin it with:
 
 .. code-block:: bash
 
-   pip install -ve '.[examples]'
-
-Install the full validation toolchain (formatting, linting, testing):
-
-.. code-block:: bash
-
-   pip install -ve '.[validation]'
-
-Install documentation build dependencies:
-
-.. code-block:: bash
-
-   pip install -ve '.[docs]'
+   pip install git+https://github.com/beykyle/rxmc@v0.1.0

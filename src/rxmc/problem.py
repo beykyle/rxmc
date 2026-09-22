@@ -1,0 +1,702 @@
+"""
+The compile step: from declarations to the flat interface a sampler wants.
+
+:class:`Problem` is the only place in the package that walks the parameter
+graph.  It assigns every distinct :class:`~rxmc.params.Parameter` a slot in
+first-seen order (each constraint's predictors, then its terms, then its
+likelihood), checks that names are unique, resolves every term's ``on`` to
+rows, factors the constant parts of every covariance, and assembles the
+prior so that every slot is covered exactly once.  The result exposes what
+emcee, dynesty and ``black-box-bayes`` need: ``ndim``, ``names``,
+``log_prior``, ``log_likelihood``, ``log_posterior``, ``prior_transform`` and
+``sample_prior``.
+
+Prior rules, per slot (see :class:`~rxmc.params.Parameter`):
+
+* ``Parameter(prior=dist)``: the marginal, truncated to ``bounds``;
+* finite ``bounds`` and no ``prior``: uniform on the bounds;
+* neither: the parameter must appear in exactly one joint block passed as
+  ``priors=[(params, joint), ...]``, where ``joint`` exposes
+  ``logpdf(values)`` over ``params`` in that order and, optionally,
+  ``prior_transform(u)`` and ``rvs(size=n, random_state=rng)`` (scipy's
+  spelling).  A joint that declares its dimension (``dim``, as scipy's
+  multivariate distributions do) must match its parameters.  A frozen
+  ``scipy.stats.multivariate_normal`` gets a whitening unit-cube map for
+  free, and a one-parameter block holding a scipy univariate distribution is
+  that parameter's marginal.  Finite bounds truncate a joint: a frozen MVN is
+  renormalised by its mass inside them, while a custom joint's ``logpdf`` must
+  already be normalised on its truncated support.  A hyperprior is a joint
+  block that includes its hyperparameter.
+
+Nothing user-facing is mutated by compiling.  Compile the same declarations
+twice and you get two independent problems.
+"""
+
+from __future__ import annotations
+
+import warnings
+from typing import Any, Iterable, Sequence
+
+import numpy as np
+from scipy import stats
+from scipy.stats.distributions import rv_frozen
+
+from .constraint import Constraint
+from .covariance import StructuredCovariance, _SingularCovariance
+from .params import Parameter
+from .terms import statistical
+
+__all__ = ["Problem", "ParameterIndex", "CompiledConstraint", "clip_unit_cube"]
+
+
+def clip_unit_cube(u) -> np.ndarray:
+    """``u`` as a float array clipped into the open unit cube.
+
+    Exact ``0.0`` / ``1.0`` map to ``±inf`` under an unbounded marginal's
+    ``ppf``; clipping to ``[eps, 1 - eps]`` keeps every ``prior_transform``
+    finite.
+    """
+    u = np.asarray(u, dtype=float)
+    eps = np.finfo(float).eps
+    return np.clip(u, eps, 1.0 - eps)
+
+
+# ----------------------------------------------------------------------------
+# The index
+# ----------------------------------------------------------------------------
+
+
+class ParameterIndex:
+    """Unique parameters in first-seen order, each with a slot."""
+
+    def __init__(self):
+        self._slot: dict[Parameter, int] = {}
+        self._params: list[Parameter] = []
+
+    def add_all(self, params: Iterable[Parameter]) -> np.ndarray:
+        """Register ``params`` and return their gather array (slots in order)."""
+        out = []
+        for p in params:
+            if not isinstance(p, Parameter):
+                raise TypeError(f"expected a Parameter, got {p!r}")
+            if p not in self._slot:
+                self._slot[p] = len(self._params)
+                self._params.append(p)
+            out.append(self._slot[p])
+        return np.asarray(out, dtype=int)
+
+    def slot(self, p: Parameter) -> int:
+        try:
+            return self._slot[p]
+        except KeyError:
+            raise KeyError(f"{p!r} is not a parameter of this problem") from None
+
+    def slots(self, params) -> np.ndarray:
+        if isinstance(params, Parameter):
+            return np.asarray([self.slot(params)], dtype=int)
+        return np.asarray([self.slot(p) for p in params], dtype=int)
+
+    @property
+    def params(self) -> tuple[Parameter, ...]:
+        return tuple(self._params)
+
+    @property
+    def names(self) -> list[str]:
+        return [p.name for p in self._params]
+
+    @property
+    def bounds(self) -> np.ndarray:
+        return np.asarray([p.bounds for p in self._params], dtype=float).reshape(-1, 2)
+
+    @property
+    def ndim(self) -> int:
+        return len(self._params)
+
+    def check_names_unique(self) -> None:
+        seen, dup = {}, []
+        for p in self._params:
+            if p.name in seen:
+                dup.append(p.name)
+            seen[p.name] = p
+        if dup:
+            raise ValueError(
+                f"duplicate parameter name(s) {sorted(set(dup))}: distinct Parameter "
+                "objects with one name would become two chain columns with the same "
+                "label.  Pass the SAME object everywhere the value is shared, or "
+                "name them apart (prefix= for kernel terms, nu= for StudentT)."
+            )
+
+
+# ----------------------------------------------------------------------------
+# The prior
+# ----------------------------------------------------------------------------
+
+
+def _is_frozen_mvn(joint) -> bool:
+    return type(joint).__name__ == "multivariate_normal_frozen"
+
+
+def _joint_dim(joint) -> int | None:
+    """The dimension a joint declares, or ``None`` when it declares none."""
+    if isinstance(joint, rv_frozen):
+        return 1
+    dim = getattr(joint, "dim", None)
+    return None if dim is None else int(dim)
+
+
+class _Marginal:
+    """One slot: a marginal (truncated to bounds) or the uniform on bounds.
+
+    ``dist`` overrides ``p.prior``: a one-parameter prior block's distribution.
+    """
+
+    def __init__(self, p: Parameter, slot: int, dist=None):
+        self.p, self.slot = p, slot
+        lo, hi = p.bounds
+        self.lo, self.hi = lo, hi
+        self.dist = p.prior if dist is None else dist
+        self.bounded = np.isfinite(lo) and np.isfinite(hi)
+        self.upper = False
+        if self.dist is None:
+            if not self.bounded:
+                raise ValueError(
+                    f"parameter {p.name!r} has no prior: give it prior=, finite "
+                    "bounds, or cover it with a joint block in Problem(priors=)"
+                )
+            self.c_lo, self.c_hi = 0.0, 1.0
+            self.log_norm = np.log(hi - lo)
+        else:
+            # far in the upper tail cdf(lo) rounds to 1: work in the survival
+            # function there, so the mass and the unit-cube map keep their precision
+            self.upper = bool(np.isfinite(lo) and self.dist.cdf(lo) > 0.5)
+            cdf, at_inf = (self.dist.sf, 0.0) if self.upper else (self.dist.cdf, 1.0)
+            self.c_lo = float(cdf(lo)) if np.isfinite(lo) else 0.0
+            self.c_hi = float(cdf(hi)) if np.isfinite(hi) else at_inf
+            mass = abs(self.c_hi - self.c_lo)
+            if not mass > 0:
+                raise ValueError(
+                    f"the prior of {p.name!r} has no mass inside its bounds"
+                )
+            self.log_norm = float(np.log(mass))
+
+    def logpdf(self, v) -> float:
+        if v < self.lo or v > self.hi:
+            return -np.inf
+        if self.dist is None:
+            return -self.log_norm
+        return float(self.dist.logpdf(v)) - self.log_norm
+
+    def transform(self, u):
+        if self.dist is None:
+            return self.lo + u * (self.hi - self.lo)
+        inverse = self.dist.isf if self.upper else self.dist.ppf
+        # clipped: the inverse can round a hair outside the bounds at u ~ 0 or 1
+        return np.clip(
+            inverse(self.c_lo + u * (self.c_hi - self.c_lo)), self.lo, self.hi
+        )
+
+
+class _Joint:
+    """A joint block over several slots."""
+
+    def __init__(self, params: Sequence[Parameter], joint, slots: np.ndarray):
+        self.params, self.joint, self.slots = tuple(params), joint, slots
+        self.bounds = np.asarray([p.bounds for p in self.params], dtype=float)
+        self.bounded = bool(np.any(np.isfinite(self.bounds)))
+        self.names = [p.name for p in self.params]
+        if not hasattr(joint, "logpdf"):
+            raise TypeError(f"joint prior over {self.names} must have logpdf(values)")
+        dim = _joint_dim(joint)
+        if dim is not None and dim != len(self.params):
+            raise ValueError(
+                f"the joint prior over {self.names} is {dim}-dimensional; it must "
+                f"cover exactly those {len(self.params)} parameter(s), in order"
+            )
+        if _is_frozen_mvn(joint):
+            self._L = np.linalg.cholesky(np.atleast_2d(joint.cov))
+            self._mean = np.atleast_1d(joint.mean)
+        else:
+            self._L = None
+        # a truncated MVN is renormalised by its mass inside the bounds; the box
+        # probability is quasi-Monte Carlo from 3 dimensions, so it is seeded
+        self.log_mass = 0.0
+        if self.bounded and _is_frozen_mvn(joint):
+            box = stats.multivariate_normal(joint.mean, joint.cov, seed=0)
+            mass = float(box.cdf(self.bounds[:, 1], lower_limit=self.bounds[:, 0]))
+            if not mass > 0:
+                raise ValueError(
+                    f"the joint prior over {self.names} has no mass inside its bounds"
+                )
+            self.log_mass = float(np.log(mass))
+
+    @property
+    def has_transform(self) -> bool:
+        return not self.bounded and (
+            self._L is not None or hasattr(self.joint, "prior_transform")
+        )
+
+    def logpdf(self, values) -> float:
+        if self.bounded and (
+            np.any(values < self.bounds[:, 0]) or np.any(values > self.bounds[:, 1])
+        ):
+            return -np.inf
+        # item(): a length-1 array is fine, a longer one (a mis-sized joint) is not
+        return float(np.asarray(self.joint.logpdf(values)).item()) - self.log_mass
+
+    def transform(self, u):
+        if self.bounded:
+            raise NotImplementedError(
+                f"the joint prior over {self.names} is truncated by bounds and has no "
+                "unit-cube map; drop the bounds or use a sampler that needs only "
+                "log_posterior"
+            )
+        if self._L is not None:
+            return self._mean + self._L @ stats.norm.ppf(u)
+        if hasattr(self.joint, "prior_transform"):
+            return np.asarray(self.joint.prior_transform(u), dtype=float)
+        raise NotImplementedError(
+            f"the joint prior over {self.names} has no prior_transform(u); give it "
+            "one, or use a sampler that needs only log_posterior"
+        )
+
+    def sample(self, n, rng):
+        if self.has_transform:
+            return np.asarray(
+                [self.transform(rng.uniform(size=len(self.params))) for _ in range(n)]
+            )
+        if not hasattr(self.joint, "rvs"):
+            raise NotImplementedError(
+                f"the joint prior over {self.names} has neither prior_transform nor rvs"
+            )
+        draws = np.empty((0, len(self.params)))
+        for _ in range(1000):
+            d = np.atleast_2d(
+                np.asarray(self.joint.rvs(size=n, random_state=rng), dtype=float)
+            )
+            if d.shape[1] != len(self.params):
+                d = d.reshape(-1, len(self.params))
+            if self.bounded:
+                ok = np.all((d >= self.bounds[:, 0]) & (d <= self.bounds[:, 1]), axis=1)
+                d = d[ok]
+            draws = np.vstack([draws, d])
+            if len(draws) >= n:
+                return draws[:n]
+        raise RuntimeError(
+            f"could not draw from the joint prior over {self.names} inside its bounds"
+        )
+
+
+class _Prior:
+    def __init__(self, index: ParameterIndex, priors):
+        self.ndim = index.ndim
+        self.joints: list[_Joint] = []
+        covered: set[Parameter] = set()
+        univariate: dict[Parameter, Any] = {}
+        for entry in priors:
+            try:
+                params, joint = entry
+            except (TypeError, ValueError):
+                raise TypeError(
+                    "priors= must be a sequence of (params, joint) pairs"
+                ) from None
+            params = [params] if isinstance(params, Parameter) else list(params)
+            for p in params:
+                if p.prior is not None:
+                    raise ValueError(
+                        f"parameter {p.name!r} has its own prior= and is also covered "
+                        "by a joint block: cover it once"
+                    )
+                if p in covered:
+                    raise ValueError(
+                        f"parameter {p.name!r} appears in two joint blocks"
+                    )
+                covered.add(p)
+            if len(params) == 1 and isinstance(joint, rv_frozen):
+                # a scipy univariate over one parameter is that parameter's
+                # marginal: truncated to its bounds, with a ppf unit-cube map
+                univariate[params[0]] = joint
+            else:
+                self.joints.append(_Joint(params, joint, index.slots(params)))
+        self.marginals = [
+            _Marginal(p, i, univariate.get(p))
+            for i, p in enumerate(index.params)
+            if p not in covered or p in univariate
+        ]
+
+    def logpdf(self, theta) -> float:
+        total = 0.0
+        for m in self.marginals:
+            total += m.logpdf(theta[m.slot])
+            if total == -np.inf:
+                return -np.inf
+        for j in self.joints:
+            total += j.logpdf(theta[j.slots])
+            if total == -np.inf:
+                return -np.inf
+        return float(total)
+
+    def transform(self, u) -> np.ndarray:
+        u = clip_unit_cube(u)
+        theta = np.empty(self.ndim)
+        for m in self.marginals:
+            theta[m.slot] = m.transform(u[m.slot])
+        for j in self.joints:
+            theta[j.slots] = j.transform(u[j.slots])
+        return theta
+
+    def sample(self, n, rng) -> np.ndarray:
+        out = np.empty((n, self.ndim))
+        u = rng.uniform(size=(n, self.ndim))
+        for m in self.marginals:
+            out[:, m.slot] = m.transform(clip_unit_cube(u[:, m.slot]))
+        for j in self.joints:
+            out[:, j.slots] = j.sample(n, rng)
+        return out
+
+
+# ----------------------------------------------------------------------------
+# The compiled constraint
+# ----------------------------------------------------------------------------
+
+
+def _per_point(v, n) -> np.ndarray:
+    """A metadata value as one entry per point: a length-``n`` sequence as is,
+    anything else (a scalar, a 0-d array, a provenance tuple, an object)
+    repeated ``n`` times."""
+    if isinstance(v, (np.ndarray, np.generic)) and v.ndim == 0:
+        v = v.item()
+    if np.isscalar(v):
+        return np.full(n, v)
+    try:
+        arr = np.asarray(v)
+    except ValueError:  # ragged: not per-point
+        arr = None
+    if arr is not None and arr.ndim >= 1 and arr.shape[0] == n:
+        return arr
+    out = np.empty(n, dtype=object)
+    for i in range(n):  # element by element: numpy would broadcast a sequence
+        out[i] = v
+    return out
+
+
+def _stack_meta(constraint: Constraint) -> dict | None:
+    keys = set()
+    for c in constraint.comparisons:
+        keys |= set(c.data.meta)
+    if not keys:
+        return None
+    meta = {}
+    for key in keys:
+        parts = [_per_point(c.data.meta.get(key), c.n) for c in constraint.comparisons]
+        try:
+            stacked = np.concatenate(parts)
+        except (TypeError, ValueError):
+            stacked = np.concatenate([np.asarray(p, dtype=object) for p in parts])
+        meta[key] = stacked
+    return meta
+
+
+class CompiledConstraint:
+    """A :class:`~rxmc.constraint.Constraint` with slots resolved and its
+    covariance factored.  Built by :class:`Problem`; not constructed by users."""
+
+    def __init__(self, constraint: Constraint, index: ParameterIndex):
+        self.source = constraint
+        comps = constraint.comparisons
+        self.comparisons = comps
+        self.labels = [c.data.label or f"comparison {i}" for i, c in enumerate(comps)]
+        self.offsets = constraint.offsets
+        self.active = constraint.active
+        self.n_active = constraint.n_active
+        self.weight = constraint.weight
+        self.likelihood = constraint.likelihood
+        self.log_jacobian = constraint.log_jacobian
+        try:
+            self.x = np.concatenate([np.asarray(c.data.x) for c in comps])
+        except ValueError as err:
+            raise ValueError(
+                f"the comparisons {self.labels} have x grids that cannot be stacked "
+                f"({err}); put them in separate constraints"
+            ) from None
+        self.y = np.concatenate([c.y for c in comps])
+        self.y_err = np.concatenate([c.y_err for c in comps])
+        for i, (c, o) in enumerate(zip(comps, self.offsets)):
+            rows = self.active[(self.active >= o.start) & (self.active < o.stop)]
+            bad = ~(np.isfinite(self.y[rows]) & np.isfinite(self.y_err[rows]))
+            if np.any(bad):
+                raise ValueError(
+                    f"comparison {self.labels[i]!r}: space {c.space.name!r} is not "
+                    f"finite at {int(bad.sum())} active data point(s) (e.g. "
+                    "non-positive y under a log transform); mask or drop those points"
+                )
+        self.meta = _stack_meta(constraint)
+        self.predictors = [
+            (o, index.add_all(c.predictor.params), c)
+            for o, c in zip(self.offsets, comps)
+        ]
+        # the reported statistical diagonals are built here, not by the user, so
+        # a term selection names them with statistical=True rather than by object
+        self.statistical_terms = (
+            [statistical(c.y_err, on=c) for c in comps]
+            if constraint.statistical
+            else []
+        )
+        terms = self.statistical_terms + list(constraint.terms)
+        entries = [
+            (t, constraint.support(t.on), index.add_all(t.params)) for t in terms
+        ]
+        self.like_gather = index.add_all(self.likelihood.params)
+        self.covariance = StructuredCovariance(
+            entries,
+            self.x,
+            self.y,
+            self.offsets,
+            self.active,
+            meta=self.meta,
+            labels=self.labels,
+        )
+
+    def ym(self, theta) -> np.ndarray:
+        """The stacked prediction in comparison space, all points."""
+        parts = []
+        for (_, g, c), label in zip(self.predictors, self.labels):
+            y = c.predict(*theta[g])
+            if y.shape != (c.n,):
+                raise ValueError(
+                    f"comparison {label!r}: the model returned shape {y.shape} on a "
+                    f"grid of {c.n} point(s)"
+                )
+            parts.append(y)
+        return np.concatenate(parts)
+
+    def predict_physical(self, theta) -> list[np.ndarray]:
+        return [c.predictor(*theta[g]) for _, g, c in self.predictors]
+
+    def _stats(self, theta):
+        ym = self.ym(theta)
+        if not np.all(np.isfinite(ym[self.active])):
+            return None
+        try:
+            return self.covariance.distance(ym, theta)
+        except _SingularCovariance:
+            return None  # a parametric covariance singular at this theta: no density
+
+    def log_likelihood(self, theta) -> float:
+        s = self._stats(theta)
+        if s is None:
+            return -np.inf
+        return float(
+            self.likelihood.log_likelihood(*s, self.n_active, *theta[self.like_gather])
+        )
+
+    def chi2(self, theta) -> float:
+        s = self._stats(theta)
+        if s is None:
+            return np.inf
+        return float(self.likelihood.chi2(*s, self.n_active, *theta[self.like_gather]))
+
+    def entries_for(self, terms=None, statistical: bool = True):
+        """Covariance entries of a term selection, or ``None`` for all of them.
+
+        ``terms`` are :class:`~rxmc.terms.Term` objects declared on this
+        constraint, matched *by identity*; ``None`` means every declared term.
+        ``statistical`` says whether the reported statistical diagonals join
+        them.  ``None`` is returned for the full selection so the caller takes
+        the cached path.
+        """
+        if terms is None and statistical:
+            return None
+        chosen = list(self.source.terms) if terms is None else list(terms)
+        for t in chosen:
+            if not any(t is u for u in self.source.terms):
+                raise ValueError(
+                    f"{t!r} is not a term of this constraint; terms= selects among "
+                    "the terms it was declared with (the reported statistical "
+                    "errors are selected with statistical=True/False instead)"
+                )
+        if statistical:
+            chosen = self.statistical_terms + chosen
+        return [e for e in self.covariance.entries if any(e.term is t for t in chosen)]
+
+    def matrix(self, theta, *, terms=None, statistical: bool = True) -> np.ndarray:
+        """The dense covariance on the active points at ``theta``.
+
+        ``terms`` and ``statistical`` select part of the error model; see
+        :meth:`entries_for`.  The default is the covariance the likelihood uses.
+        """
+        return self.covariance.matrix(
+            self.ym(theta), theta, entries=self.entries_for(terms, statistical)
+        )
+
+    def __repr__(self):
+        return f"CompiledConstraint({self.labels}, n_active={self.n_active})"
+
+
+def _warn_on_shared_rows(constraints) -> None:
+    """Warn when one dataset's rows are active in two weighted constraints.
+
+    Its likelihood would count those rows twice.  Disjoint masks (a fit and its
+    complement) and weight-0 monitor constraints are fine.
+    """
+    seen: dict[int, list] = {}
+    for k, c in enumerate(constraints):
+        if c.weight == 0.0:
+            continue
+        for comp, o in zip(c.comparisons, c.offsets):
+            rows = c.active[(c.active >= o.start) & (c.active < o.stop)] - o.start
+            for j, prev in seen.get(id(comp.data), []):
+                if np.intersect1d(rows, prev).size:
+                    warnings.warn(
+                        f"dataset {comp.data.label or 'dataset'!r} has rows active in "
+                        f"constraints {j} and {k}: the likelihood counts them twice "
+                        "(mask them apart, or give one constraint weight 0)",
+                        UserWarning,
+                        stacklevel=3,
+                    )
+            seen.setdefault(id(comp.data), []).append((k, rows))
+
+
+# ----------------------------------------------------------------------------
+# The problem
+# ----------------------------------------------------------------------------
+
+
+class Problem:
+    """The compiled calibration problem: the flat interface a sampler wants.
+
+    Parameters
+    ----------
+    constraints : iterable of Constraint
+    priors : sequence of (params, joint), optional
+        Joint prior blocks; see the module docstring.
+    """
+
+    def __init__(self, constraints, priors=()):
+        constraints = tuple(constraints)
+        if not constraints:
+            raise ValueError("a problem needs at least one constraint")
+        for c in constraints:
+            if not isinstance(c, Constraint):
+                raise TypeError(f"constraints must be Constraint objects, got {c!r}")
+        self.index = ParameterIndex()
+        self.constraints = tuple(CompiledConstraint(c, self.index) for c in constraints)
+        _warn_on_shared_rows(self.constraints)
+        self.priors = tuple(priors)
+        # a hyperprior block may introduce a parameter no model or term uses (its
+        # hyperparameter); it gets a slot after every constraint's parameters
+        for entry in self.priors:
+            params = entry[0] if not isinstance(entry, Parameter) else entry
+            params = [params] if isinstance(params, Parameter) else list(params)
+            self.index.add_all(params)
+        self.index.check_names_unique()
+        self._prior = _Prior(self.index, self.priors)
+
+    # -- structure ----------------------------------------------------------
+
+    @property
+    def params(self) -> tuple[Parameter, ...]:
+        return self.index.params
+
+    @property
+    def names(self) -> list[str]:
+        return self.index.names
+
+    @property
+    def ndim(self) -> int:
+        return self.index.ndim
+
+    @property
+    def bounds(self) -> np.ndarray:
+        return self.index.bounds
+
+    def columns(self, params) -> np.ndarray:
+        """Chain columns of one parameter or of a sequence of them."""
+        return self.index.slots(params)
+
+    def _theta(self, theta) -> np.ndarray:
+        theta = np.asarray(theta, dtype=float)
+        if theta.shape != (self.ndim,):
+            raise ValueError(f"theta must have shape ({self.ndim},), got {theta.shape}")
+        return theta
+
+    # -- densities ------------------------------------------------------------
+
+    def log_prior(self, theta) -> float:
+        return self._prior.logpdf(self._theta(theta))
+
+    def log_likelihood(self, theta) -> float:
+        theta = self._theta(theta)
+        total = 0.0
+        for c in self.constraints:
+            if c.weight == 0.0:
+                continue
+            ll = c.log_likelihood(theta)
+            if ll == -np.inf:
+                return -np.inf
+            total += c.weight * ll
+        return float(total)
+
+    def log_posterior(self, theta) -> float:
+        theta = self._theta(theta)
+        lp = self._prior.logpdf(theta)
+        if not np.isfinite(lp):
+            return -np.inf
+        return lp + self.log_likelihood(theta)
+
+    def chi2(self, theta) -> float:
+        theta = self._theta(theta)
+        return float(sum(c.chi2(theta) for c in self.constraints))
+
+    def log_jacobian(self) -> float:
+        """Sum of the constraints' comparison-space log-Jacobians, each times its
+        ``weight``.
+
+        A tempered constraint enters the likelihood as ``weight * log L``, so
+        its Jacobian enters ``log Z_raw = log Z + log_jacobian()`` with the same
+        weight, and a weight-0 constraint not at all.
+        """
+        return float(
+            sum(c.weight * c.log_jacobian for c in self.constraints if c.weight)
+        )
+
+    def prior_transform(self, u) -> np.ndarray:
+        u = np.asarray(u, dtype=float)
+        if u.shape != (self.ndim,):
+            raise ValueError(f"u must have shape ({self.ndim},), got {u.shape}")
+        return self._prior.transform(u)
+
+    def sample_prior(self, n: int, rng=None) -> np.ndarray:
+        """``(n, ndim)`` draws from the prior."""
+        rng = np.random.default_rng(rng)
+        return self._prior.sample(int(n), rng)
+
+    def predict(self, theta, physical: bool = False) -> list[list[np.ndarray]]:
+        """Per constraint, per comparison: the prediction on all points."""
+        theta = self._theta(theta)
+        out = []
+        for c in self.constraints:
+            if physical:
+                out.append(c.predict_physical(theta))
+            else:
+                out.append([cmp.predict(*theta[g]) for _, g, cmp in c.predictors])
+        return out
+
+    # -- black-box-bayes spellings ------------------------------------------------
+
+    @property
+    def NDIM(self) -> int:  # noqa: N802 - the bbb name
+        return self.ndim
+
+    @property
+    def parameter_names(self) -> list[str]:
+        return self.names
+
+    def starting_location(self, n: int) -> np.ndarray:
+        return self.sample_prior(n)
+
+    def log_posterior_batch(self, thetas) -> np.ndarray:
+        thetas = np.asarray(thetas, dtype=float)
+        return np.asarray([self.log_posterior(t) for t in thetas])
+
+    def __repr__(self):
+        return f"Problem(ndim={self.ndim}, constraints={len(self.constraints)})"

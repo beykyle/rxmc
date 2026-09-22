@@ -36,17 +36,20 @@ docs = [
 ]
 examples = [
   "corner>=2.2",
+  "dill>=0.3",
   "dynesty>=2.1",
   "emcee>=3.1",
   "ipykernel>=6.0",
   "jupyter>=1.0",
   "matplotlib>=3.8",
+  "scikit-learn>=1.0",
   "tqdm>=4.66",
 ]
 validation = [
   "black>=24.0",
   "build>=1.2",
   "corner>=2.2",
+  "dill>=0.3",
   "dynesty>=2.1",
   "emcee>=3.1",
   "ipykernel>=6.0",
@@ -57,6 +60,7 @@ validation = [
   "nbqa>=1.9",
   "pytest>=8.0",
   "ruff>=0.6",
+  "scikit-learn>=1.0",
   "tqdm>=4.66",
 ]
 
@@ -71,16 +75,16 @@ write_to = "src/rxmc/__version__.py"
 
 [tool.black]
 line-length = 88
-target-version = ["py310"]
+target-version = ["py312"]
 
 [tool.isort]
 profile = "black"
 line_length = 88
-src_paths = ["src", "test"]
+src_paths = ["src", "test", "test/recipes"]
 
 [tool.ruff]
 line-length = 88
-target-version = "py310"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["F", "I"]
@@ -88,9 +92,16 @@ select = ["F", "I"]
 [tool.ruff.lint.isort]
 # match isort's src_paths = ["src", "test"]: the shared test helpers module is
 # first-party too, so the two sorters agree
-known-first-party = ["rxmc", "helpers"]
+known-first-party = ["rxmc", "helpers", "common", "oracle"]
 
 [tool.pytest.ini_options]
-# bare `pytest` runs the unit suite only; the notebooks are executed in CI via
-# `pytest -n 4 --nbmake --nbmake-timeout=1200 examples`
+# bare `pytest` runs the fast tier: unit tests plus the sampler-free and
+# short-chain assertions of every recipe test.  The converged tier is marked
+# `slow` and runs with `pytest -m slow`, together with the notebooks
+# (`pytest --nbmake examples`), in the "Converged tier" workflow required on
+# pushes and pull requests to main.  See docs/groundup_design.md section 9.
 testpaths = ["test"]
+addopts = "-m 'not slow'"
+markers = [
+  "slow: converged-chain tier; deselected by default, run with -m slow on pushes and PRs to main",
+]

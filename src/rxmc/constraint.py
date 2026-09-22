@@ -1,483 +1,333 @@
 """
-Constraint: the maximal block of mutually-correlated data.
+Comparisons and constraints: the declarations a likelihood is built from.
 
-A :class:`Constraint` pairs one or more :class:`~rxmc.observation.Observation`
-objects with a :class:`~rxmc.physical_model.PhysicalModel` and a likelihood
-functional (:class:`~rxmc.likelihood_model.GaussianLikelihood` by default).  It
-owns **one** multivariate distribution over the *stacked* vector of all its
-observations, whose covariance is a
-:class:`~rxmc.covariance.ConstraintCovariance` assembled from
-:class:`~rxmc.covariance.Term` s.
+A :class:`Comparison` is the unit a residual is formed on: one dataset, one
+model bound to its grid, and one parameter-free comparison ``space`` (e.g.
+``log``) applied to both.  A :class:`Constraint` is a tuple of comparisons
+plus the covariance terms, the likelihood functional, the tempering weight
+and the active-point masks; it is the maximal block of mutually correlated
+data, and constraints are independent of each other.  Each comparison is one
+block of the constraint's stacked covariance.
 
-Each observation *i* occupies a contiguous slice of the stacked vector.  The
-default covariance is the concatenation of every observation's statistical
-diagonal (strictly block-diagonal — reproducing the old summed independent
-likelihoods).  Correlated modes — a dataset's own normalisation/offset
-systematic, an unknown-noise term, or a cross-dataset coupling — are supplied as
-``extra_terms``.
+Masks live on the constraint, not on the comparison or the data, so
+:meth:`Constraint.masked`, :meth:`Constraint.masked_where` and
+:meth:`Constraint.complement` return constraints sharing every
+``Comparison``, ``Term`` and ``Parameter`` object with the original.  A
+held-out problem built from ``complement()`` therefore has the same
+parameter columns as the fit.
 
-Each observation's comparison-space ``transform`` is applied to the model
-prediction here, so the residual ``y - ym`` is formed in that space.  Masks —
-point-level on the observations, observation-level via ``mask=`` — select the
-*active* rows; terms are always authored over the full stack.
+Nothing here walks the parameter graph; :class:`~rxmc.problem.Problem` does
+that once.  The checks here need only the constraint itself: comparisons are
+distinct, every term's ``on`` resolves inside the constraint, and an
+array-valued term has the right shape for its support.
 """
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field, replace
+from typing import Any, Callable
 
 import numpy as np
 
-from .covariance import ConstraintCovariance, StackContext, stacked_supports
-from .likelihood_model import GaussianLikelihood
-from .observation import Observation
-from .physical_model import PhysicalModel
+from .data import Dataset
+from .likelihood import Gaussian, Likelihood
+from .model import Model, Predictor
+from .terms import Term
+from .transforms import as_transform, identity
+
+__all__ = ["Comparison", "Constraint"]
 
 
-class Constraint:
-    """Pair observations with a physical model and a stacked covariance.
+@dataclass(eq=False, frozen=True)
+class Comparison:
+    """One dataset compared with one model in one space.
 
     Parameters
     ----------
-    observations : list of Observation
-        The observed data that the model will attempt to reproduce.  Together
-        they form one stacked vector ``y = [y1; y2; ...]``.
-    physical_model : PhysicalModel
-        Model that predicts the observed data.
-    likelihood : object, optional
-        Likelihood functional of ``(d2, logdet, n, *like_params)``.  Defaults to
-        :class:`~rxmc.likelihood_model.GaussianLikelihood`.
-    extra_terms : sequence of Term, optional
-        Additional covariance contributions beyond the statistical diagonals —
-        local systematics or cross-block couplings.
-    include_statistical_term : bool, optional
-        When ``True`` (default) each observation's statistical diagonal
-        (``obs.statistical_term``) is added automatically.  Set ``False`` to omit
-        it and compose the *entire* covariance from ``extra_terms`` — e.g. to let
-        an unknown-noise term (:func:`~rxmc.covariance.noise_term`) *replace* the
-        reported statistics rather than add to them.
-    mask : sequence of bool or of int, optional
-        Which *observations* are active (all by default): a boolean per
-        observation, or the indices of the active ones.  An integer array of
-        length ``len(observations)`` holding only 0/1 is ambiguous and
-        rejected; pass a bool array or explicit indices.  Combined with each
-        observation's own point ``mask`` to give :attr:`active`.
-
-    Attributes
-    ----------
-    covariance : ConstraintCovariance
-        The stacked covariance.
-    params : tuple of Parameter
-        Free parameters of this constraint: covariance params followed by
-        likelihood params (e.g. Student-t ``nu``).
-    n_params : int
-        ``len(params)``.
-    active : np.ndarray
-        Stacked indices of the active points.
-    n_data_pts : int
-        Number of *active* points (the ``n`` of the likelihood).
-    n_data_pts_total : int
-        Length of the full stack.
+    data : Dataset
+    model : Model
+        Bound to ``data.x`` with ``data.meta`` at construction.
+    space : Transform or callable, optional
+        Parameter-free comparison transform applied to the data once and to
+        every prediction.  ``y = space(data.y)``, ``y_err`` by the delta
+        method, and the log-Jacobian are constants.  Non-finite values are
+        allowed here (the point may be masked); the compile step checks the
+        active points and names the comparison.
     """
 
-    def __init__(
-        self,
-        observations: list[Observation],
-        physical_model: PhysicalModel,
-        likelihood=None,
-        extra_terms=(),
-        include_statistical_term: bool = True,
-        mask=None,
-    ):
-        self.observations = list(observations)
-        self.physical_model = physical_model
-        self.likelihood = likelihood if likelihood is not None else GaussianLikelihood()
+    data: Dataset
+    model: Model
+    space: Any = identity
+    predictor: Predictor = field(init=False, repr=False)
+    y: np.ndarray = field(init=False, repr=False)
+    y_err: np.ndarray = field(init=False, repr=False)
+    log_jac: np.ndarray = field(init=False, repr=False)
 
-        observations = self.observations
-        supports = stacked_supports(observations)
-        self._supports = supports
-        self.n_data_pts_total = sum(o.n_data_pts for o in observations)
-
-        self.observation_mask = self._observation_mask(mask)
-        self.active = np.concatenate(
-            [
-                s[o.mask] if keep else np.zeros(0, dtype=int)
-                for o, s, keep in zip(observations, supports, self.observation_mask)
-            ]
-        ).astype(int)
-        self.n_data_pts = int(self.active.size)
-
-        # x and y are invariant per constraint; stack them once.  Frozen
-        # because they are shared across every likelihood evaluation.
-        self._x_stacked = np.concatenate([o.x for o in observations])
-        self._y_stacked = np.concatenate([o.y for o in observations])
-        self._x_stacked.setflags(write=False)
-        self._y_stacked.setflags(write=False)
-
-        if include_statistical_term:
-            terms = [obs.statistical_term(s) for obs, s in zip(observations, supports)]
-        else:
-            terms = []
-        terms += list(extra_terms)
-        self.covariance = ConstraintCovariance(
-            terms, self.n_data_pts_total, blocks=supports, active=self.active
-        )
-
-        self.params = tuple(self.covariance.params) + tuple(self.likelihood.params)
-        self.n_params = len(self.params)
-        self._n_cov_params = self.covariance.n_params
-
-        self._validate_parameter_names()
-        if self.covariance.is_constant:
-            self._validate_constant_covariance()
-
-    def _observation_mask(self, mask):
-        n = len(self.observations)
-        if mask is None:
-            return np.ones(n, dtype=bool)
-        m = np.asarray(mask)
-        if m.dtype == bool:
-            if m.shape != (n,):
-                raise ValueError(f"mask must have one entry per observation ({n})")
-            return m
-        idx = np.asarray(m, dtype=int)
-        if n > 1 and idx.shape == (n,) and np.isin(idx, (0, 1)).all():
+    def __post_init__(self):
+        if not isinstance(self.data, Dataset):
+            raise TypeError(f"data must be a Dataset, got {type(self.data).__name__}")
+        if not isinstance(self.model, Model):
+            raise TypeError(f"model must be a Model, got {type(self.model).__name__}")
+        held = (self.data.meta or {}).get("quantity")
+        predicted = getattr(self.model, "quantity", None)
+        if held is not None and predicted is not None and held != predicted:
             raise ValueError(
-                f"ambiguous observation mask: an integer array of length {n} with "
-                "only 0/1 entries could be a boolean mask or a list of indices; "
-                "pass a bool array or integer indices"
+                f"dataset {self.data.label or 'dataset'!r} holds {held!r} but the "
+                f"model predicts {predicted!r}: convert the data "
+                "(from_measurement(..., quantity=)) or use a matching model"
             )
-        out = np.zeros(n, dtype=bool)
-        out[idx] = True
-        return out
+        space = as_transform(self.space)
+        if space.params:
+            raise ValueError(
+                "a comparison space must be parameter-free; put parametric "
+                "transforms on the model (model | transform)"
+            )
+        set_ = object.__setattr__
+        set_(self, "space", space)
+        set_(self, "predictor", self.model.bind(self.data.x, self.data.meta))
+        if space.is_identity:
+            set_(self, "y", self.data.y)
+            set_(self, "y_err", self.data.y_err)
+            set_(self, "log_jac", np.zeros(self.data.n))
+            return
+        with np.errstate(all="ignore"):
+            # a derivative may come back as a scalar; the Jacobian is per point
+            jac = np.broadcast_to(np.abs(space.derivative(self.data.y)), (self.data.n,))
+            set_(self, "y", space(self.data.y))
+            set_(self, "y_err", jac * self.data.y_err)
+            set_(self, "log_jac", np.log(jac))
 
-    # ------------------------------------------------------------------
-    # Masked views
-    # ------------------------------------------------------------------
+    @property
+    def n(self) -> int:
+        return self.data.n
 
-    def masked(self, mask=None, point_masks=None):
-        """A new constraint over the same observations/model/terms with new masks.
+    def predict(self, *values) -> np.ndarray:
+        """The prediction on the data grid, in comparison space."""
+        ym = self.predictor(*values)
+        return ym if self.space.is_identity else self.space(ym)
 
-        Parameters
-        ----------
-        mask : sequence of bool or of int, optional
-            Observation-level mask (see the constructor); ``None`` keeps this
-            constraint's.
-        point_masks : sequence of array_like of bool, optional
-            One point mask per observation (``None`` entries keep that
-            observation's current mask).
+    def log_jacobian(self, mask=None) -> float:
+        r"""``sum(log |space'(data.y)|)`` over the active points.
 
-        Notes
-        -----
-        The new constraint shares the ``Term``/``Parameter`` objects with this
-        one, so its parameter vector is identical — it is a *view* for
-        evaluating the same likelihood on a different subset (e.g. held-out
-        scoring), not an independent constraint to place in the same
-        :class:`~rxmc.evidence.Evidence`.  Sharing the terms is safe because
-        both constraints stack the same observations in the same order, so the
-        terms' bound supports and cached ``x``-dependent values stay valid.
+        A constant in the parameters, needed only to compare marginal
+        likelihoods across comparison spaces (``log Z_raw = log Z_transformed
+        + log_jacobian``).  Zero for the identity.
         """
-        observations = list(self.observations)
-        if point_masks is not None:
-            if len(point_masks) != len(observations):
-                raise ValueError("point_masks must have one entry per observation")
-            observations = [
-                o if pm is None else o.masked(pm)
-                for o, pm in zip(observations, point_masks)
-            ]
-        # hand over the already-built term list (statistical diagonals included)
-        # so the view shares the exact same Term/Parameter objects
-        return Constraint(
-            observations,
-            self.physical_model,
-            likelihood=self.likelihood,
-            extra_terms=self.covariance.terms,
-            include_statistical_term=False,
-            mask=self.observation_mask if mask is None else mask,
-        )
+        lj = self.log_jac if mask is None else self.log_jac[np.asarray(mask, bool)]
+        return float(np.sum(lj))
 
-    def complement(self):
-        """The held-out counterpart: every currently inactive point becomes active
-        and every active point inactive.
+    def reported_terms(self) -> list[Term]:
+        """The dataset's reported systematics as fixed rank-one modes, ``on=self``.
 
-        An observation excluded wholesale at the constraint level is therefore
-        restored in full; an active observation whose point mask keeps every
-        point is dropped wholesale.  See :meth:`masked` for the sharing caveat.
+        Opt-in: nothing is folded into a covariance automatically.  The
+        absolute offset mode comes first, then the fractional normalisation
+        mode, each skipped when its magnitude is zero.  Both are propagated
+        to the comparison space by the delta method: the offset is an error on
+        the *data* and is linearised at the data; the normalisation multiplies
+        the *prediction* and is linearised at the prediction, which needs the
+        space's inverse.  A scalar normalisation error gives a mode that is a
+        function of the prediction alone, so it also has a value on a new grid
+        (:func:`~rxmc.predictive.grid_draws`); an offset, or a per-point
+        normalisation, is defined only at the measured points.
         """
-        # an observation dropped wholesale at the constraint level is restored
-        # in full; an active one has its point mask flipped
-        point_masks = [
-            ~o.mask if keep else np.ones(o.n_data_pts, dtype=bool)
-            for o, keep in zip(self.observations, self.observation_mask)
-        ]
-        obs_mask = [
-            not keep or o.n_active < o.n_data_pts
-            for o, keep in zip(self.observations, self.observation_mask)
-        ]
-        return self.masked(mask=np.array(obs_mask), point_masks=point_masks)
-
-    def _validate_parameter_names(self):
-        """Reject ambiguous parameter names within this constraint.
-
-        Sharing one sampled value between terms works by referencing the *same*
-        ``Parameter`` object (identity); two distinct objects with one name would
-        silently become two sampler columns with identical labels.
-        """
-        model_names = {p.name for p in self.physical_model.params}
-        seen = set()
-        for p in self.params:
-            if p.name in seen:
-                raise ValueError(
-                    f"Constraint has multiple distinct parameters named "
-                    f"'{p.name}'. To share one sampled value between terms, "
-                    "pass the SAME Parameter object to each term; otherwise "
-                    "give each parameter a unique name."
-                )
-            seen.add(p.name)
-            if p.name in model_names:
-                raise ValueError(
-                    f"Constraint parameter '{p.name}' collides with a "
-                    "physical-model parameter of the same name; rename the "
-                    "covariance/likelihood parameter."
-                )
-
-    def _validate_constant_covariance(self):
-        """Fail fast on a singular constant covariance (also warms the cache).
-
-        A routine trigger is an EXFOR measurement reporting no statistical
-        error: ``from_measurement`` then yields an all-zero ``y_stat_err``, and
-        without an extra covariance term the stacked covariance is singular.
-        Catching it here names the offending dataset instead of surfacing an
-        opaque ``LinAlgError`` deep inside a sampler.
-        """
-        ctx = StackContext.constant(self._x_stacked, self._y_stacked, self._supports)
-        cov = self.covariance
-        try:
-            # warm whichever factorisation the likelihood path will use
-            if cov.uses_block_path:
-                cov.block_cholesky(ctx)
+        d, t = self.data, self.space
+        terms = []
+        omega = _reported(d.offset_err, d.n)
+        if omega is not None:
+            if not t.is_identity:
+                omega = np.abs(t.derivative(d.y)) * omega
+            terms.append(Term(omega, kind="mode", on=self))
+        eta = _reported(d.norm_err, d.n)
+        if eta is not None and np.ndim(d.norm_err) == 0:
+            # a scalar keeps the mode a function of the prediction alone, so
+            # it can be evaluated on any grid (grid_draws), like
+            # T.normalization(magnitude=)
+            eta = float(d.norm_err)
+        if eta is not None:
+            if t.is_identity:
+                terms.append(Term(lambda c: eta * c.ym, kind="mode", on=self))
             else:
-                cov.cholesky(ctx)
-        except np.linalg.LinAlgError as err:
-            labels = [
-                o.label or f"observation {i}" for i, o in enumerate(self.observations)
-            ]
-            Sigma = self.covariance.matrix(ctx)
-            zero_rows = self.active[np.diag(Sigma)[self.active] == 0.0]
-            offenders = [
-                label
-                for label, s in zip(labels, self._supports)
-                if np.isin(s, zero_rows).any()
-            ]
-            msg = (
-                f"Constraint covariance over [{', '.join(labels)}] is singular "
-                "(Cholesky factorization failed)."
-            )
-            if offenders:
-                msg += (
-                    f" The covariance diagonal is zero on rows belonging to "
-                    f"{offenders}: these datasets report zero statistical error "
-                    "and no other covariance term covers their points."
-                )
-            msg += (
-                " Remedies: pass the dataset's reported systematics as terms "
-                "(extra_terms=[*obs.systematic_terms()]; for a multi-observation "
-                "constraint place them with support= from "
-                "rxmc.covariance.stacked_supports(observations)), add a "
-                "noise_term or a fixed Term covering those points, or compose "
-                "the full covariance explicitly with include_statistical_term=False."
-            )
-            raise ValueError(msg) from err
+                inv = t.inverse
+                if inv is None:
+                    raise ValueError(
+                        f"comparison space {t.name!r} has no inverse; the "
+                        "normalisation systematic needs the physical-space prediction"
+                    )
 
-    # ------------------------------------------------------------------
-    # Stacking
-    # ------------------------------------------------------------------
+                def basis(c, eta=eta, t=t, inv=inv):
+                    ym_raw = inv(c.ym)
+                    return eta * ym_raw * np.abs(t.derivative(ym_raw))
 
-    def _stack(self, model_params):
-        ym = [self.physical_model(o, *model_params) for o in self.observations]
-        return self._stack_from_predictions(ym)
+                terms.append(Term(basis, kind="mode", on=self))
+        return terms
 
-    def _stack_from_predictions(self, ym: list):
-        if len(ym) != len(self.observations):
-            raise ValueError(
-                f"expected {len(self.observations)} prediction arrays, got {len(ym)}"
-            )
-        ym_arrays = []
-        for o, y in zip(self.observations, ym):
-            y = np.asarray(y, dtype=float)
-            if y.shape != o.y.shape:
+    def __repr__(self):
+        label = self.data.label or "dataset"
+        return f"Comparison({label!r}, {self.model!r}, space={self.space.name})"
+
+
+def _reported(spec, n):
+    """A reported magnitude as a length-``n`` array, or ``None`` when absent/zero."""
+    if spec is None or not np.any(np.asarray(spec) != 0.0):
+        return None
+    return np.broadcast_to(np.asarray(spec, dtype=float), (n,)).copy()
+
+
+def _as_mask(mask, n) -> np.ndarray:
+    # a copy, so the caller reusing its array can't move the mask
+    mask = np.array(mask, dtype=bool)
+    if mask.shape != (n,):
+        raise ValueError(f"mask must have shape ({n},), got {mask.shape}")
+    return mask
+
+
+@dataclass(eq=False, frozen=True)
+class Constraint:
+    """The maximal block of mutually correlated data: one likelihood.
+
+    Parameters
+    ----------
+    comparisons : iterable of Comparison
+        Distinct comparisons; each is one block of the stacked covariance.
+    terms : iterable of Term, optional
+        Covariance contributions, authored in comparison space.
+    likelihood : Likelihood, optional
+        Functional of ``(d2, logdet, n)``; :class:`~rxmc.likelihood.Gaussian`
+        by default.
+    weight : float, optional
+        Tempering: multiplies this constraint's log-likelihood only.
+    statistical : bool, optional
+        Add each comparison's ``y_err`` diagonal (default).  ``False`` composes
+        the whole covariance from ``terms``.
+    masks : sequence of bool arrays, optional
+        Active points, one array per comparison; ``None`` means all active.
+    """
+
+    comparisons: Any
+    terms: Any = ()
+    likelihood: Likelihood = field(default_factory=Gaussian)
+    weight: float = 1.0
+    statistical: bool = True
+    masks: Any = None
+    offsets: tuple = field(init=False, repr=False)
+    active: np.ndarray = field(init=False, repr=False)
+
+    def __post_init__(self):
+        set_ = object.__setattr__
+        comps = tuple(self.comparisons)
+        for c in comps:
+            if not isinstance(c, Comparison):
+                raise TypeError(f"comparisons must be Comparison objects, got {c!r}")
+        if len({id(c) for c in comps}) != len(comps):
+            raise ValueError("comparisons must be distinct objects")
+        if not comps:
+            raise ValueError("a constraint needs at least one comparison")
+        terms = tuple(self.terms)
+        for t in terms:
+            if not isinstance(t, Term):
+                raise TypeError(f"terms must be Term objects, got {type(t).__name__}")
+        if not isinstance(self.likelihood, Likelihood):
+            raise TypeError("likelihood must be a Likelihood")
+        weight = float(self.weight)
+        if not (np.isfinite(weight) and weight >= 0):
+            raise ValueError(f"weight must be finite and non-negative, got {weight}")
+        ns = [c.n for c in comps]
+        starts = np.concatenate([[0], np.cumsum(ns)[:-1]]).astype(int)
+        offsets = tuple(slice(int(s), int(s + n)) for s, n in zip(starts, ns))
+        if self.masks is None:
+            masks = None
+            active = np.arange(int(sum(ns)))
+        else:
+            masks = tuple(self.masks)
+            if len(masks) != len(comps):
                 raise ValueError(
-                    f"prediction shape {y.shape} does not match observation shape "
-                    f"{o.y.shape}"
+                    f"masks must have one entry per comparison ({len(comps)})"
                 )
-            ym_arrays.append(o.transform(y))
-        return StackContext(
-            x=self._x_stacked,
-            y=self._y_stacked,
-            ym=np.concatenate(ym_arrays),
-            supports=self._supports,
-        )
+            masks = tuple(_as_mask(m, n) for m, n in zip(masks, ns))
+            active = np.concatenate(
+                [np.arange(o.start, o.stop)[m] for o, m in zip(offsets, masks)]
+            ).astype(int)
+        set_(self, "comparisons", comps)
+        set_(self, "terms", terms)
+        set_(self, "weight", weight)
+        set_(self, "masks", masks)
+        set_(self, "offsets", offsets)
+        set_(self, "active", active)
+        for t in terms:  # eager: every on= resolves here, arrays have the right shape
+            rows = self.support(t.on)
+            if not callable(t.fn) and t.fn.shape != t.expected_shape(len(rows)):
+                raise ValueError(
+                    f"{t.kind} term expects shape {t.expected_shape(len(rows))} on "
+                    f"its support, got {t.fn.shape}"
+                )
 
-    def _split(self, params):
-        params = tuple(params)
-        if len(params) != self.n_params:
-            names = ", ".join(p.name for p in self.params) or "none"
-            raise ValueError(
-                f"Constraint expects {self.n_params} parameter(s) [{names}], "
-                f"got {len(params)}"
-            )
-        return params[: self._n_cov_params], params[self._n_cov_params :]
-
-    # ------------------------------------------------------------------
-    # Likelihood
-    # ------------------------------------------------------------------
-
-    def _evaluate(self, ctx, cov_params, statistic, *, invalid=-np.inf):
-        """Evaluate ``statistic(d2, logdet, n, *like_params)`` on the stack.
-
-        ``invalid`` is returned when the prediction is not finite on the active
-        points (e.g. a non-positive prediction under a log comparison space):
-        ``-inf`` for a log likelihood (default), ``+inf`` for a chi-squared.
-        """
-        cov_part, like_part = self._split(cov_params)
-        if not np.all(np.isfinite(ctx.ym[self.active])):
-            return invalid
-        d2, logdet = self.covariance.stacked_distance(ctx, cov_part)
-        return statistic(d2, logdet, self.n_data_pts, *like_part)
-
-    def log_likelihood(self, model_params, cov_params=()):
-        """Log likelihood of the stacked observations given the model.
-
-        Parameters
-        ----------
-        model_params : tuple
-            Physical-model parameters.
-        cov_params : tuple, optional
-            Constraint parameters: covariance params followed by likelihood
-            params, in :attr:`params` order.
-        """
-        ctx = self._stack(model_params)
-        return self._evaluate(ctx, cov_params, self.likelihood.log_likelihood)
-
-    def marginal_log_likelihood(self, ym: list, *cov_params):
-        """Log likelihood from pre-computed predictions (Gibbs hook).
-
-        Parameters
-        ----------
-        ym : list of np.ndarray
-            One prediction array per observation (no physical-model re-eval).
-        *cov_params : float
-            Constraint parameters, in :attr:`params` order.
-        """
-        ctx = self._stack_from_predictions(ym)
-        return self._evaluate(ctx, cov_params, self.likelihood.log_likelihood)
-
-    def chi2(self, model_params, cov_params=()):
-        """Generalised chi-squared (Mahalanobis distance) over the stack.
-
-        ``cov_params`` is the full constraint tuple in :attr:`params` order,
-        including likelihood params (e.g. Student-t ``nu``) even though the
-        chi-squared statistic ignores them.
-        """
-        ctx = self._stack(model_params)
-        return self._evaluate(ctx, cov_params, self.likelihood.chi2, invalid=np.inf)
-
-    def predict(self, *model_params, raw=False):
-        """Predictions for each observation (all points, comparison space).
-
-        With ``raw=True`` the predictions are returned in physical space (the
-        model's own output, before each observation's ``transform``).
-        """
-        ym = [self.physical_model(obs, *model_params) for obs in self.observations]
-        if raw:
-            return ym
-        return [o.transform(y) for o, y in zip(self.observations, ym)]
-
-    def _stack_and_covariance(self, model_params, cov_params, active_only):
-        """``(ctx, Sigma)`` at a parameter point; ``Sigma`` is a fresh copy."""
-        ctx = self._stack(model_params)
-        cov_part, _ = self._split(cov_params)
-        if active_only:
-            return ctx, np.array(self.covariance.active_matrix(ctx, *cov_part))
-        return ctx, np.array(self.covariance.matrix(ctx, *cov_part))
-
-    def predict_and_covariance(self, model_params, cov_params=()):
-        """Stacked prediction and covariance on the active points, one model call.
-
-        Returns
-        -------
-        (np.ndarray, np.ndarray)
-            ``(ym, Sigma)`` with ``ym`` of length ``n_data_pts`` (comparison
-            space) and ``Sigma`` a fresh ``(n_data_pts, n_data_pts)`` array.
-        """
-        ctx, Sigma = self._stack_and_covariance(model_params, cov_params, True)
-        return ctx.ym[self.active], Sigma
+    # -- structure ----------------------------------------------------------
 
     @property
-    def y(self) -> np.ndarray:
-        """Stacked observed data on the active points (comparison space)."""
-        return self._y_stacked[self.active]
+    def n_total(self) -> int:
+        return int(sum(c.n for c in self.comparisons))
 
     @property
-    def x(self) -> np.ndarray:
-        """Stacked independent variable on the active points."""
-        return self._x_stacked[self.active]
+    def n_active(self) -> int:
+        return int(self.active.size)
 
     @property
     def log_jacobian(self) -> float:
-        """Sum of the observations' comparison-space log-Jacobians (active points)."""
-        return float(
-            sum(
-                o.log_jacobian
-                for o, keep in zip(self.observations, self.observation_mask)
-                if keep
-            )
+        """Sum of the comparisons' log-Jacobians over the active points."""
+        masks = self.masks or (None,) * len(self.comparisons)
+        return float(sum(c.log_jacobian(m) for c, m in zip(self.comparisons, masks)))
+
+    def support(self, on) -> np.ndarray:
+        """The stacked rows a term's ``on`` resolves to, in constraint order."""
+        if on is None:
+            return np.arange(self.n_total)
+        if isinstance(on, (Comparison, Dataset)):
+            targets = [on]
+        else:
+            try:
+                targets = list(on)
+            except TypeError:
+                raise TypeError(
+                    f"on= must reference comparisons or datasets, got {on!r}"
+                ) from None
+        keep = np.zeros(len(self.comparisons), dtype=bool)
+        for target in targets:
+            if isinstance(target, Comparison):
+                hits = [i for i, c in enumerate(self.comparisons) if c is target]
+            elif isinstance(target, Dataset):
+                hits = [i for i, c in enumerate(self.comparisons) if c.data is target]
+            else:
+                raise TypeError(
+                    f"on= must reference comparisons or datasets, got {target!r}"
+                )
+            if not hits:
+                raise ValueError(
+                    f"term on={target!r} does not reference a comparison of this "
+                    "constraint"
+                )
+            keep[hits] = True
+        return np.concatenate(
+            [np.arange(o.start, o.stop) for o, k in zip(self.offsets, keep) if k]
+        ).astype(int)
+
+    # -- masked views ---------------------------------------------------------
+
+    def masked(self, masks) -> "Constraint":
+        """The same constraint with new active-point masks."""
+        return replace(self, masks=masks)
+
+    def masked_where(self, predicate: Callable) -> "Constraint":
+        """Active where ``predicate(comparison.data.x)`` is true, per comparison."""
+        return self.masked([predicate(c.data.x) for c in self.comparisons])
+
+    def complement(self) -> "Constraint":
+        """Every inactive point active, and vice versa."""
+        if self.masks is None:
+            return self.masked([np.zeros(c.n, dtype=bool) for c in self.comparisons])
+        return self.masked([~m for m in self.masks])
+
+    def __repr__(self):
+        return (
+            f"Constraint({len(self.comparisons)} comparison(s), {len(self.terms)} "
+            f"term(s), {type(self.likelihood).__name__}, n_active={self.n_active})"
         )
-
-    def covariance_matrix(self, model_params, cov_params=(), active_only=True):
-        """Assemble the stacked covariance matrix Σ at a parameter point.
-
-        Convenience accessor (e.g. for visualising the off-diagonal block
-        structure of correlated observations).
-
-        Parameters
-        ----------
-        model_params : tuple
-            Physical-model parameters (needed for prediction-scaled terms).
-        cov_params : tuple, optional
-            Constraint parameters: covariance params followed by likelihood
-            params, in :attr:`params` order (matching :meth:`log_likelihood`).
-        active_only : bool, optional
-            Restrict to the active points (default); ``False`` returns the
-            full stacked matrix.
-
-        Returns
-        -------
-        np.ndarray
-            Shape ``(n_data_pts, n_data_pts)`` (active points) or
-            ``(n_data_pts_total, n_data_pts_total)`` when ``active_only=False``.
-            A fresh copy (safe to mutate; never aliases the internal cache).
-        """
-        _, Sigma = self._stack_and_covariance(model_params, cov_params, active_only)
-        return Sigma
-
-    # ------------------------------------------------------------------
-    # Coverage diagnostics
-    # ------------------------------------------------------------------
-
-    def num_pts_within_interval(
-        self, ylow: list[np.ndarray], yhigh: list[np.ndarray], xlim=None
-    ):
-        """Count data points that fall within a predictive interval."""
-        return sum(
-            obs.num_pts_within_interval(ylow[i], yhigh[i], xlim)
-            for i, obs in enumerate(self.observations)
-            if self.observation_mask[i]
-        )
-
-    def empirical_coverage(
-        self, ylow: list[np.ndarray], yhigh: list[np.ndarray], xlim=None
-    ):
-        """Fraction of active data points within a predictive interval.
-
-        ``nan`` when the constraint has no active points.
-        """
-        if self.n_data_pts == 0:
-            return float("nan")
-        return self.num_pts_within_interval(ylow, yhigh, xlim) / self.n_data_pts

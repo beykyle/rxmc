@@ -1,812 +1,326 @@
-"""Unit tests for the stacked-covariance core (:mod:`rxmc.covariance`)."""
-
-from types import SimpleNamespace
+"""The structured (Woodbury) covariance against the dense reference."""
 
 import numpy as np
 import pytest
-from sklearn.gaussian_process.kernels import RBF, ConstantKernel, Matern, WhiteKernel
+from sklearn.gaussian_process.kernels import RBF, Matern
 
-from helpers import make_ctx
-from rxmc.covariance import (
-    ConstraintCovariance,
-    StackContext,
-    Term,
-    averaging,
-    constant_amplitude,
-    exp_growth,
-    exp_growth_amplitude,
-    kernel_term,
-    model_error_term,
-    noise_fraction_term,
-    noise_term,
-    normalization_term,
-    offset_term,
-    ones,
-    statistical_term,
-    systematic_term,
-    x_basis,
-    ym,
+from helpers import (
+    STUDY_LEGEND,
+    assemble_dense,
+    index_params,
+    mahalanobis,
+    study_form,
 )
-from rxmc.elastic_diffxs_observation import momentum_transfer
-from rxmc.likelihood_model import mahalanobis_distance_sqr_cholesky
-from rxmc.params import Parameter
-from rxmc.transforms import Transform
+from rxmc import Parameter
+from rxmc.covariance import StructuredCovariance, chol_logdet
+from rxmc.terms import Term, kernel, noise, normalization, offset, statistical
 
 
-def single_block_ctx(x, y, ym):
-    n = len(x)
-    return make_ctx(x, y, ym, [np.arange(n)])
+def build(terms, x, y, offsets, active=None, rows=None, labels=None):
+    """Wire terms into a StructuredCovariance with identity-gathered params."""
+    n = len(y)
+    params, gathers = index_params(terms)
+    rows = rows if rows is not None else [np.arange(n) for _ in terms]
+    active = np.arange(n) if active is None else np.asarray(active, dtype=int)
+    entries = list(zip(terms, rows, gathers))
+    cov = StructuredCovariance(entries, x, y, offsets, active, labels=labels)
+    return cov, params
 
 
-def assemble(terms, ctx, theta=()):
-    cov = ConstraintCovariance(terms, len(ctx.x), blocks=ctx.supports)
-    return cov.matrix(ctx, *theta)
+def theta_for(params, values_by_term, terms):
+    """Flat theta from per-term value tuples, honouring shared parameters."""
+    theta = np.zeros(len(params))
+    for t, v in zip(terms, values_by_term):
+        for p, val in zip(t.params, v):
+            theta[params.index(p)] = val
+    return theta
 
 
-# ----------------------------------------------------------------------------
-# Term
-# ----------------------------------------------------------------------------
-
-
-class TestTermKinds:
-    def test_diag_array_squares_std(self):
-        t = Term(np.array([1.0, 2.0, 3.0]), kind="diag", support=[0, 1, 2])
-        S = np.zeros((3, 3))
-        t.add_to(S, None, ())
-        assert np.allclose(S, np.diag([1.0, 4.0, 9.0]))
-        assert t.is_constant
-        assert not t.couples_offdiagonal
-
-    def test_mode_array_outer(self):
-        v = np.array([1.0, 2.0])
-        t = Term(v, kind="mode", support=[0, 1])
-        S = np.zeros((2, 2))
-        t.add_to(S, None, ())
-        assert np.allclose(S, np.outer(v, v))
-        assert t.couples_offdiagonal
-
-    def test_matrix_array_passthrough_into_subblock(self):
-        m = np.array([[2.0, 0.5], [0.5, 3.0]])
-        t = Term(m, support=[2, 3])
-        S = np.zeros((4, 4))
-        t.add_to(S, None, ())
-        expected = np.zeros((4, 4))
-        expected[2:, 2:] = m
-        assert np.allclose(S, expected)
-
-    def test_bad_kind_raises(self):
-        with pytest.raises(ValueError, match="kind"):
-            Term(np.ones(2), kind="rank1", support=[0, 1])
-
-    def test_scalar_broadcast_raises(self):
-        # a (1, 1) matrix on a length-3 support used to broadcast silently
-        with pytest.raises(ValueError, match="expects shape"):
-            Term([[0.04]], support=np.arange(3))
-
-    def test_wrong_length_vector_raises(self):
-        with pytest.raises(ValueError, match="expects shape"):
-            Term(np.ones(2), kind="diag", support=np.arange(3))
-
-    def test_asymmetric_matrix_raises(self):
-        with pytest.raises(ValueError, match="symmetric"):
-            Term(np.array([[1.0, 0.2], [0.0, 1.0]]), support=[0, 1])
-
-    def test_array_with_params_raises(self):
-        with pytest.raises(ValueError, match="array-valued"):
-            Term(np.ones(2), (Parameter("p"),), kind="diag", support=[0, 1])
-
-    def test_callable_sees_local_context_and_values(self):
-        seen = {}
-
-        def fn(c, a, b):
-            seen["c"] = c
-            return a * c.ym + b * c.y
-
-        pa, pb = Parameter("a"), Parameter("b")
-        t = Term(fn, (pa, pb), kind="diag", support=[1, 2])
-        ctx = single_block_ctx([0.0, 1.0, 2.0], [1.0, 2.0, 3.0], [1.5, 2.5, 3.5])
-        S = np.zeros((3, 3))
-        t.add_to(S, ctx, (2.0, 1.0))
-        c = seen["c"]
-        assert np.allclose(c.x, [1.0, 2.0])
-        assert np.allclose(c.ym, [2.5, 3.5])
-        assert len(c) == 2
-        v = 2.0 * np.array([2.5, 3.5]) + np.array([2.0, 3.0])
-        assert np.allclose(np.diag(S), [0.0, *(v**2)])
-
-    def test_callable_wrong_shape_raises(self):
-        t = Term(lambda c: np.ones(len(c) + 1), kind="diag", support=[0, 1])
-        ctx = single_block_ctx([0.0, 1.0], [0.0, 0.0], [0.0, 0.0])
-        with pytest.raises(ValueError, match="returned shape"):
-            t.add_to(np.zeros((2, 2)), ctx, ())
-
-    def test_wrong_param_count_raises(self):
-        t = Term(lambda c, a: a * ones(c), (Parameter("a"),), kind="diag", support=[0])
-        ctx = single_block_ctx([0.0], [0.0], [0.0])
-        with pytest.raises(ValueError, match="expected 1 params"):
-            t.add_to(np.zeros((1, 1)), ctx, ())
-
-    def test_constant_callable_cached(self):
-        calls = []
-
-        def fn(c):
-            calls.append(1)
-            return np.ones(len(c))
-
-        t = Term(fn, kind="diag", support=[0, 1], constant=True)
-        assert t.is_constant
-        ctx = single_block_ctx([0.0, 1.0], [0.0, 0.0], [0.0, 0.0])
-        t.add_to(np.zeros((2, 2)), ctx, ())
-        t.add_to(np.zeros((2, 2)), ctx, ())
-        assert len(calls) == 1
-
-    def test_constant_flag_ignored_with_params(self):
-        t = Term(lambda c, a: ones(c), (Parameter("a"),), kind="diag", constant=True)
-        assert not t.is_constant
-
-    def test_constant_term_may_read_x(self):
-        # constant means "independent of ym"; x is invariant and readable
-        x = np.linspace(0.0, 2.0, 4)
-        t = Term(lambda c: 0.1 * c.x, kind="diag", constant=True)
-        cov = ConstraintCovariance([t], 4)
-        assert cov.is_constant
-        ctx = StackContext.constant(x, np.zeros(4), [np.arange(4)])
-        np.testing.assert_allclose(cov.matrix(ctx), np.diag((0.1 * x) ** 2))
-        # a mis-declared constant term (reads ym) fails loudly, not silently
-        bad = ConstraintCovariance(
-            [Term(lambda c: 0.1 * c.ym, kind="diag", constant=True)], 4
-        )
-        with pytest.raises(TypeError):
-            bad.matrix(ctx)
-        assert cov.matrix(single_block_ctx(x, np.zeros(4), np.ones(4))) is cov.matrix(
-            ctx
-        )
-
-
-class TestTermCoords:
-    def test_coords_callable_applied_to_x(self):
-        t = Term(lambda c: c.x, kind="diag", support=[0, 1], coords=lambda x: 2 * x)
-        ctx = single_block_ctx([1.0, 3.0], [0.0, 0.0], [0.0, 0.0])
-        assert np.allclose(t.local_context(ctx).x, [2.0, 6.0])
-
-    def test_parametric_coords_params_appended(self):
-        pk = Parameter("k")
-        coords = Transform(lambda x, k: k * x, (pk,))
-        pa = Parameter("a")
-        t = Term(
-            lambda c, a: a * c.x, (pa,), kind="diag", support=[0, 1], coords=coords
-        )
-        assert t.params == (pa, pk)
-        ctx = single_block_ctx([1.0, 2.0], [0.0, 0.0], [0.0, 0.0])
-        S = np.zeros((2, 2))
-        t.add_to(S, ctx, (3.0, 2.0))  # a=3, k=2 -> v = 3 * 2 * x
-        assert np.allclose(np.diag(S), (6.0 * np.array([1.0, 2.0])) ** 2)
-
-    def test_coords_array_2d_reaches_kernel(self):
-        kernel = RBF(length_scale=1.0)
-        X = np.array([[0.0, 0.0], [1.0, 1.0], [2.0, 0.0]])
-        t = kernel_term(kernel, coords=lambda x: X, jitter=0.0, support=np.arange(3))
-        ctx = single_block_ctx(np.zeros(3), np.zeros(3), np.zeros(3))
-        S = np.zeros((3, 3))
-        t.add_to(S, ctx, kernel.theta)
-        assert np.allclose(S, kernel(X))
-
-
-class TestSupportNone:
-    def test_bound_by_constraint_covariance(self):
-        p = Parameter("log eps")
-        t = noise_term(p)
-        assert not t.bound
-        cov = ConstraintCovariance([t], 3)
-        assert t.bound and np.array_equal(t.support, np.arange(3))
-        ctx = single_block_ctx(np.zeros(3), np.zeros(3), np.zeros(3))
-        assert np.allclose(cov.matrix(ctx, np.log(2.0)), 4.0 * np.eye(3))
-
-    def test_unbound_add_to_raises(self):
-        t = noise_term(Parameter("p"))
-        with pytest.raises(ValueError, match="unresolved"):
-            t.add_to(np.zeros((2, 2)), None, (0.0,))
-
-    def test_bind_idempotent_and_explicit_support_untouched(self):
-        t = Term(np.ones(2), kind="diag", support=[1, 2])
-        t.bind(5)
-        assert np.array_equal(t.support, [1, 2])
-        u = Term(np.ones(3), kind="diag")
-        u.bind(3)
-        u.bind(3)
-        assert np.array_equal(u.support, np.arange(3))
-
-    def test_array_length_checked_at_bind(self):
-        t = Term(np.ones(2), kind="diag")
-        with pytest.raises(ValueError, match="expects shape"):
-            ConstraintCovariance([t], 3)
-
-    def test_whole_stack_mode_block_diagonality(self):
-        one = ConstraintCovariance(
-            [offset_term(parameter=Parameter("w"))], 3, blocks=[np.arange(3)]
-        )
-        assert one.block_diagonal
-        two = ConstraintCovariance(
-            [offset_term(parameter=Parameter("w"))],
-            4,
-            blocks=[np.arange(2), np.arange(2, 4)],
-        )
-        assert not two.block_diagonal
-        diag = ConstraintCovariance(
-            [noise_term(Parameter("e"))], 4, blocks=[np.arange(2), np.arange(2, 4)]
-        )
-        assert diag.block_diagonal
-
-    def test_non_term_raises(self):
-        with pytest.raises(TypeError):
-            ConstraintCovariance([np.eye(2)], 2)
-
-    def test_rebinding_to_a_different_stack_raises(self):
-        t = noise_term(Parameter("p"))
-        ConstraintCovariance([t], 4)
-        ConstraintCovariance([t], 4)  # same stack (a masked view): fine
-        with pytest.raises(ValueError, match="already bound"):
-            ConstraintCovariance([t], 6)
-
-    def test_local_context_checks_param_count(self):
-        s = Parameter("s")
-        t = Term(lambda c: c.x, kind="diag", coords=Transform(lambda a, s: s * a, (s,)))
-        t.bind(2)
-        ctx = single_block_ctx(np.ones(2), np.zeros(2), np.zeros(2))
-        with pytest.raises(ValueError, match="expected 1 params"):
-            t.local_context(ctx)
+def grid(n=12, seed=1):
+    rng = np.random.default_rng(seed)
+    x = np.sort(rng.uniform(0.2, 3.0, n))
+    y = rng.uniform(0.1, 1.5, n)
+    ym = y + rng.normal(0.0, 0.1, n)
+    return x, y, ym
 
 
 # ----------------------------------------------------------------------------
-# Gather-by-identity and structural properties
+# Single block: every study form
+# ----------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("label", list(STUDY_LEGEND))
+def test_study_forms_match_dense(label):
+    """See ``helpers.STUDY_LEGEND`` for what each label means."""
+    x, y, ym = grid()
+    form = study_form(label, x, y, ym)
+    cov, params = build(form.terms, x, y, [slice(0, len(y))])
+    theta = theta_for(params, form.values, form.terms)
+    d2, logdet = cov.distance(ym, theta)
+    d2_ref, logdet_ref = mahalanobis(y, ym, form.dense)
+    assert d2 == pytest.approx(d2_ref) and logdet == pytest.approx(logdet_ref)
+    np.testing.assert_allclose(cov.matrix(ym, theta), form.dense)
+    assert not cov.dense
+
+
+# ----------------------------------------------------------------------------
+# Gather by identity
 # ----------------------------------------------------------------------------
 
 
 class TestGatherByIdentity:
-    def test_shared_parameter_dedup(self):
+    def setup_method(self):
+        self.x, self.y, self.ym = grid(6)
+        self.offsets = [slice(0, 3), slice(3, 6)]
+        self.rows = [np.arange(3), np.arange(3, 6)]
+
+    def test_shared_parameter_is_one_slot(self):
         p = Parameter("log eps")
-        cov = ConstraintCovariance(
-            [noise_term(p, support=[0, 1]), noise_term(p, support=[2, 3])], 4
-        )
-        assert cov.n_params == 1
+        terms = [noise(p), noise(p)]
+        cov, params = build(terms, self.x, self.y, self.offsets, rows=self.rows)
+        assert params == (p,)
+        np.testing.assert_allclose(cov.matrix(self.ym, [np.log(3.0)]), 9.0 * np.eye(6))
 
-    def test_distinct_parameters_not_shared(self):
-        cov = ConstraintCovariance(
-            [
-                noise_term(Parameter("a"), support=[0, 1]),
-                noise_term(Parameter("b"), support=[2, 3]),
-            ],
-            4,
-        )
-        assert cov.n_params == 2
-
-    def test_shared_value_fed_to_both(self):
-        p = Parameter("log eps")
-        cov = ConstraintCovariance(
-            [noise_term(p, support=[0, 1]), noise_term(p, support=[2, 3])], 4
-        )
-        ctx = single_block_ctx(np.zeros(4), np.zeros(4), np.zeros(4))
-        S = cov.matrix(ctx, np.log(3.0))
-        assert np.allclose(S, 9.0 * np.eye(4))
-
-    def test_first_seen_order_deterministic(self):
+    def test_distinct_parameters_are_two_slots_in_first_seen_order(self):
         a, b = Parameter("a"), Parameter("b")
-        cov = ConstraintCovariance(
-            [
-                noise_term(b, support=[0]),
-                noise_term(a, support=[1]),
-                noise_term(b, support=[2]),
-            ],
-            3,
+        terms = [noise(b), noise(a)]
+        cov, params = build(terms, self.x, self.y, self.offsets, rows=self.rows)
+        assert params == (b, a)
+        S = cov.matrix(self.ym, [np.log(2.0), np.log(3.0)])
+        np.testing.assert_allclose(np.diag(S), [4, 4, 4, 9, 9, 9])
+
+    def test_wrong_theta_length_raises(self):
+        cov, _ = build([noise(Parameter("a"))], self.x, self.y, [slice(0, 6)])
+        with pytest.raises((IndexError, ValueError)):
+            cov.distance(self.ym, [])
+
+
+# ----------------------------------------------------------------------------
+# Several blocks: modes across blocks stay structured, matrices crossing go dense
+# ----------------------------------------------------------------------------
+
+
+class TestMultiBlock:
+    def setup_method(self):
+        self.x, self.y, self.ym = grid(9, seed=2)
+        self.offsets = [slice(0, 3), slice(3, 6), slice(6, 9)]
+        self.b = [np.arange(0, 3), np.arange(3, 6), np.arange(6, 9)]
+        self.eps, self.eta, self.omega = (
+            Parameter("log_eps"),
+            Parameter("log_eta"),
+            Parameter("log_omega"),
         )
-        assert cov.params == (b, a)
+        self.stat = 0.1 * np.ones(9)
 
-    def test_wrong_param_count_raises(self):
-        cov = ConstraintCovariance([noise_term(Parameter("a"))], 2)
-        with pytest.raises(ValueError, match="expected 1 params"):
-            cov.matrix(None)
+    def reference(self, terms, rows, values):
+        return assemble_dense(terms, self.x, self.y, self.ym, values, rows)
 
+    def test_case_a_modes_across_blocks(self):
+        terms = [
+            statistical(self.stat[:3]),
+            statistical(self.stat[3:6]),
+            statistical(self.stat[6:]),
+            noise(self.eps),
+            normalization(parameter=self.eta),  # on blocks 1 and 2 only (case A)
+            offset(parameter=self.omega),  # on all
+        ]
+        rows = [*self.b, np.arange(9), np.arange(6), np.arange(9)]
+        cov, params = build(terms, self.x, self.y, self.offsets, rows=rows)
+        assert not cov.dense
+        values = [(), (), (), (np.log(0.2),), (np.log(0.05),), (np.log(0.07),)]
+        theta = theta_for(params, values, terms)
+        ref = self.reference(terms, rows, values)
+        d2, logdet = cov.distance(self.ym, theta)
+        d2_ref, ld_ref = mahalanobis(self.y, self.ym, ref)
+        assert d2 == pytest.approx(d2_ref) and logdet == pytest.approx(ld_ref)
+        np.testing.assert_allclose(cov.matrix(self.ym, theta), ref)
+        assert np.any(ref[:3, 3:6] != 0.0)  # the modes really couple blocks
 
-class TestProperties:
-    def test_is_constant_and_caching(self):
-        cov = ConstraintCovariance(
-            [statistical_term(np.array([1.0, 2.0]))], 2, blocks=[np.arange(2)]
+    def test_rank_two_woodbury_with_block_local_kernel(self):
+        gp = kernel(Matern(0.5, nu=2.5), jitter=0.0, prefix="gp")
+        terms = [
+            statistical(self.stat),
+            offset(parameter=self.omega),
+            normalization(parameter=self.eta),
+            gp,
+        ]
+        rows = [np.arange(9), np.arange(9), np.arange(9), self.b[1]]
+        cov, params = build(terms, self.x, self.y, self.offsets, rows=rows)
+        assert not cov.dense
+        values = [(), (np.log(0.07),), (np.log(0.05),), (np.log(0.4),)]
+        theta = theta_for(params, values, terms)
+        ref = self.reference(terms, rows, values)
+        np.testing.assert_allclose(
+            cov.distance(self.ym, theta), mahalanobis(self.y, self.ym, ref)
         )
+        np.testing.assert_allclose(cov.matrix(self.ym, theta), ref)
+
+    def test_cross_block_matrix_forces_dense_path(self):
+        gp = kernel(RBF(1.0), jitter=0.0)
+        terms = [statistical(self.stat), gp]
+        rows = [np.arange(9), np.arange(6)]  # spans blocks 0 and 1
+        cov, params = build(terms, self.x, self.y, self.offsets, rows=rows)
+        assert cov.dense
+        values = [(), (0.0,)]
+        theta = theta_for(params, values, terms)
+        ref = self.reference(terms, rows, values)
+        np.testing.assert_allclose(
+            cov.distance(self.ym, theta), mahalanobis(self.y, self.ym, ref)
+        )
+        local, _ = build(
+            terms, self.x, self.y, self.offsets, rows=[np.arange(9), self.b[0]]
+        )
+        assert not local.dense
+
+    def test_masks_restrict_to_active_rows(self):
+        terms = [
+            statistical(self.stat),
+            noise(self.eps),
+            normalization(parameter=self.eta),
+        ]
+        rows = [np.arange(9)] * 3
+        active = np.array([0, 2, 3, 5, 7, 8])
+        cov, params = build(
+            terms, self.x, self.y, self.offsets, active=active, rows=rows
+        )
+        assert cov.n_active == 6
+        values = [(), (np.log(0.2),), (np.log(0.05),)]
+        theta = theta_for(params, values, terms)
+        ref = self.reference(terms, rows, values)[np.ix_(active, active)]
+        np.testing.assert_allclose(
+            cov.distance(self.ym, theta),
+            mahalanobis(self.y[active], self.ym[active], ref),
+        )
+        np.testing.assert_allclose(cov.matrix(self.ym, theta), ref)
+
+    def test_fully_masked_block_is_skipped(self):
+        terms = [statistical(self.stat), offset(parameter=self.omega)]
+        rows = [np.arange(9)] * 2
+        active = np.arange(3, 9)  # block 0 fully masked
+        cov, params = build(
+            terms, self.x, self.y, self.offsets, active=active, rows=rows
+        )
+        values = [(), (np.log(0.07),)]
+        theta = theta_for(params, values, terms)
+        ref = self.reference(terms, rows, values)[np.ix_(active, active)]
+        np.testing.assert_allclose(
+            cov.distance(self.ym, theta),
+            mahalanobis(self.y[active], self.ym[active], ref),
+        )
+
+
+# ----------------------------------------------------------------------------
+# Constant parts, caching and the singular check
+# ----------------------------------------------------------------------------
+
+
+class TestConstantAndSingular:
+    def setup_method(self):
+        self.x, self.y, self.ym = grid(6, seed=3)
+        self.offsets = [slice(0, 3), slice(3, 6)]
+
+    def test_constant_covariance_is_evaluated_and_factored_once(self):
+        calls = []
+
+        def fn(c):
+            calls.append(1)
+            return 0.1 * np.ones(len(c))
+
+        t = Term(fn, kind="diag", constant=True)
+        cov, _ = build([t], self.x, self.y, self.offsets)
         assert cov.is_constant
-        S1 = cov.matrix(None)
-        S2 = cov.matrix(None)
-        assert S1 is S2
-        assert not S1.flags.writeable
-        L, _ = cov.cholesky(None)
-        assert not L.flags.writeable
+        d1 = cov.distance(self.ym, [])
+        d2 = cov.distance(self.ym + 0.1, [])
+        assert len(calls) == 1
+        assert d1[1] == d2[1]  # same logdet from the cached factor
+        assert d1[0] != d2[0]
 
-    def test_nonconstant_matrix_writable(self):
-        cov = ConstraintCovariance([noise_term(Parameter("a"))], 2)
-        ctx = single_block_ctx(np.zeros(2), np.zeros(2), np.zeros(2))
-        S = cov.matrix(ctx, 0.0)
-        assert S.flags.writeable
+    def test_prediction_dependent_parameter_free_term_is_not_constant(self):
+        t = normalization(magnitude=0.05)
+        cov, _ = build([statistical(0.1 * np.ones(6)), t], self.x, self.y, self.offsets)
+        assert not cov.is_constant
+        S1, S2 = cov.matrix(self.ym, []), cov.matrix(2 * self.ym, [])
+        assert not np.allclose(S1, S2)
 
-    def test_block_cholesky_cached_and_requires_blocks(self):
-        cov = ConstraintCovariance(
-            [statistical_term(np.ones(4))], 4, blocks=[np.arange(2), np.arange(2, 4)]
-        )
-        f1 = cov.block_cholesky(None)
-        f2 = cov.block_cholesky(None)
-        assert f1 is f2
-        with pytest.raises(ValueError):
-            ConstraintCovariance([statistical_term(np.ones(2))], 2).block_cholesky(None)
-
-    def test_cross_block_term_without_blocks_not_block_diagonal(self):
-        cov = ConstraintCovariance([offset_term(parameter=Parameter("w"))], 4)
-        assert not cov.block_diagonal
-        diag = ConstraintCovariance([noise_term(Parameter("e"))], 4)
-        assert diag.block_diagonal
-
-    def test_stacked_distance_matches_dense(self):
-        x = np.arange(4.0)
-        y = np.array([1.0, 2.0, 3.0, 4.0])
-        ymod = np.array([1.1, 1.9, 3.2, 3.8])
-        ctx = make_ctx(x, y, ymod, [np.arange(2), np.arange(2, 4)])
-        terms = [statistical_term(0.5 * np.ones(4)), noise_term(Parameter("e"))]
-        block = ConstraintCovariance(terms, 4, blocks=ctx.supports)
-        dense = ConstraintCovariance(terms, 4)
-        assert block.block_diagonal
-        d_b = block.stacked_distance(ctx, (np.log(0.3),))
-        d_d = dense.stacked_distance(ctx, (np.log(0.3),))
-        S = block.matrix(ctx, np.log(0.3))
-        assert np.allclose(d_b, mahalanobis_distance_sqr_cholesky(y, ymod, S))
-        assert np.allclose(d_d, d_b)
-
-
-class TestActive:
-    def setup_method(self):
-        self.x = np.arange(6.0)
-        self.y = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
-        self.ym = self.y + 0.1 * np.array([1, -1, 1, -1, 1, -1])
-        self.blocks = [np.arange(3), np.arange(3, 6)]
-        self.ctx = make_ctx(self.x, self.y, self.ym, self.blocks)
-        self.eta = Parameter("log eta")
-        self.terms = [
-            statistical_term(0.3 * np.ones(6)),
-            normalization_term(parameter=self.eta),  # whole stack -> dense
-        ]
-        self.active = np.array([0, 2, 3, 5])
-
-    def _reference(self, cov, active):
-        """Dense (d2, logdet) on the active subset of ``cov``'s full matrix."""
-        S = cov.matrix(self.ctx, np.log(0.2))[np.ix_(active, active)]
-        return mahalanobis_distance_sqr_cholesky(self.y[active], self.ym[active], S)
-
-    def test_dense_path_restricts_to_active(self):
-        cov = ConstraintCovariance(self.terms, 6, active=self.active)
-        assert cov.n_active == 4
-        d2, ld = cov.stacked_distance(self.ctx, (np.log(0.2),))
-        assert np.allclose((d2, ld), self._reference(cov, self.active))
-        assert cov.active_matrix(self.ctx, np.log(0.2)).shape == (4, 4)
-        assert cov.matrix(self.ctx, np.log(0.2)).shape == (6, 6)
-
-    def test_block_path_restricts_to_active(self):
-        terms = [statistical_term(0.3 * np.ones(6)), noise_term(Parameter("e"))]
-        cov = ConstraintCovariance(terms, 6, blocks=self.blocks, active=self.active)
-        assert cov.block_diagonal and cov.uses_block_path
-        d2, ld = cov.stacked_distance(self.ctx, (np.log(0.2),))
-        assert np.allclose((d2, ld), self._reference(cov, self.active))
-
-    def test_fully_masked_block_skipped(self):
-        terms = [statistical_term(0.3 * np.ones(6))]
-        active = np.arange(3)
-        cov = ConstraintCovariance(terms, 6, blocks=self.blocks, active=active)
-        d2, ld = cov.stacked_distance(self.ctx)
-        r = (self.y - self.ym)[:3]
-        assert np.allclose((d2, ld), (r @ r / 0.09, 3 * np.log(0.09)))
-
-    def test_all_active_is_none(self):
-        cov = ConstraintCovariance(self.terms, 6, active=np.arange(6))
-        assert cov.active is None
-
-    def test_permuted_active_is_kept(self):
-        perm = np.array([5, 4, 3, 2, 1, 0])
-        cov = ConstraintCovariance(self.terms, 6, active=perm)
-        assert cov.active is not None and cov.n_active == 6
-        ref = ConstraintCovariance(self.terms, 6)
-        d_perm = cov.stacked_distance(self.ctx, (np.log(0.2),))
-        d_ref = ref.stacked_distance(self.ctx, (np.log(0.2),))
-        assert np.allclose(d_perm, d_ref)
-
-
-# ----------------------------------------------------------------------------
-# Factories
-# ----------------------------------------------------------------------------
-
-
-class TestFactories:
-    def setup_method(self):
-        self.x = np.array([0.5, 1.0, 1.5])
-        self.y = np.array([1.0, 2.0, 3.0])
-        self.ym = np.array([1.1, 1.9, 3.2])
-        self.stat = np.array([0.1, 0.2, 0.3])
-        self.ctx = single_block_ctx(self.x, self.y, self.ym)
-
-    def test_statistical_only(self):
-        S = assemble([statistical_term(self.stat)], self.ctx)
-        assert np.allclose(S, np.diag(self.stat**2))
-
-    def test_unknown_noise(self):
-        S = assemble([noise_term(Parameter("e"))], self.ctx, (np.log(0.4),))
-        assert np.allclose(S, 0.16 * np.eye(3))
-        S = assemble([noise_term(Parameter("e"), log=False)], self.ctx, (0.4,))
-        assert np.allclose(S, 0.16 * np.eye(3))
-
-    def test_unknown_noise_fraction(self):
-        S = assemble([noise_fraction_term(Parameter("e"))], self.ctx, (np.log(0.4),))
-        assert np.allclose(S, np.diag((0.4 * self.ym) ** 2))
-
-    def test_unknown_normalization_error(self):
-        S = assemble(
-            [normalization_term(parameter=Parameter("n"))], self.ctx, (np.log(0.05),)
-        )
-        assert np.allclose(S, 0.05**2 * np.outer(self.ym, self.ym))
-
-    def test_unknown_model_error_averaging(self):
-        S = assemble(
-            [model_error_term(Parameter("g"), averaging=True)], self.ctx, (np.log(0.1),)
-        )
-        z = 0.5 * (self.y + self.ym)
-        assert np.allclose(S, np.diag((0.1 * z) ** 2))
-        S = assemble(
-            [model_error_term(Parameter("g"), averaging=False)],
-            self.ctx,
-            (np.log(0.1),),
-        )
-        assert np.allclose(S, np.diag((0.1 * self.ym) ** 2))
-
-    def test_fixed_normalization_systematic(self):
-        S = assemble([normalization_term(magnitude=0.05)], self.ctx)
-        assert np.allclose(S, 0.05**2 * np.outer(self.ym, self.ym))
-        S = assemble([normalization_term(magnitude=np.array(0.05))], self.ctx)
-        assert np.allclose(S, 0.05**2 * np.outer(self.ym, self.ym))
-
-    def test_fixed_offset_systematic(self):
-        t = offset_term(magnitude=0.2)
-        assert t.is_constant
-        S = assemble([t], self.ctx)
-        assert np.allclose(S, 0.04 * np.ones((3, 3)))
-        S = assemble([offset_term(magnitude=np.array([0.1, 0.2, 0.3]))], self.ctx)
-        v = np.array([0.1, 0.2, 0.3])
-        assert np.allclose(S, np.outer(v, v))
-
-    def test_fixed_offset_in_constant_covariance_ignores_ym(self):
-        # a constant covariance never reads ym: it can be factored (eagerly, at
-        # Constraint construction) with a placeholder ym and the cached factor
-        # is reused afterwards
-        cov = ConstraintCovariance(
-            [statistical_term(self.stat), offset_term(magnitude=0.2)], 3
-        )
+    def test_mode_only_block_is_singular_and_named(self):
+        terms = [offset(magnitude=0.2), statistical(0.1 * np.ones(3))]
+        rows = [np.arange(6), np.arange(3, 6)]
+        with pytest.raises(ValueError, match="'first'.*zero statistical error"):
+            build(
+                terms,
+                self.x,
+                self.y,
+                self.offsets,
+                rows=rows,
+                labels=["first", "second"],
+            )
+        # a diagonal term covering the block makes it legal
+        terms = [offset(magnitude=0.2), statistical(0.1 * np.ones(6))]
+        cov, _ = build(terms, self.x, self.y, self.offsets, rows=[np.arange(6)] * 2)
         assert cov.is_constant
-        L, logdet = cov.cholesky(
-            StackContext.constant(self.ctx.x, self.ctx.y, [np.arange(3)])
-        )
-        assert np.all(np.isfinite(L))
-        L2, logdet2 = cov.cholesky(self.ctx)
-        assert L2 is L and logdet2 == logdet
 
-    def test_masked_magnitudes(self):
-        m = np.array([1.0, 0.0, 1.0])
-        S = assemble([offset_term(magnitude=0.2, mask=m)], self.ctx)
-        v = 0.2 * m
-        assert np.allclose(S, np.outer(v, v))
-        S = assemble(
-            [normalization_term(parameter=Parameter("n"), mask=m)],
-            self.ctx,
-            (np.log(0.5),),
-        )
-        v = 0.5 * m * self.ym
-        assert np.allclose(S, np.outer(v, v))
+    def test_modes_alone_fail_at_construction_even_when_parametric(self):
+        # modes never enter the block factor B, so B is constant and checkable
+        with pytest.raises(ValueError, match="singular"):
+            build([offset(parameter=Parameter("w"))], self.x, self.y, self.offsets)
 
-    def test_length_one_magnitude_or_mask_raises(self):
-        # a length-1 array is not a scalar: it must not broadcast silently
-        with pytest.raises(ValueError, match="shape"):
-            assemble([offset_term(magnitude=np.array([0.2]))], self.ctx)
-        with pytest.raises(ValueError, match="shape"):
-            assemble([offset_term(magnitude=0.2, mask=np.array([1.0]))], self.ctx)
-        with pytest.raises(ValueError, match="shape"):
-            assemble(
-                [normalization_term(parameter=Parameter("n"), mask=np.array([1.0]))],
-                self.ctx,
-                (0.0,),
-            )
-
-    def test_zero_d_magnitude_is_scalar(self):
-        # exfor_tools stores scalar systematics as 0-d arrays
-        S = assemble([offset_term(magnitude=np.array(0.2))], self.ctx)
-        assert np.allclose(S, 0.04 * np.ones((3, 3)))
-
-    def test_magnitude_length_mismatch_raises(self):
-        with pytest.raises(ValueError):
-            assemble([offset_term(magnitude=np.ones(2))], self.ctx)
-
-    def test_requires_magnitude_or_parameter(self):
-        with pytest.raises(ValueError):
-            offset_term()
-        with pytest.raises(ValueError):
-            normalization_term()
-
-    def test_systematic_term_with_basis(self):
-        s = Parameter("log s")
-        S = assemble([systematic_term(s, basis=x_basis(2.0))], self.ctx, (np.log(3.0),))
-        v = 3.0 * self.x / 2.0
-        assert np.allclose(S, np.outer(v, v))
-
-    def test_parametric_basis(self):
-        e, l = Parameter("log e"), Parameter("slope")
-        t = noise_term(e, basis=exp_growth(np.pi), basis_params=(l,))
-        assert t.params == (e, l)
-        S = assemble([t], self.ctx, (np.log(0.3), 0.0))
-        assert np.allclose(S, 0.09 * np.eye(3))  # slope 0 == plain noise_term
-        S = assemble([t], self.ctx, (np.log(0.3), 2.0))
-        assert np.allclose(S, np.diag((0.3 * np.exp(2.0 * self.x / np.pi)) ** 2))
-        # basis growing with ym in linear space
-        t = noise_term(e, basis=exp_growth(np.pi, base=ym), basis_params=(l,))
-        S = assemble([t], self.ctx, (np.log(0.3), 1.0))
-        assert np.allclose(S, np.diag((0.3 * self.ym * np.exp(self.x / np.pi)) ** 2))
-
-    def test_old_observation_covariance_equivalence(self):
-        offset, norm = 0.2, 0.05
-        terms = [
-            statistical_term(self.stat),
-            offset_term(magnitude=offset),
-            normalization_term(magnitude=norm),
-        ]
-        S = assemble(terms, self.ctx)
-        old = (
-            np.diag(self.stat**2)
-            + np.outer(offset * np.ones(3), offset * np.ones(3))
-            + norm**2 * np.outer(self.ym, self.ym)
-        )
-        assert np.allclose(S, old)
-
-    def test_bases(self):
-        c = Term(lambda c: c.ym, kind="diag", support=np.arange(3)).local_context(
-            self.ctx
-        )
-        assert np.allclose(ones(c), 1.0)
-        assert np.allclose(ym(c), self.ym)
-        assert np.allclose(averaging(c), 0.5 * (self.y + self.ym))
+    def test_parametric_diagonal_defers_the_check(self):
+        # B depends on theta here: nothing to check until the first evaluation
+        cov, _ = build([noise(Parameter("e"))], self.x, self.y, self.offsets)
+        assert not cov.is_constant
+        d2, logdet = cov.distance(self.ym, [np.log(0.3)])
+        assert np.isfinite(d2) and np.isfinite(logdet)
 
 
-class TestKernelTerm:
-    def test_params_match_theta_length_isotropic(self):
-        kernel = ConstantKernel(1.0) * RBF(length_scale=1.0) + WhiteKernel(1e-6)
-        term = kernel_term(kernel)
-        assert len(term.params) == len(kernel.theta)
-        assert not term.is_constant
-
-    def test_params_anisotropic(self):
-        kernel = ConstantKernel(1.0) * RBF(length_scale=[1.0, 1.0])
-        term = kernel_term(kernel, support=np.arange(3))
-        assert len(term.params) == len(kernel.theta)
-        x2d = np.array([[0.0, 0.0], [1.0, 0.5], [2.0, 1.0]])
-        ctx = make_ctx(x2d, np.zeros(3), np.zeros(3), [np.arange(3)])
-        Sigma = np.zeros((3, 3))
-        term.add_to(Sigma, ctx, kernel.theta)
-        assert np.all(np.isfinite(Sigma))
-
-    def test_cross_block_values(self):
-        kernel = RBF(length_scale=1.0)
-        term = kernel_term(kernel, jitter=0.0, support=np.arange(4))
-        x = np.array([0.0, 1.0, 2.0, 3.0])
-        ctx = make_ctx(x, np.zeros(4), np.zeros(4), [np.arange(2), np.arange(2, 4)])
-        S = np.zeros((4, 4))
-        term.add_to(S, ctx, kernel.theta)
-        np.testing.assert_allclose(S, kernel(x[:, None]))
-        assert np.any(S[:2, 2:] != 0.0)
-        cov = ConstraintCovariance([term], N=4, blocks=[np.arange(2), np.arange(2, 4)])
-        assert not cov.block_diagonal
-
-    def test_fixed_kernel_is_constant(self):
-        kernel = RBF(length_scale=1.0, length_scale_bounds="fixed")
-        term = kernel_term(kernel)
-        assert term.params == () and term.is_constant
-
-    def test_constant_amplitude_reproduces_constant_kernel(self):
-        x = np.linspace(0.0, 2.0, 5)
-        ctx = single_block_ctx(x, np.zeros(5), np.zeros(5))
-        A = 0.7
-        la = Parameter("log A")
-        term = kernel_term(
-            RBF(1.0), amplitude=constant_amplitude, amplitude_params=(la,), jitter=0.0
-        )
-        assert [p.name for p in term.params] == ["discrepancy_length_scale", "log A"]
-        S = assemble([term], ctx, (0.0, np.log(A)))
-        ref = ConstantKernel(A**2, constant_value_bounds="fixed") * RBF(1.0)
-        np.testing.assert_allclose(S, ref(x[:, None]))
-
-    def test_exp_growth_amplitude_and_coords(self):
-        x = np.linspace(0.1, 3.0, 4)
-        ctx = single_block_ctx(x, np.zeros(4), np.zeros(4))
-        la, sl = Parameter("log A"), Parameter("slope")
-
-        def q(x):
-            return 2.0 * np.sin(x / 2)
-
-        term = kernel_term(
-            Matern(1.0, nu=2.5),
-            coords=q,
-            amplitude=exp_growth_amplitude(np.pi),
-            amplitude_params=(la, sl),
-            jitter=0.0,
-        )
-        S = assemble([term], ctx, (np.log(0.5), np.log(0.3), 1.5))
-        # note: amplitude sees the *transformed* coordinate
-        a = 0.3 * np.exp(1.5 * q(x) / np.pi)
-        ref = np.outer(a, a) * Matern(0.5, nu=2.5)(q(x)[:, None])
-        np.testing.assert_allclose(S, ref)
-
-    def test_duplicate_coords_factorizable_with_jitter(self):
-        x = np.array([0.0, 0.0, 1.0])
-        ctx = single_block_ctx(x, np.zeros(3), np.zeros(3))
-        term = kernel_term(RBF(1.0), jitter=1e-8)
-        cov = ConstraintCovariance([term, statistical_term(1e-3 * np.ones(3))], 3)
-        L, _ = cov.cholesky(ctx, 0.0)
-        assert np.all(np.isfinite(L))
+def test_chol_logdet_on_a_diagonal():
+    L, logdet = chol_logdet(np.diag([1.0, 4.0, 9.0]))
+    np.testing.assert_allclose(np.diag(L), [1.0, 2.0, 3.0])
+    assert logdet == pytest.approx(np.log(36.0))
 
 
-# ----------------------------------------------------------------------------
-# The alpha+Ca error-model ladder as one-line term lists (study self-checks)
-# ----------------------------------------------------------------------------
-
-
-class TestStudyForms:
-    """Each error model of the alpha+Ca study is one term list; compare to the
-    hand-rolled dense covariance from that study's ``error_covariance``."""
+class TestSegments:
+    """A spanning term sees the rows of each block it touches, in stack order."""
 
     def setup_method(self):
-        rng = np.random.default_rng(1)
-        n = 12
-        self.x = np.sort(rng.uniform(0.2, 3.0, n))  # radians
-        self.y = rng.uniform(0.1, 1.5, n)  # log-space "data" (any values)
-        self.ym = self.y + rng.normal(0.0, 0.1, n)
-        self.ctx = single_block_ctx(self.x, self.y, self.ym)
-        self.X = np.pi
-        self.log_err, self.log_slope = Parameter("log_err"), Parameter("log_err_slope")
-        self.log_sys, self.log_amp = Parameter("log_sys"), Parameter("log_amp")
-        self.err, self.slope, self.sys, self.amp = 0.05, 1.3, 0.04, 0.2
-        self.k = 2.7
+        self.x, self.y, self.ym = grid(9, seed=3)
+        self.offsets = [slice(0, 3), slice(3, 6), slice(6, 9)]
 
-    def xdeg(self):
-        return self.x / self.X  # theta / 180
+    def capture(self, rows, active=None):
+        seen = {}
 
-    def test_L0(self):
-        S = assemble([noise_term(self.log_err)], self.ctx, (np.log(self.err),))
-        assert np.allclose(S, self.err**2 * np.eye(len(self.x)))
+        def fn(c):
+            seen["segments"], seen["labels"] = c.segments, c.labels
+            seen["x"] = c.split(c.x)
+            return np.ones(len(c))
 
-    def test_E0_linear_space(self):
-        S = assemble([noise_fraction_term(self.log_err)], self.ctx, (np.log(self.err),))
-        assert np.allclose(S, np.diag((self.err * self.ym) ** 2))
-
-    def test_L1(self):
-        terms = [
-            noise_term(
-                self.log_err, basis=exp_growth(self.X), basis_params=(self.log_slope,)
-            )
-        ]
-        S = assemble(terms, self.ctx, (np.log(self.err), self.slope))
-        sigma = self.err * np.exp(self.slope * self.xdeg())
-        assert np.allclose(S, np.diag(sigma**2))
-
-    def test_L2_rank_one_over_theta(self):
-        terms = [
-            noise_term(self.log_err),
-            systematic_term(self.log_sys, basis=x_basis(self.X)),
-        ]
-        S = assemble(terms, self.ctx, (np.log(self.err), np.log(self.sys)))
-        u = self.xdeg()
-        assert np.allclose(
-            S, self.err**2 * np.eye(len(u)) + self.sys**2 * np.outer(u, u)
-        )
-
-    def test_L2n_and_L2y(self):
-        S = assemble(
-            [noise_term(self.log_err), offset_term(parameter=self.log_sys)],
-            self.ctx,
-            (np.log(self.err), np.log(self.sys)),
-        )
-        assert np.allclose(S, self.err**2 * np.eye(len(self.x)) + self.sys**2)
-        S = assemble(
-            [noise_term(self.log_err), normalization_term(parameter=self.log_sys)],
-            self.ctx,
-            (np.log(self.err), np.log(self.sys)),
-        )
-        assert np.allclose(
-            S,
-            self.err**2 * np.eye(len(self.x))
-            + self.sys**2 * np.outer(self.ym, self.ym),
-        )
-
-    def test_L12(self):
-        terms = [
-            noise_term(
-                self.log_err, basis=exp_growth(self.X), basis_params=(self.log_slope,)
-            ),
-            systematic_term(self.log_sys, basis=x_basis(self.X)),
-        ]
-        S = assemble(terms, self.ctx, (np.log(self.err), self.slope, np.log(self.sys)))
-        sigma = self.err * np.exp(self.slope * self.xdeg())
-        u = self.xdeg()
-        assert np.allclose(S, np.diag(sigma**2) + self.sys**2 * np.outer(u, u))
-
-    def test_Lgp_matern_in_theta(self):
-        ell = 0.3
-        terms = [
-            noise_term(self.log_err),
-            kernel_term(
-                Matern(1.0, nu=2.5),
-                coords=lambda x: x / self.X,
-                amplitude=constant_amplitude,
-                amplitude_params=(self.log_amp,),
-                jitter=0.0,
-                prefix="gp",
-            ),
-        ]
-        S = assemble(terms, self.ctx, (np.log(self.err), np.log(ell), np.log(self.amp)))
-        u = self.xdeg()
-        K = self.amp**2 * Matern(ell, nu=2.5)(u[:, None])
-        assert np.allclose(S, self.err**2 * np.eye(len(u)) + K)
-
-    def test_Lgpn_angle_growing_amplitude(self):
-        ell = 0.3
-        terms = [
-            noise_term(self.log_err),
-            kernel_term(
-                Matern(1.0, nu=2.5),
-                coords=lambda x: x / self.X,
-                amplitude=exp_growth_amplitude(1.0),
-                amplitude_params=(self.log_amp, self.log_slope),
-                jitter=0.0,
-            ),
-        ]
-        S = assemble(
+        terms = [statistical(0.1 * np.ones(9)), Term(fn, kind="mode")]
+        cov, _ = build(
             terms,
-            self.ctx,
-            (np.log(self.err), np.log(ell), np.log(self.amp), self.slope),
+            self.x,
+            self.y,
+            self.offsets,
+            active=active,
+            rows=[np.arange(9), rows],
+            labels=["L0", "L1", "L2"],
         )
-        u = self.xdeg()
-        a = self.amp * np.exp(self.slope * u)
-        K = np.outer(a, a) * Matern(ell, nu=2.5)(u[:, None])
-        assert np.allclose(S, self.err**2 * np.eye(len(u)) + K)
+        cov.matrix(self.ym, np.zeros(0))
+        return seen
 
-    def test_LKp_kernel_in_momentum_transfer(self):
-        # b^2 I + s^2 11^T + a(q) a(q') RBF(|q - q'| / l_q), a = A q^(r/2)
-        log_b, log_s, r_pow = Parameter("log_b"), Parameter("log_s"), Parameter("r")
-        b, s, lq, r = 0.05, 0.05, 1.2, 0.8
-        q = momentum_transfer(SimpleNamespace(k=self.k, x=self.x))
-        assert np.allclose(q, 2.0 * self.k * np.sin(self.x / 2))
-        terms = [
-            noise_term(log_b),
-            offset_term(parameter=log_s),
-            kernel_term(
-                RBF(1.0),
-                coords=lambda x: 2.0 * self.k * np.sin(x / 2),
-                amplitude=lambda c, lA, r: np.exp(lA) * c.x ** (r / 2),
-                amplitude_params=(self.log_amp, r_pow),
-                jitter=0.0,
-                prefix="gpq",
-            ),
-        ]
-        S = assemble(
-            terms, self.ctx, (np.log(b), np.log(s), np.log(lq), np.log(self.amp), r)
-        )
-        a = self.amp * q ** (r / 2)
-        K = np.outer(a, a) * RBF(lq)(q[:, None])
-        ref = b**2 * np.eye(len(q)) + s**2 * np.ones((len(q), len(q))) + K
-        assert np.allclose(S, ref)
+    def test_whole_stack(self):
+        seen = self.capture(np.arange(9))
+        assert seen["segments"] == (slice(0, 3), slice(3, 6), slice(6, 9))
+        assert seen["labels"] == ("L0", "L1", "L2")
+        np.testing.assert_array_equal(seen["x"][1], self.x[3:6])
 
-    def test_custom_term_direct(self):
-        # anything the factories cannot say is a one-line Term
-        e, l = Parameter("e"), Parameter("l")
-        t = Term(
-            lambda c, e, l: np.exp(e) * np.exp(l * c.x / np.pi), (e, l), kind="diag"
-        )
-        S = assemble([t], self.ctx, (np.log(self.err), self.slope))
-        sigma = self.err * np.exp(self.slope * self.xdeg())
-        assert np.allclose(S, np.diag(sigma**2))
+    def test_partial_support_skips_untouched_blocks(self):
+        # blocks 0 and 2 only: the support is 6 rows in two segments
+        seen = self.capture(np.r_[0:3, 6:9])
+        assert seen["segments"] == (slice(0, 3), slice(3, 6))
+        assert seen["labels"] == ("L0", "L2")
+        np.testing.assert_array_equal(seen["x"][1], self.x[6:9])
+
+    def test_masked_rows_stay_in_the_segment_view(self):
+        # fn sees every row of its support (masking selects after evaluation),
+        # so the segments describe the unmasked support
+        seen = self.capture(np.arange(9), active=np.r_[0:2, 3:9])
+        assert seen["segments"] == (slice(0, 3), slice(3, 6), slice(6, 9))
