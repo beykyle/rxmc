@@ -493,13 +493,18 @@ space, or in physical units with `physical=True`.
 ### 2.12 `reactions/`
 
 ```python
-class ElasticXS(Model):
+class ElasticXS(OpticalModel):
     def __init__(self, quantity, central, spin_orbit, args_from_params, params, coulomb=None,
                  *, lmax=DEFAULT_LMAX, wavelengths_beyond_range=2.0, zeros_per_node=5)
+    @classmethod
+    def from_omp(cls, quantity, omp, params=None, **settings)   # a jitr optical model
     def bind(self, x, meta) -> Predictor      # reads meta["reaction"], meta["Elab"]
+class IntegratedXS(OpticalModel):            # same constructor and from_omp
+    def bind(self, x, meta) -> Predictor      # x: lab energies (MeV); reads meta["reaction"]
 class IsobaricAnalogPN(Model):
     def __init__(self, U_p_coulomb, U_p_central, U_p_spin_orbit, U_n_central, U_n_spin_orbit,
-                 args_from_params, params, *, lmax=..., wavelengths_beyond_range=..., zeros_per_node=...)
+                 args_from_params, params, *, method="dwba", U1_central=None, U1_spin_orbit=None,
+                 lmax=..., wavelengths_beyond_range=..., zeros_per_node=...)
     def bind(self, x, meta) -> Predictor      # reads reaction, Elab, ExIAS
 def rutherford(kinematics, angles_rad) -> ndarray     # mb/sr, closed form
 def momentum_transfer(angles_rad, k) -> ndarray        # 2 k sin(theta/2), for coords=
@@ -514,7 +519,25 @@ grid reuses the data grid's basis; the cache is dropped on pickling.  The
 model owns its solver and the data does not, so a masked view or an
 unpickled problem cannot lose a workspace.  There is no compound-elastic
 hook: that contribution is subtracted from `data.y` as preprocessing
-(recipe 20).
+(recipe 20).  `DEFAULT_LMAX` is `None`, which takes
+`jitr.utils.suggest_lmax`: jitr solves every partial wave up to `lmax`.
+
+`IntegratedXS` (`"total"` for neutral projectiles, `"reaction"`) binds to a
+grid of lab energies, the `x` of an excitation function from
+`from_measurement` (quantity `"XS"`), and solves all of them in one jitr
+call.  Its potentials may depend on energy: `(NE, N)` arrays on the mesh,
+which a jitr optical model returns directly with `from_omp`.  With
+`n_energies=` it solves on that many log-spaced energies and interpolates to
+the data, so a dense excitation function costs no more than a coarse one.
+`from_omp(..., params=mapping)` picks the parameters by name from a mapping,
+which lets several models share one potential's parameters; KDUQ for neutrons
+and for protons reuse names for different values and need separate mappings.
+
+`IsobaricAnalogPN` computes the (p,n) cross section in the DWBA or with the
+coupled Lane channels (`method="cc"`).  The isovector potential driving it is
+the difference of the proton and neutron potentials unless `U1_central`
+and/or `U1_spin_orbit` give a term of their own; `args_from_params` then
+returns their two argument tuples after the five.
 
 ## 3. Worked example: an error-model comparison
 
@@ -710,7 +733,7 @@ examples/           the notebooks and plotstyle.py; data/ (committed measurement
 docs/               this document, recipes.md, examples.rst, api.rst, groundup_design.md (history)
 ```
 
-Runtime dependencies: `numpy`, `scipy`, `jitr>=3.0`, `exfor-tools`.
+Runtime dependencies: `numpy`, `scipy`, `jitr>=4.0`, `exfor-tools`.
 Extras: `examples` (emcee, dynesty, corner, matplotlib, scikit-learn,
 dill, jupyter, ipykernel, tqdm), `validation` (examples plus pytest,
 nbmake, nbqa, ruff, black, isort, build), `docs` (sphinx, the pydata

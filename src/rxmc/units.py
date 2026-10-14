@@ -24,10 +24,13 @@ __all__ = [
     "MB_PER_B",
     "parse_unit",
     "check_angle_grid",
+    "check_energy_grid",
 ]
 
-#: Default maximum partial wave for the reaction solvers.
-DEFAULT_LMAX = 20
+#: Default maximum partial wave for the reaction solvers: ``None`` takes
+#: ``jitr.utils.suggest_lmax`` for the energies (every partial wave up to
+#: ``lmax`` is solved, so a fixed value truncates high energies).
+DEFAULT_LMAX = None
 
 #: Internal cross-section unit: every ``y`` in b/sr.
 XS_UNIT = "b/sr"
@@ -97,3 +100,12 @@ def check_angle_grid(angles_rad: np.ndarray, name: str) -> None:
         raise ValueError(f"{name} must be finite")
     if angles_rad.size and (angles_rad.min() < 0 or angles_rad.max() > np.pi):
         raise ValueError(f"{name} must be on [0, pi] radians")
+
+
+def check_energy_grid(energies: np.ndarray, name: str) -> None:
+    """Reject a grid of energies (MeV) that is not 1-D, finite and positive."""
+    energies = np.asarray(energies)
+    if energies.ndim != 1 or energies.size == 0:
+        raise ValueError(f"{name} must be a non-empty 1D grid of energies")
+    if not np.all(np.isfinite(energies)) or energies.min() <= 0:
+        raise ValueError(f"{name} must be finite, positive energies in MeV")

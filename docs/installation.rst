@@ -2,7 +2,7 @@ Installation
 ============
 
 ``rxmc`` requires Python 3.12 or later.  The runtime dependencies are
-``numpy``, ``scipy``, ``jitr >= 3.0`` and ``exfor-tools``, installed
+``numpy``, ``scipy``, ``jitr >= 4.0`` and ``exfor-tools``, installed
 automatically.  Until the 1.0 pre-releases appear on PyPI (``pip install
 --pre rxmc``), install from GitHub:
 

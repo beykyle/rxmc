@@ -17,7 +17,7 @@ def test_unit_constants_agree():
     assert MB_PER_B == 1000.0
     assert parse_unit(RUTHERFORD_UNIT)[0] == pytest.approx(1.0 / MB_PER_B)
     assert parse_unit(XS_UNIT) == (1.0, "differential")
-    assert DEFAULT_LMAX == 20
+    assert DEFAULT_LMAX is None  # jitr.utils.suggest_lmax
 
 
 @pytest.mark.parametrize(

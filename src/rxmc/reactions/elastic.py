@@ -9,25 +9,29 @@ evaluates the potentials on the radial grid, solves, and extracts one of
 ``"dXS/dA"`` (b/sr), ``"dXS/dRuth"`` or ``"Ay"``.  The model owns the
 solver; the data does not.
 
-The expensive basis (an ``IntegralWorkspace``) depends only on the
-kinematics and the solver settings, so it is cached per model instance and
-shared by every grid at one energy: the data grid, a plotting grid, a
-held-out view.  The cache is dropped on pickling; a bound predictor carries
-its own workspace and pickles with ``dill``.
+The expensive part of a workspace (the mesh, the partial waves and their
+asymptotics) depends only on the kinematics and the solver settings, so it is
+cached per model instance and shared by every grid at one energy: the data
+grid, a plotting grid, a held-out view (``Workspace.at_angles``).  The cache is
+dropped on pickling; a bound predictor carries its own workspace and pickles
+with ``dill``.
 """
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Mapping
 
 import jitr
 import numpy as np
+from jitr.xs.coupled import Potential
 
-from ..model import Model, Predictor
+from ..model import Model, Parameter, Predictor
 from ..units import DEFAULT_LMAX, MB_PER_B, check_angle_grid
 
 __all__ = [
     "ElasticXS",
+    "OpticalModel",
+    "mesh",
     "set_up_solver",
     "rutherford",
     "momentum_transfer",
@@ -60,33 +64,43 @@ def momentum_transfer(angles_rad, k) -> np.ndarray:
     return 2.0 * float(k) * np.sin(np.asarray(angles_rad, dtype=float) / 2.0)
 
 
-def _basis(reaction, Elab, lmax, wavelengths_beyond_range, zeros_per_node):
-    """The ``IntegralWorkspace`` and kinematics for one reaction at one energy."""
-    kinematics = reaction.kinematics(Elab)
-    k = kinematics.k
+def mesh(reaction, kinematics, lmax, wavelengths_beyond_range, zeros_per_node):
+    """Channel radius (fm), basis size and ``lmax`` for one or more energies.
+
+    The radius reaches ``wavelengths_beyond_range`` wavelengths past the
+    interaction range at the highest energy (the R-matrix matching is exact
+    anywhere outside the potential, so lower energies need no more room), and
+    the basis resolves that energy.  ``lmax=None`` takes
+    ``jitr.utils.suggest_lmax``: every partial wave up to ``lmax`` is solved,
+    so it must be large enough for the highest energy.
+    """
+    k = np.atleast_1d(kinematics.k)
     interaction_range_fm = jitr.utils.interaction_range(reaction.target.A) + 2
-    a = k * interaction_range_fm + wavelengths_beyond_range * 2 * np.pi
-    channel_radius_fm = a / k
-    N = jitr.utils.suggested_basis_size(a, zeros_per_node)
-    integral_ws = jitr.xs.elastic.IntegralWorkspace(
-        reaction=reaction,
-        kinematics=kinematics,
-        channel_radius_fm=channel_radius_fm,
-        solver=jitr.rmatrix.Solver(N),
-        lmax=lmax,
+    radius = interaction_range_fm + wavelengths_beyond_range * 2 * np.pi / k.max()
+    N = jitr.utils.suggested_basis_size(k.max() * radius, zeros_per_node)
+    if lmax is None:
+        lmax = jitr.utils.suggest_lmax(k, radius)
+    return radius, N, lmax
+
+
+def _basis(reaction, Elab, lmax, wavelengths_beyond_range, zeros_per_node):
+    """The angle-free elastic workspace and kinematics for one energy."""
+    kinematics = reaction.kinematics(np.array([float(Elab)]))
+    radius, N, lmax = mesh(
+        reaction, kinematics, lmax, wavelengths_beyond_range, zeros_per_node
     )
-    return integral_ws, kinematics
+    return jitr.xs.elastic.Workspace(reaction, kinematics, radius, lmax, N), kinematics
 
 
 def set_up_solver(
     reaction,
     Elab: float,
     angles_rad: np.ndarray,
-    lmax: int = DEFAULT_LMAX,
+    lmax: int | None = DEFAULT_LMAX,
     wavelengths_beyond_range: float = 2.0,
     zeros_per_node: int = 5,
 ):
-    """Set up a ``jitr`` differential workspace for a reaction at one energy.
+    """Set up a ``jitr`` elastic workspace for a reaction at one energy.
 
     Parameters
     ----------
@@ -95,8 +109,8 @@ def set_up_solver(
         Laboratory energy in MeV.
     angles_rad : np.ndarray
         Angles in radians the observables are wanted on.
-    lmax : int
-        Maximum partial wave.
+    lmax : int or None
+        Maximum partial wave; ``None`` for ``jitr.utils.suggest_lmax``.
     wavelengths_beyond_range : float
         Number of wavelengths beyond the interaction range used to set the
         channel radius.
@@ -105,36 +119,159 @@ def set_up_solver(
 
     Returns
     -------
-    (jitr.xs.elastic.DifferentialWorkspace, jitr.reactions.Kinematics)
+    (jitr.xs.elastic.Workspace, kinematics)
+        The workspace holds one energy: its results have a leading axis of 1.
     """
-    integral_ws, kinematics = _basis(
+    ws, kinematics = _basis(
         reaction, Elab, lmax, wavelengths_beyond_range, zeros_per_node
     )
-    ws = jitr.xs.elastic.DifferentialWorkspace(
-        integral_workspace=integral_ws, angles=np.asarray(angles_rad, dtype=float)
-    )
-    return ws, kinematics
+    return ws.at_angles(np.asarray(angles_rad, dtype=float)), kinematics
 
 
 def extract_dXS_dA(xs, ws) -> np.ndarray:
     """dXS/dA in b/sr (``jitr`` reports mb/sr)."""
-    return xs.dsdo / MB_PER_B
+    return np.asarray(xs.dsdo[0]) / MB_PER_B
 
 
 def extract_dXS_dRuth(xs, ws) -> np.ndarray:
     """dXS/dRuth (dimensionless)."""
-    return xs.dsdo / ws.rutherford
+    return np.asarray(xs.dsdo[0] / ws.rutherford[0])
 
 
 def extract_Ay(xs, ws) -> np.ndarray:
     """The analysing power (dimensionless)."""
-    return xs.Ay
+    return np.asarray(xs.Ay[0])
 
 
 _EXTRACT = {"dXS/dA": extract_dXS_dA, "dXS/dRuth": extract_dXS_dRuth, "Ay": extract_Ay}
 
 
-class ElasticXS(Model):
+class OpticalModel(Model):
+    """A ``jitr`` model driven by central, spin-orbit and Coulomb potentials:
+    the machinery :class:`ElasticXS` and :class:`~rxmc.reactions.IntegratedXS`
+    share.
+
+    The potentials come either from callables ``f(r, *args)`` with the
+    arguments from ``args_from_params(workspace, *values)``, or, through
+    :meth:`from_omp`, from a ``jitr`` optical model evaluated with the
+    workspace kinematics.  Subclasses set the observables they can extract,
+    :attr:`QUANTITIES`, and override ``bind``.
+    """
+
+    QUANTITIES: tuple[str, ...] = ()
+    #: default of ``wavelengths_beyond_range``
+    WAVELENGTHS_BEYOND_RANGE = 2.0
+
+    def __init__(
+        self,
+        quantity: str,
+        central: Callable | None,
+        spin_orbit: Callable | None,
+        args_from_params: Callable | None,
+        params,
+        coulomb: Callable | None = None,
+        *,
+        lmax: int | None = DEFAULT_LMAX,
+        wavelengths_beyond_range: float | None = None,
+        zeros_per_node: int = 5,
+    ):
+        if quantity not in self.QUANTITIES:
+            raise ValueError(
+                f"quantity must be one of {self.QUANTITIES}, got {quantity!r}"
+            )
+        super().__init__(None, params)
+        self.quantity = quantity
+        self.central = central
+        self.spin_orbit = spin_orbit
+        self.coulomb = coulomb
+        self.args_from_params = args_from_params
+        self.omp = None
+        self.lmax = lmax
+        if wavelengths_beyond_range is None:
+            wavelengths_beyond_range = self.WAVELENGTHS_BEYOND_RANGE
+        self.wavelengths_beyond_range = wavelengths_beyond_range
+        self.zeros_per_node = zeros_per_node
+        self._cache: dict = {}
+
+    @classmethod
+    def from_omp(cls, quantity: str, omp, params=None, **settings):
+        """The model with the potentials of a ``jitr`` optical model.
+
+        Parameters
+        ----------
+        quantity : str
+            As for the constructor.
+        omp : jitr.optical_potentials.omp.SingleChannelOpticalModel
+            Evaluated as ``omp(r, reaction, kinematics, *values)`` with the
+            workspace mesh and kinematics, e.g.
+            ``jitr.optical_potentials.kduq.KDUQ(projectile)``.
+        params : sequence of Parameter, or mapping of name to Parameter, optional
+            One per entry of ``omp.params``, in that order, or a mapping from
+            those names to parameters.  Pass the same mapping to every model
+            that shares the potential (e.g. KDUQ for protons, behind elastic,
+            reaction and (p,n) data), so that they share the
+            :class:`~rxmc.Parameter` objects.  Different potentials need
+            different parameters even where their names coincide: KDUQ for
+            neutrons and for protons reuse names such as ``Ef_0`` and
+            ``w1_0`` for different values, so give each its own mapping (with
+            parameters named apart, e.g. ``Parameter("n_" + name)``).
+            Defaults to new prior-less parameters named after ``omp.params``.
+        **settings
+            Solver settings (``lmax``, ``wavelengths_beyond_range``,
+            ``zeros_per_node``).
+        """
+        if params is None:
+            params = [Parameter(name) for name in omp.params]
+        elif isinstance(params, Mapping):
+            missing = [name for name in omp.params if name not in params]
+            if missing:
+                raise ValueError(f"params has no entry for {missing}")
+            params = [params[name] for name in omp.params]
+        model = cls(quantity, None, None, None, params, **settings)
+        model.omp = omp
+        return model
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["_cache"] = {}
+        return state
+
+    def potential(self, ws, values) -> Potential:
+        """The ``jitr`` potential on the workspace mesh at ``values``."""
+        r = ws.r
+        if self.omp is not None:
+            central, spin_orbit, coulomb = self.omp(
+                r, ws.reaction, ws.kinematics, *values
+            )
+            return Potential(
+                central=central,
+                spin_orbit=spin_orbit if ws.s > 0 else None,
+                coulomb=coulomb if np.any(coulomb) else None,
+            )
+        assert self.args_from_params is not None and self.central is not None
+        args = self.args_from_params(ws, *values)
+        if len(args) == 2:
+            (c_args, so_args), cou_args = args, ()
+        elif len(args) == 3:
+            c_args, so_args, cou_args = args
+        else:
+            raise ValueError(
+                f"args_from_params must return 2 or 3 argument tuples, got {len(args)}"
+            )
+        return Potential(
+            central=self.central(r, *c_args),
+            spin_orbit=(
+                None if self.spin_orbit is None else self.spin_orbit(r, *so_args)
+            ),
+            coulomb=None if self.coulomb is None else self.coulomb(r, *cou_args),
+        )
+
+    def settings(self) -> tuple:
+        """``(lmax, wavelengths_beyond_range, zeros_per_node)``."""
+        return self.lmax, self.wavelengths_beyond_range, self.zeros_per_node
+
+
+class ElasticXS(OpticalModel):
     """Elastic differential cross section, ratio to Rutherford, or analysing power.
 
     Parameters
@@ -156,39 +293,14 @@ class ElasticXS(Model):
         the Coulomb interaction inside the channel radius must be folded into
         ``central``.
     lmax, wavelengths_beyond_range, zeros_per_node
-        Solver settings, forwarded to :func:`set_up_solver`.
+        Solver settings, forwarded to :func:`set_up_solver`.  ``lmax=None``
+        (the default) takes ``jitr.utils.suggest_lmax`` at the energy.
+
+    :meth:`~OpticalModel.from_omp` builds the model from a ``jitr`` optical
+    model instead of potential callables.
     """
 
-    def __init__(
-        self,
-        quantity: str,
-        central: Callable,
-        spin_orbit: Callable | None,
-        args_from_params: Callable,
-        params,
-        coulomb: Callable | None = None,
-        *,
-        lmax: int = DEFAULT_LMAX,
-        wavelengths_beyond_range: float = 2.0,
-        zeros_per_node: int = 5,
-    ):
-        if quantity not in QUANTITIES:
-            raise ValueError(f"quantity must be one of {QUANTITIES}, got {quantity!r}")
-        super().__init__(None, params)
-        self.quantity = quantity
-        self.central = central
-        self.spin_orbit = spin_orbit
-        self.coulomb = coulomb
-        self.args_from_params = args_from_params
-        self.lmax = lmax
-        self.wavelengths_beyond_range = wavelengths_beyond_range
-        self.zeros_per_node = zeros_per_node
-        self._cache: dict = {}
-
-    def __getstate__(self):
-        state = self.__dict__.copy()
-        state["_cache"] = {}
-        return state
+    QUANTITIES = QUANTITIES
 
     def _kinematics_of(self, meta):
         meta = meta or {}
@@ -202,29 +314,15 @@ class ElasticXS(Model):
             ) from None
 
     def workspace(self, x, meta):
-        """The ``jitr`` differential workspace on ``x`` for this dataset's kinematics."""
+        """The ``jitr`` elastic workspace on ``x`` for this dataset's kinematics."""
         reaction, Elab = self._kinematics_of(meta)
-        key = (
-            id(reaction),
-            Elab,
-            self.lmax,
-            self.wavelengths_beyond_range,
-            self.zeros_per_node,
-        )
+        key = (id(reaction), Elab, *self.settings())
         if key not in self._cache:
-            self._cache[key] = _basis(
-                reaction,
-                Elab,
-                self.lmax,
-                self.wavelengths_beyond_range,
-                self.zeros_per_node,
-            )
-        integral_ws, _ = self._cache[key]
+            self._cache[key] = _basis(reaction, Elab, *self.settings())
+        base, _ = self._cache[key]
         x = np.asarray(x, dtype=float)
         check_angle_grid(x, "x")
-        return jitr.xs.elastic.DifferentialWorkspace(
-            integral_workspace=integral_ws, angles=x
-        )
+        return base.at_angles(x)
 
     def bind(self, x, meta=None) -> Predictor:
         ws = self.workspace(x, meta)
@@ -234,26 +332,8 @@ class ElasticXS(Model):
                 "projectile does not have: compare dXS/dA instead"
             )
         extract = _EXTRACT[self.quantity]
-        central, spin_orbit, coulomb = self.central, self.spin_orbit, self.coulomb
-        args_from_params = self.args_from_params
-        r = ws.radial_grid()
 
         def predict(*values):
-            args = args_from_params(ws, *values)
-            if len(args) == 2:
-                (c_args, so_args), cou_args = args, ()
-            elif len(args) == 3:
-                c_args, so_args, cou_args = args
-            else:
-                raise ValueError(
-                    "args_from_params must return 2 or 3 argument tuples, "
-                    f"got {len(args)}"
-                )
-            xs = ws.xs(
-                central(r, *c_args),
-                None if spin_orbit is None else spin_orbit(r, *so_args),
-                None if coulomb is None else coulomb(r, *cou_args),
-            )
-            return extract(xs, ws)
+            return extract(ws.xs(self.potential(ws, values)), ws)
 
         return Predictor(self.params, x, predict, meta)

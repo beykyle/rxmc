@@ -120,6 +120,8 @@ Reactions
    :nosignatures:
 
    rxmc.reactions.elastic.ElasticXS
+   rxmc.reactions.elastic.OpticalModel
+   rxmc.reactions.integrated.IntegratedXS
    rxmc.reactions.ias.IsobaricAnalogPN
    rxmc.reactions.elastic.rutherford
    rxmc.reactions.elastic.momentum_transfer

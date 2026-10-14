@@ -128,7 +128,7 @@ print(problem.names, sampler.results.logz[-1])
 ## Installation
 
 Python 3.12 or later; the runtime dependencies are `numpy`, `scipy`,
-`jitr >= 3.0` and `exfor-tools`.  Until the 1.0 pre-releases are on PyPI
+`jitr >= 4.0` and `exfor-tools`.  Until the 1.0 pre-releases are on PyPI
 (`pip install --pre rxmc`), install from GitHub:
 
 ```bash

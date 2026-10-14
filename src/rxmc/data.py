@@ -117,7 +117,11 @@ _QUANTITY_KIND = {
     "dXS/dA": "differential",
     "dXS/dRuth": "dimensionless",
     "Ay": "dimensionless",
+    "XS": "integral",
 }
+
+# energy units of an excitation function's x, into MeV
+_ENERGY_UNITS = {"mev": 1.0, "kev": 1e-3, "ev": 1e-6}
 
 
 _REQUIRED_FIELDS = (
@@ -136,7 +140,10 @@ def _as_record(measurement):
     """A measurement's fields as attributes, whether it is an object or a mapping."""
     if isinstance(measurement, Mapping):
         measurement = SimpleNamespace(**measurement)
-    missing = [f for f in _REQUIRED_FIELDS if not hasattr(measurement, f)]
+    # an excitation function (quantity "XS") has energies for x and no Einc
+    integral = getattr(measurement, "quantity", None) == "XS"
+    required = [f for f in _REQUIRED_FIELDS if not (integral and f == "Einc")]
+    missing = [f for f in required if not hasattr(measurement, f)]
     if missing:
         raise ValueError(f"measurement is missing the field(s) {missing}")
     return measurement
@@ -161,6 +168,12 @@ def from_measurement(
     ``meta``: ``reaction``, ``Elab``, ``quantity``, ``k``, ``eta`` and, for the
     (p,n) channel, ``ExIAS``.
 
+    An excitation function (quantity ``"XS"``, an ``exfor_tools``
+    ``EnergyDistribution``) has incident lab energies for ``x`` (``x_units``
+    MeV, keV or eV; stored in MeV), integral cross sections for ``y`` (stored
+    in b), and no ``Einc``; its ``meta`` holds ``quantity``, ``subentry`` and
+    ``reaction``, which :class:`~rxmc.reactions.IntegratedXS` binds to.
+
     Parameters
     ----------
     measurement : object or Mapping
@@ -170,7 +183,7 @@ def from_measurement(
         Needed for the kinematics in ``meta`` and for any conversion between
         ``dXS/dA`` and ``dXS/dRuth`` (the Rutherford cross section is a closed
         form of the kinematics).
-    quantity : {"dXS/dA", "dXS/dRuth", "Ay"}, optional
+    quantity : {"dXS/dA", "dXS/dRuth", "Ay", "XS"}, optional
         The quantity the dataset should hold; defaults to the measured one.
     ExIAS : float, optional
         Excitation energy of the isobaric analog state (MeV), for (p,n) data.
@@ -192,6 +205,12 @@ def from_measurement(
             f"got {measurement.y_units!r}"
         )
     label = getattr(measurement, "subentry", None) or ""
+    if measured == "XS" or target == "XS":
+        if measured != target:
+            raise ValueError(
+                f"cannot convert measurement quantity {measured!r} to {target!r}"
+            )
+        return _excitation_function(measurement, factor, label, reaction)
     frame = getattr(measurement, "x_units", "CM-degrees")
     if str(frame).upper().startswith("LAB"):
         raise ValueError(
@@ -240,6 +259,39 @@ def from_measurement(
     return Dataset(
         x,
         np.asarray(measurement.y, dtype=float) * norm,
+        scaled(np.zeros_like(x) if y_err is None else y_err),
+        norm_err=measurement.systematic_norm_err,
+        offset_err=scaled(measurement.systematic_offset_err),
+        label=label,
+        meta=meta,
+    )
+
+
+def _excitation_function(measurement, factor, label, reaction) -> Dataset:
+    """The :class:`Dataset` of an integral cross section against energy."""
+    from .units import check_energy_grid
+
+    units = str(getattr(measurement, "x_units", "MeV"))
+    try:
+        to_MeV = _ENERGY_UNITS["".join(units.split()).lower()]
+    except KeyError:
+        raise ValueError(
+            f"measurement {label or 'measurement'!r} has energies in {units!r}; "
+            f"expected one of {sorted(_ENERGY_UNITS)}"
+        ) from None
+    x = np.asarray(measurement.x, dtype=float) * to_MeV
+    check_energy_grid(x, f"x of {label or 'measurement'}")
+    meta = {"quantity": "XS", "subentry": label or None}
+    if reaction is not None:
+        meta["reaction"] = reaction
+
+    def scaled(v):
+        return None if v is None else np.asarray(v, dtype=float) * factor
+
+    y_err = measurement.statistical_err
+    return Dataset(
+        x,
+        np.asarray(measurement.y, dtype=float) * factor,
         scaled(np.zeros_like(x) if y_err is None else y_err),
         norm_err=measurement.systematic_norm_err,
         offset_err=scaled(measurement.systematic_offset_err),

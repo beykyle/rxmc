@@ -8,6 +8,7 @@ import jitr
 import numpy as np
 import pytest
 from jitr.optical_potentials.potential_forms import thomas_safe, woods_saxon_safe
+from jitr.xs.coupled import Potential
 from scipy import stats
 
 from rxmc import Comparison, Constraint, Dataset, Parameter, Problem
@@ -50,6 +51,6 @@ def test_data_grid_for_the_likelihood_and_a_fine_grid_for_plotting():
     assert len(omp._cache) == 1  # one basis for both grids
     # cross sections are in b/sr: jitr's mb/sr divided by 1000
     ws = omp.workspace(x, meta)
-    r = ws.radial_grid()
-    direct = ws.xs(central(r, *theta), spin_orbit(r, 6.0, R, 0.45), None).dsdo
-    np.testing.assert_allclose(truth, direct / 1000.0)
+    r = ws.r
+    potential = Potential(central(r, *theta), spin_orbit(r, 6.0, R, 0.45))
+    np.testing.assert_allclose(truth, ws.xs(potential).dsdo[0] / 1000.0)

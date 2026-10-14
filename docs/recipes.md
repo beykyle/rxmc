@@ -379,6 +379,9 @@ Expected behaviour:
   the kinematics; the factor is then a per-angle array.
 - `d.meta` carries `reaction`, `Elab`, `quantity`, `k` (and `ExIAS`), which
   is everything a reaction model needs to bind.
+- An excitation function (quantity `"XS"`, an `EnergyDistribution`) keeps
+  its energies as `x` (MeV) and its cross sections in b, and binds to
+  `rx.reactions.IntegratedXS`.
 - Incompatible units, or a quantity the measurement cannot be converted
   to, raise at conversion time.
 - Angles must be in the CM frame: a measurement whose `x_units` is
@@ -393,7 +396,7 @@ grid for plotting, with the solver set up once per grid.*
 
 ```python
 omp = rx.reactions.ElasticXS("dXS/dA", central, spin_orbit, args_from_params, params,
-                             lmax=20, wavelengths_beyond_range=2.0, zeros_per_node=5)
+                             lmax=None, wavelengths_beyond_range=2.0, zeros_per_node=5)
 comp = rx.Comparison(d, omp)                                   # bound to d.x, d.meta
 x_fine = np.deg2rad(np.linspace(0.5, 179.5, 200))
 fine = omp.bind(x_fine, d.meta)

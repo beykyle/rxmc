@@ -185,3 +185,27 @@ def test_log_space_and_ias_channel():
     assert (
         stats.norm(0, 1).cdf(0) == 0.5
     )  # keep scipy imported for the recipe-style spelling
+
+
+def test_excitation_function():
+    """An EnergyDistribution: energies for x, an integral cross section, no Einc."""
+    fields = vars(measurement()).copy()
+    del fields["Einc"]
+    fields.update(
+        x=np.array([5000.0, 20000.0]),
+        x_units="keV",
+        y=np.array([1200.0, 900.0]),
+        y_units="millibarn",
+        quantity="XS",
+        statistical_err=np.array([12.0, 9.0]),
+        systematic_offset_err=None,
+    )
+    d = from_measurement(SimpleNamespace(**fields), reaction=N_CA)
+    np.testing.assert_allclose(d.x, [5.0, 20.0])
+    np.testing.assert_allclose(d.y, [1.2, 0.9])
+    np.testing.assert_allclose(d.y_err, [0.012, 0.009])
+    assert d.meta == {"quantity": "XS", "subentry": "subentry", "reaction": N_CA}
+    with pytest.raises(ValueError, match="cannot convert"):
+        from_measurement(SimpleNamespace(**fields), quantity="dXS/dA")
+    with pytest.raises(ValueError, match="energies in"):
+        from_measurement(SimpleNamespace(**{**fields, "x_units": "degrees"}))
