@@ -21,7 +21,7 @@ from jitr.xs.coupled import Potential
 
 from ..model import Model, Predictor
 from ..units import DEFAULT_LMAX, MB_PER_B, check_angle_grid
-from .elastic import mesh
+from .elastic import mesh, omp_parameters
 
 __all__ = ["IsobaricAnalogPN", "set_up_solver"]
 
@@ -98,6 +98,9 @@ class IsobaricAnalogPN(Model):
     lmax, wavelengths_beyond_range, zeros_per_node
         Solver settings, forwarded to :func:`set_up_solver`.  ``lmax=None``
         (the default) takes ``jitr.utils.suggest_lmax`` at the energy.
+
+    :meth:`from_omp` builds the model from ``jitr`` optical models for the
+    proton and the neutron instead of potential callables.
     """
 
     def __init__(
@@ -120,7 +123,7 @@ class IsobaricAnalogPN(Model):
         if method not in METHODS:
             raise ValueError(f"method must be one of {METHODS}, got {method!r}")
         super().__init__(None, params)
-        self.potentials = (
+        self.callables = (
             U_p_coulomb,
             U_p_central,
             U_p_spin_orbit,
@@ -128,11 +131,77 @@ class IsobaricAnalogPN(Model):
             U_n_spin_orbit,
         )
         self.U1 = (U1_central, U1_spin_orbit)
+        self.omps = None
         self.method = method
         self.args_from_params = args_from_params
         self.lmax = lmax
         self.wavelengths_beyond_range = wavelengths_beyond_range
         self.zeros_per_node = zeros_per_node
+
+    @classmethod
+    def from_omp(cls, proton, neutron, params=None, **settings):
+        """The model with the potentials of ``jitr`` optical models.
+
+        The proton potential is evaluated for the target at the entrance
+        kinematics, the neutron potential for the residual at the exit
+        kinematics; the isovector potential driving the transition is their
+        difference (for an isovector potential of its own, use the
+        constructor with ``U1_central`` / ``U1_spin_orbit``).
+
+        Parameters
+        ----------
+        proton, neutron : jitr.optical_potentials.omp.SingleChannelOpticalModel
+            E.g. ``kduq.KDUQ((1, 1))`` and ``kduq.KDUQ((1, 0))``, or the same
+            Lane-consistent model (``chuq.CHUQ()``) twice.
+        params : (proton_params, neutron_params), optional
+            Each a sequence or a mapping of name to Parameter, as for
+            :meth:`~rxmc.reactions.elastic.OpticalModel.from_omp`.  Pass the
+            same mapping twice for a Lane-consistent model, so the proton and
+            neutron share their parameters.  Defaults to new prior-less
+            parameters, the neutron's named ``"n_" + name``.
+        **settings
+            ``method`` and the solver settings, as for the constructor.
+        """
+        params_p, params_n = (None, None) if params is None else params
+        p = omp_parameters(proton, params_p)
+        n = omp_parameters(neutron, params_n, prefix="n_")
+        unique = list({id(q): q for q in p + n}.values())
+        index = {id(q): i for i, q in enumerate(unique)}
+        model = cls(*([None] * 6), unique, **settings)
+        model.omps = (proton, neutron)
+        model.slots = ([index[id(q)] for q in p], [index[id(q)] for q in n])
+        return model
+
+    def potentials(self, ws, values):
+        """``(Up, Un, U1)`` on the workspace mesh at ``values`` (``U1`` is
+        ``None`` for the isovector difference)."""
+        r = ws.r
+        if self.omps is not None:
+            proton, neutron = self.omps
+            reaction = ws.reaction
+            exit_reaction = jitr.reactions.ElasticReaction(
+                target=(reaction.residual.A, reaction.residual.Z),
+                projectile=(reaction.product.A, reaction.product.Z),
+            )
+            vp, vn = ([values[i] for i in slots] for slots in self.slots)
+            pc, pso, cou = proton(r, reaction, ws.kinematics_entrance, *vp)
+            nc, nso, _ = neutron(r, exit_reaction, ws.kinematics_exit, *vn)
+            Up = Potential(central=pc, spin_orbit=pso, coulomb=cou)
+            return Up, Potential(central=nc, spin_orbit=nso), None
+        n_args = 5 if self.U1 == (None, None) else 7
+        args = self.args_from_params(ws, *values)
+        if len(args) != n_args:
+            raise ValueError(
+                f"args_from_params must return {n_args} argument tuples, "
+                f"got {len(args)}"
+            )
+        cou, pc, pso, nc, nso = (U(r, *a) for U, a in zip(self.callables, args[:5]))
+        Up = Potential(central=pc, spin_orbit=pso, coulomb=cou)
+        Un = Potential(central=nc, spin_orbit=nso)
+        if n_args == 5:
+            return Up, Un, None
+        c, so = (None if U is None else U(r, *a) for U, a in zip(self.U1, args[5:]))
+        return Up, Un, Potential(central=c, spin_orbit=so)
 
     def workspace(self, x, meta):
         meta = meta or {}
@@ -163,29 +232,10 @@ class IsobaricAnalogPN(Model):
 
     def bind(self, x, meta=None) -> Predictor:
         ws = self.workspace(x, meta)
-        potentials, U1, args_from_params = (
-            self.potentials,
-            self.U1,
-            self.args_from_params,
-        )
-        n_args = 5 if U1 == (None, None) else 7
         observables = getattr(ws, self.method)
-        r = ws.r
 
         def predict(*values):
-            args = args_from_params(ws, *values)
-            if len(args) != n_args:
-                raise ValueError(
-                    f"args_from_params must return {n_args} argument tuples, "
-                    f"got {len(args)}"
-                )
-            cou, pc, pso, nc, nso = (U(r, *a) for U, a in zip(potentials, args[:5]))
-            Up = Potential(central=pc, spin_orbit=pso, coulomb=cou)
-            Un = Potential(central=nc, spin_orbit=nso)
-            isovector = None
-            if n_args == 7:
-                c, so = (None if U is None else U(r, *a) for U, a in zip(U1, args[5:]))
-                isovector = Potential(central=c, spin_orbit=so)
-            return np.asarray(observables(Up, Un, isovector).dsdo[0]) / MB_PER_B
+            Up, Un, U1 = self.potentials(ws, values)
+            return np.asarray(observables(Up, Un, U1).dsdo[0]) / MB_PER_B
 
         return Predictor(self.params, x, predict, meta)

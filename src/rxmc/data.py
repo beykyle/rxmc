@@ -118,6 +118,10 @@ _QUANTITY_KIND = {
     "dXS/dRuth": "dimensionless",
     "Ay": "dimensionless",
     "XS": "integral",
+    # an "XS" excitation function labelled with what it measures, the
+    # quantities of rxmc.reactions.IntegratedXS
+    "total": "integral",
+    "reaction": "integral",
 }
 
 # energy units of an excitation function's x, into MeV
@@ -172,7 +176,10 @@ def from_measurement(
     ``EnergyDistribution``) has incident lab energies for ``x`` (``x_units``
     MeV, keV or eV; stored in MeV), integral cross sections for ``y`` (stored
     in b), and no ``Einc``; its ``meta`` holds ``quantity``, ``subentry`` and
-    ``reaction``, which :class:`~rxmc.reactions.IntegratedXS` binds to.
+    ``reaction``.  EXFOR labels both total and reaction (nonelastic) cross
+    sections ``"XS"``: pass ``quantity="total"`` or ``"reaction"`` to label the
+    dataset for :class:`~rxmc.reactions.IntegratedXS`, which compares only
+    with data of its own quantity.
 
     Parameters
     ----------
@@ -183,8 +190,9 @@ def from_measurement(
         Needed for the kinematics in ``meta`` and for any conversion between
         ``dXS/dA`` and ``dXS/dRuth`` (the Rutherford cross section is a closed
         form of the kinematics).
-    quantity : {"dXS/dA", "dXS/dRuth", "Ay", "XS"}, optional
+    quantity : {"dXS/dA", "dXS/dRuth", "Ay", "XS", "total", "reaction"}, optional
         The quantity the dataset should hold; defaults to the measured one.
+        An ``"XS"`` measurement takes ``"total"`` or ``"reaction"``.
     ExIAS : float, optional
         Excitation energy of the isobaric analog state (MeV), for (p,n) data.
     """
@@ -205,12 +213,14 @@ def from_measurement(
             f"got {measurement.y_units!r}"
         )
     label = getattr(measurement, "subentry", None) or ""
-    if measured == "XS" or target == "XS":
-        if measured != target:
+    if _QUANTITY_KIND[measured] == "integral" or _QUANTITY_KIND[target] == "integral":
+        if measured != target and not (
+            measured == "XS" and target in ("total", "reaction")
+        ):
             raise ValueError(
                 f"cannot convert measurement quantity {measured!r} to {target!r}"
             )
-        return _excitation_function(measurement, factor, label, reaction)
+        return _excitation_function(measurement, factor, label, reaction, target)
     frame = getattr(measurement, "x_units", "CM-degrees")
     if str(frame).upper().startswith("LAB"):
         raise ValueError(
@@ -267,7 +277,7 @@ def from_measurement(
     )
 
 
-def _excitation_function(measurement, factor, label, reaction) -> Dataset:
+def _excitation_function(measurement, factor, label, reaction, quantity) -> Dataset:
     """The :class:`Dataset` of an integral cross section against energy."""
     from .units import check_energy_grid
 
@@ -281,7 +291,7 @@ def _excitation_function(measurement, factor, label, reaction) -> Dataset:
         ) from None
     x = np.asarray(measurement.x, dtype=float) * to_MeV
     check_energy_grid(x, f"x of {label or 'measurement'}")
-    meta = {"quantity": "XS", "subentry": label or None}
+    meta = {"quantity": quantity, "subentry": label or None}
     if reaction is not None:
         meta["reaction"] = reaction
 

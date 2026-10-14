@@ -205,6 +205,11 @@ def test_excitation_function():
     np.testing.assert_allclose(d.y, [1.2, 0.9])
     np.testing.assert_allclose(d.y_err, [0.012, 0.009])
     assert d.meta == {"quantity": "XS", "subentry": "subentry", "reaction": N_CA}
+    total = from_measurement(SimpleNamespace(**fields), reaction=N_CA, quantity="total")
+    assert total.meta["quantity"] == "total"
+    np.testing.assert_allclose(total.y, d.y)
+    with pytest.raises(ValueError, match="cannot convert"):
+        from_measurement(SimpleNamespace(**fields), quantity="Ay")
     with pytest.raises(ValueError, match="cannot convert"):
         from_measurement(SimpleNamespace(**fields), quantity="dXS/dA")
     with pytest.raises(ValueError, match="energies in"):

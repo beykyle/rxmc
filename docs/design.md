@@ -505,6 +505,8 @@ class IsobaricAnalogPN(Model):
     def __init__(self, U_p_coulomb, U_p_central, U_p_spin_orbit, U_n_central, U_n_spin_orbit,
                  args_from_params, params, *, method="dwba", U1_central=None, U1_spin_orbit=None,
                  lmax=..., wavelengths_beyond_range=..., zeros_per_node=...)
+    @classmethod
+    def from_omp(cls, proton, neutron, params=None, **settings)  # two jitr optical models
     def bind(self, x, meta) -> Predictor      # reads reaction, Elab, ExIAS
 def rutherford(kinematics, angles_rad) -> ndarray     # mb/sr, closed form
 def momentum_transfer(angles_rad, k) -> ndarray        # 2 k sin(theta/2), for coords=
@@ -537,7 +539,16 @@ and for protons reuse names for different values and need separate mappings.
 coupled Lane channels (`method="cc"`).  The isovector potential driving it is
 the difference of the proton and neutron potentials unless `U1_central`
 and/or `U1_spin_orbit` give a term of their own; `args_from_params` then
-returns their two argument tuples after the five.
+returns their two argument tuples after the five.  `from_omp(proton,
+neutron)` evaluates jitr optical models instead: the proton's for the target
+at the entrance kinematics, the neutron's for the residual at the exit
+kinematics.  The same parameter mapping passed for both shares the
+parameters of a Lane-consistent model such as CHUQ.
+
+EXFOR labels total and reaction cross sections alike (`"XS"`):
+`from_measurement(m, quantity="total" | "reaction")` labels the dataset for
+the matching `IntegratedXS`.  For a spin-0 projectile an all-zero spin-orbit
+callable is dropped (jitr rejects any spin-orbit term there).
 
 ## 3. Worked example: an error-model comparison
 

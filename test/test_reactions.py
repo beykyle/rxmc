@@ -363,3 +363,115 @@ def test_integrated_xs_interpolates_a_dense_excitation_function():
     )
     assert y.shape == x.shape
     np.testing.assert_allclose(y[::30], every(*params), rtol=2e-3)
+
+
+class TestIsobaricAnalogFromOmp:
+    RXN = jitr.reactions.Reaction(
+        target=(48, 20), projectile=(1, 1), product=(1, 0), residual=(48, 21)
+    )
+    META = {"reaction": RXN, "Elab": 35.0, "ExIAS": 6.7}
+    X = np.linspace(0.1, 1.2, 6)
+
+    @pytest.mark.parametrize("method", ["dwba", "cc"])
+    def test_matches_the_potentials_evaluated_by_hand(self, method):
+        p, n = kduq.KDUQ((1, 1)), kduq.KDUQ((1, 0))
+        model = IsobaricAnalogPN.from_omp(p, n, method=method)
+        assert [q.name for q in model.params] == p.params + ["n_" + x for x in n.params]
+        values = np.concatenate([kduq.get_kd03((1, 1)), kduq.get_kd03((1, 0))])
+        y = model.bind(self.X, self.META)(*values)
+        ws = model.workspace(self.X, self.META)
+        exit_reaction = jitr.reactions.ElasticReaction(
+            target=(48, 21), projectile=(1, 0)
+        )
+        pc, pso, cou = p(ws.r, self.RXN, ws.kinematics_entrance, *kduq.get_kd03((1, 1)))
+        nc, nso, _ = n(ws.r, exit_reaction, ws.kinematics_exit, *kduq.get_kd03((1, 0)))
+        direct = getattr(ws, method)(Potential(pc, pso, cou), Potential(nc, nso))
+        np.testing.assert_allclose(y, np.asarray(direct.dsdo[0]) / 1000.0, rtol=1e-12)
+
+    def test_a_lane_consistent_model_shares_its_parameters(self):
+        from jitr.optical_potentials import chuq
+
+        omp = chuq.CHUQ()
+        pool = {x: Parameter(x) for x in omp.params}
+        model = IsobaricAnalogPN.from_omp(omp, omp, (pool, pool))
+        assert len(model.params) == len(omp.params)
+        y = model.bind(self.X, self.META)(*chuq.get_ch89())
+        assert np.all(np.isfinite(y)) and y.max() > 0
+        with pytest.raises(ValueError, match="parameters"):
+            IsobaricAnalogPN.from_omp(omp, omp, (list(pool.values())[:3], None))
+
+
+def _problem(model, x, meta, theta):
+    y = model.bind(x, meta)(*theta)
+    d = Dataset(x, y, 0.05 * np.abs(y), meta=meta)
+    return Problem([Constraint([Comparison(d, model)])])
+
+
+def _with_priors(omp, values, prefix=""):
+    return [
+        Parameter(prefix + name, prior=stats.norm(v, 0.1 * abs(v) + 1e-3))
+        for name, v in zip(omp.params, values)
+    ]
+
+
+@pytest.mark.parametrize(
+    "kind", ["integrated", "integrated_callables", "elastic", "ias"]
+)
+def test_dill_round_trip_of_the_new_models(kind):
+    kd_p, kd_n = kduq.get_kd03((1, 1)), kduq.get_kd03((1, 0))
+    if kind == "integrated":
+        PB = jitr.reactions.ElasticReaction(target=(208, 82), projectile=(1, 0))
+        model = IntegratedXS.from_omp(
+            "total",
+            kduq.KDUQ((1, 0)),
+            _with_priors(kduq.KDUQ((1, 0)), kd_n),
+            n_energies=8,
+        )
+        x, meta, theta = np.geomspace(5, 100, 12), {"reaction": PB}, kd_n
+    elif kind == "integrated_callables":
+        model = IntegratedXS(
+            "total",
+            central,
+            spin_orbit,
+            lambda ws, *v: (tuple(v), (6.0, R, 0.45)),
+            [Parameter(n, prior=stats.norm(0, 100)) for n in ("Vv", "Wv", "Rv", "av")],
+        )
+        x, meta, theta = np.array([10.0, 30.0]), {"reaction": N_CA}, THETA
+    elif kind == "elastic":
+        model = ElasticXS.from_omp(
+            "dXS/dRuth", kduq.KDUQ((1, 1)), _with_priors(kduq.KDUQ((1, 1)), kd_p)
+        )
+        x, meta, theta = ANGLES, {"reaction": P_CA, "Elab": 30.0}, kd_p
+    else:
+        rxn = jitr.reactions.Reaction(
+            target=(48, 20), projectile=(1, 1), product=(1, 0), residual=(48, 21)
+        )
+        p, n = kduq.KDUQ((1, 1)), kduq.KDUQ((1, 0))
+        model = IsobaricAnalogPN.from_omp(
+            p, n, (_with_priors(p, kd_p), _with_priors(n, kd_n, "n_")), method="cc"
+        )
+        x = np.linspace(0.1, 1.2, 5)
+        meta, theta = {"reaction": rxn, "Elab": 35.0, "ExIAS": 6.7}, np.concatenate(
+            [kd_p, kd_n]
+        )
+    problem = _problem(model, x, meta, theta)
+    copy = dill.loads(dill.dumps(problem))
+    theta = np.asarray(theta, dtype=float)
+    assert copy.log_posterior(theta) == pytest.approx(problem.log_posterior(theta))
+    assert copy.chi2(theta) == pytest.approx(0.0, abs=1e-20)
+
+
+def test_a_zero_spin_orbit_is_dropped_for_a_spin_zero_projectile():
+    alpha = jitr.reactions.ElasticReaction(target=(44, 20), projectile=(4, 2))
+    meta = {"reaction": alpha, "Elab": 29.0}
+    args = lambda ws, *x: (tuple(x), ())
+    params = [Parameter(n, prior=stats.norm(0, 100)) for n in ("Vv", "Wv", "Rv", "av")]
+    theta = (150.0, 20.0, 5.0, 0.6)
+    zero = ElasticXS("dXS/dA", central, lambda r: 0 * r, args, params)
+    none = ElasticXS("dXS/dA", central, None, args, params)
+    np.testing.assert_allclose(
+        zero.bind(ANGLES, meta)(*theta), none.bind(ANGLES, meta)(*theta)
+    )
+    real = ElasticXS("dXS/dA", central, lambda r: 1 + 0 * r, args, params)
+    with pytest.raises(ValueError, match="spin-0"):
+        real.bind(ANGLES, meta)(*theta)

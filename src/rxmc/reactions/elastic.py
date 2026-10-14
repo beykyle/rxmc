@@ -32,6 +32,7 @@ __all__ = [
     "ElasticXS",
     "OpticalModel",
     "mesh",
+    "omp_parameters",
     "set_up_solver",
     "rutherford",
     "momentum_transfer",
@@ -146,6 +147,25 @@ def extract_Ay(xs, ws) -> np.ndarray:
 _EXTRACT = {"dXS/dA": extract_dXS_dA, "dXS/dRuth": extract_dXS_dRuth, "Ay": extract_Ay}
 
 
+def omp_parameters(omp, params=None, prefix: str = "") -> list[Parameter]:
+    """One :class:`~rxmc.Parameter` per entry of ``omp.params``: from a
+    sequence (in that order) or a mapping of name to parameter, or new
+    prior-less parameters named ``prefix + name``."""
+    if params is None:
+        return [Parameter(prefix + name) for name in omp.params]
+    if isinstance(params, Mapping):
+        missing = [name for name in omp.params if name not in params]
+        if missing:
+            raise ValueError(f"params has no entry for {missing}")
+        return [params[name] for name in omp.params]
+    params = list(params)
+    if len(params) != len(omp.params):
+        raise ValueError(
+            f"{type(omp).__name__} has {len(omp.params)} parameters, got {len(params)}"
+        )
+    return params
+
+
 class OpticalModel(Model):
     """A ``jitr`` model driven by central, spin-orbit and Coulomb potentials:
     the machinery :class:`ElasticXS` and :class:`~rxmc.reactions.IntegratedXS`
@@ -220,14 +240,7 @@ class OpticalModel(Model):
             Solver settings (``lmax``, ``wavelengths_beyond_range``,
             ``zeros_per_node``).
         """
-        if params is None:
-            params = [Parameter(name) for name in omp.params]
-        elif isinstance(params, Mapping):
-            missing = [name for name in omp.params if name not in params]
-            if missing:
-                raise ValueError(f"params has no entry for {missing}")
-            params = [params[name] for name in omp.params]
-        model = cls(quantity, None, None, None, params, **settings)
+        model = cls(quantity, None, None, None, omp_parameters(omp, params), **settings)
         model.omp = omp
         return model
 
@@ -258,11 +271,12 @@ class OpticalModel(Model):
             raise ValueError(
                 f"args_from_params must return 2 or 3 argument tuples, got {len(args)}"
             )
+        spin_orbit = None if self.spin_orbit is None else self.spin_orbit(r, *so_args)
+        if ws.s == 0 and spin_orbit is not None and not np.any(spin_orbit):
+            spin_orbit = None  # a zero spin-orbit term, for a spin-0 projectile
         return Potential(
             central=self.central(r, *c_args),
-            spin_orbit=(
-                None if self.spin_orbit is None else self.spin_orbit(r, *so_args)
-            ),
+            spin_orbit=spin_orbit,
             coulomb=None if self.coulomb is None else self.coulomb(r, *cou_args),
         )
 

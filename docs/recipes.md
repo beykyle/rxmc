@@ -380,7 +380,8 @@ Expected behaviour:
 - `d.meta` carries `reaction`, `Elab`, `quantity`, `k` (and `ExIAS`), which
   is everything a reaction model needs to bind.
 - An excitation function (quantity `"XS"`, an `EnergyDistribution`) keeps
-  its energies as `x` (MeV) and its cross sections in b, and binds to
+  its energies as `x` (MeV) and its cross sections in b; pass
+  `quantity="total"` or `"reaction"` to compare it with
   `rx.reactions.IntegratedXS`.
 - Incompatible units, or a quantity the measurement cannot be converted
   to, raise at conversion time.
