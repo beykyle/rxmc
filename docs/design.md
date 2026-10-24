@@ -243,6 +243,7 @@ proportional_error(parameter, averaging=False, log=True, on=None)
 systematic(parameter, basis, log=True, basis_params=(), on=None, coords=None)
 kernel(kernel, coords=None, amplitude=None, amplitude_params=(), jitter=1e-10,
        prefix="discrepancy", params=None, on=None) -> KernelTerm
+kernel_param_names(kernel) -> list[str]   # the keys of a params= mapping
 # bases and amplitudes: ones, ym, averaging, x_basis(scale), exp_growth(scale, base=ones),
 #                       constant_amplitude, exp_growth_amplitude(scale)
 ```
@@ -253,7 +254,11 @@ reads `c.ym`, never `c.y`.  `kernel` derives one `Parameter` per free
 hyperparameter element in sklearn's log-theta space, bounded by the log of
 the kernel's bounds so it compiles with a uniform prior there; `params=`
 passes the objects instead, which is also how hyperparameters are shared
-between per-comparison kernels.  Two kernel terms with derived names and
+between per-comparison kernels.  `params=` is a mapping keyed by
+`kernel_param_names(kernel)` (sklearn's `theta` order is alphabetical by
+attribute name); a positional list is accepted only for a kernel with one
+free hyperparameter, because with two or more a misread order would swap
+priors silently.  Two kernel terms with derived names and
 one prefix fail compile on the duplicate name.
 
 Hierarchy is sharing plus `meta`: a hyperparameter shared by several

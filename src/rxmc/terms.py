@@ -70,6 +70,7 @@ __all__ = [
     "proportional_error",
     "systematic",
     "kernel",
+    "kernel_param_names",
 ]
 
 KINDS = ("diag", "mode", "matrix")
@@ -566,6 +567,75 @@ def _n_free_elements(kernel) -> int:
     return sum(hp.n_elements for hp in kernel.hyperparameters if not hp.fixed)
 
 
+def kernel_param_names(kernel) -> list[str]:
+    """The names of a kernel's free hyperparameters, in ``kernel.theta`` order.
+
+    These are the keys :func:`kernel` accepts in a ``params=`` mapping.  The
+    order is sklearn's, which sorts by the ``hyperparameter_*`` attribute
+    name, so it is alphabetical and unrelated to the order of ``__init__``
+    arguments; a composite kernel prefixes its operands' names (``k1__``,
+    ``k2__``).  A hyperparameter with ``n_elements > 1`` (an anisotropic length
+    scale) appears once and takes a sequence of that many parameters.
+    """
+    return [hp.name for hp in kernel.hyperparameters if not hp.fixed]
+
+
+def _resolve_kernel_params(kernel, params) -> list:
+    """``params=`` as a list of :class:`Parameter` in ``kernel.theta`` order.
+
+    A mapping is keyed by :func:`kernel_param_names`.  A sequence is accepted
+    only when the kernel has a single free hyperparameter: with two or more,
+    the meaning of a position depends on sklearn's alphabetical ordering, and a
+    misread order swaps priors without any error, so it is refused.
+    """
+    free = [hp for hp in kernel.hyperparameters if not hp.fixed]
+    names = [hp.name for hp in free]
+    nk = sum(hp.n_elements for hp in free)
+    if isinstance(params, Mapping):
+        keys = list(params)
+        missing = [n for n in names if n not in params]
+        unknown = [k for k in keys if k not in names]
+        if missing or unknown:
+            raise ValueError(
+                f"params= keys must be the kernel's free hyperparameters {names} "
+                f"(kernel.theta order); missing {missing}, unknown {unknown}"
+            )
+        out = []
+        for hp in free:
+            v = params[hp.name]
+            if hp.n_elements == 1:
+                if not isinstance(v, Parameter):
+                    raise TypeError(
+                        f"params[{hp.name!r}] must be a Parameter, got {v!r}"
+                    )
+                out.append(v)
+            else:
+                v = list(v) if not isinstance(v, Parameter) else [v]
+                if len(v) != hp.n_elements:
+                    raise ValueError(
+                        f"params[{hp.name!r}] needs {hp.n_elements} Parameters "
+                        f"(one per element), got {len(v)}"
+                    )
+                out.extend(v)
+        return out
+    if isinstance(params, Parameter):
+        params = [params]
+    out = list(params)
+    if len(free) > 1:
+        raise TypeError(
+            f"the kernel has {len(free)} free hyperparameters {names}; pass "
+            "params= as a mapping {name: Parameter}.  A positional list is "
+            "refused because sklearn orders hyperparameters alphabetically by "
+            "attribute name, so a misread order would silently swap priors"
+        )
+    if len(out) != nk:
+        raise ValueError(
+            f"kernel has {nk} free hyperparameter element(s) but params= "
+            f"has {len(out)}"
+        )
+    return out
+
+
 def kernel(
     kernel,
     coords=None,
@@ -609,10 +679,15 @@ def kernel(
         Name prefix of the derived kernel parameters.  Two kernel terms with
         derived names and the same prefix fail to compile on the duplicate
         name: pass distinct prefixes, or ``params=`` to share one kernel.
-    params : sequence of Parameter, optional
-        The hyperparameter objects themselves, one per free element in
-        ``kernel.theta`` order.  Pass the same objects to several ``kernel``
-        calls to share hyperparameters between comparisons.
+    params : mapping or sequence of Parameter, optional
+        The hyperparameter objects themselves, keyed by hyperparameter name
+        (:func:`kernel_param_names`): ``{"length_scale": ell}``.  A
+        multi-element hyperparameter takes a sequence of that many objects.
+        A plain sequence is accepted only for a kernel with a single free
+        hyperparameter; with two or more it is refused, because the position
+        of each follows sklearn's alphabetical ordering and a misread order
+        would silently swap priors.  Pass the same objects to several
+        ``kernel`` calls to share hyperparameters between comparisons.
     on : optional
         See :class:`Term`.
     """
@@ -620,12 +695,7 @@ def kernel(
     if params is None:
         kparams = _kernel_params(kernel, prefix)
     else:
-        kparams = list(params)
-        if len(kparams) != nk:
-            raise ValueError(
-                f"kernel has {nk} free hyperparameter element(s) but params= "
-                f"has {len(kparams)}"
-            )
+        kparams = _resolve_kernel_params(kernel, params)
     amplitude_params = tuple(amplitude_params)
     fixed_K = nk == 0 and not as_transform(coords).params
 

@@ -638,6 +638,12 @@ Expected behaviour:
 - Without `params=[ell]`, each `kernel` call would derive its own length
   scale, one per dataset.  That is also a legitimate model; it is just not
   this one.
+- `params=[ell]` is positional because Matern here has one free
+  hyperparameter.  A kernel with several takes a mapping keyed by
+  `T.kernel_param_names(k)`, e.g. for `ExpSineSquared`
+  `params={"length_scale": ell, "periodicity": per}`;
+  a positional list for it is refused, since sklearn orders hyperparameters
+  alphabetically and a misread order would swap priors silently.
 - The comparisons stay uncorrelated, so the constraint is on the structured
   path.
 
