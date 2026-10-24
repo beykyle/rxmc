@@ -303,6 +303,40 @@ class TestPriors:
 # ----------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize(
+    "dist",
+    [
+        stats.norm(0.3, 2.0),
+        stats.norm(),
+        stats.uniform(-1.0, 3.0),
+        stats.hypsecant(loc=np.log(0.3)),
+        stats.hypsecant(1.0, 0.5),
+        stats.gamma(2.0, scale=3.0),  # no closed form: the scipy fallback
+    ],
+    ids=lambda d: d.dist.name,
+)
+@pytest.mark.parametrize("bounds", [(-np.inf, np.inf), (-0.5, 1.5)])
+def test_closed_form_prior_logpdf_matches_scipy(dist, bounds):
+    from rxmc.problem import _Marginal
+
+    m = _Marginal(Parameter("a", bounds=bounds, prior=dist), 0)
+    lo, hi = bounds
+    norm = np.log(dist.cdf(hi) - dist.cdf(lo))
+    for v in np.linspace(-3.0, 4.0, 57):
+        ref = dist.logpdf(v) - norm if lo <= v <= hi else -np.inf
+        assert m.logpdf(v) == pytest.approx(ref, rel=1e-12, abs=1e-12)
+
+
+def test_hypsecant_prior_stays_finite_where_scipy_overflows():
+    from rxmc.problem import _Marginal
+
+    d = stats.hypsecant(loc=0.0)
+    m = _Marginal(Parameter("log_a", prior=d), 0)
+    with np.errstate(over="ignore"):
+        assert d.logpdf(800.0) == -np.inf
+    assert m.logpdf(800.0) == pytest.approx(np.log(2.0 / np.pi) - 800.0)
+
+
 class TestCompile:
     def test_log_likelihood_matches_manual_mvn(self):
         d = dataset()

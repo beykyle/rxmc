@@ -144,6 +144,46 @@ def _joint_dim(joint) -> int | None:
     return None if dim is None else int(dim)
 
 
+_LOG_2PI = float(np.log(2.0 * np.pi))
+_LOG_PI = float(np.log(np.pi))
+
+
+def _fast_logpdf(dist):
+    """A closed-form ``logpdf`` for a few frozen scipy families, else ``None``.
+
+    A frozen scipy ``logpdf`` costs ~100 us of argument handling per call, which
+    is a large share of a cheap posterior evaluated once per parameter.  The
+    closed forms here are exact; ``hypsecant`` is also made overflow-free
+    (``log cosh`` via ``logaddexp``), where scipy's returns ``-inf`` past
+    ``|x| ~ 710``.  Anything else falls back to ``dist.logpdf``.
+    """
+    family = getattr(getattr(dist, "dist", None), "name", None)
+    if family not in ("norm", "uniform", "hypsecant"):
+        return None
+    try:
+        _, loc, scale = dist.dist._parse_args(*dist.args, **dist.kwds)
+    except Exception:  # pragma: no cover - an unexpected scipy signature
+        return None
+    loc, scale = float(loc), float(scale)
+    if not scale > 0:
+        return None
+    log_scale = float(np.log(scale))
+    if family == "norm":
+        c = -0.5 * _LOG_2PI - log_scale
+        return lambda v: c - 0.5 * ((v - loc) / scale) ** 2
+    if family == "uniform":
+        hi = loc + scale
+        return lambda v: -log_scale if loc <= v <= hi else -np.inf
+    # hypsecant: pdf = sech(z) / pi;  log cosh z = logaddexp(z, -z) - log 2
+    c = float(np.log(2.0)) - _LOG_PI - log_scale
+
+    def hypsecant(v):
+        z = (v - loc) / scale
+        return c - float(np.logaddexp(z, -z))
+
+    return hypsecant
+
+
 class _Marginal:
     """One slot: a marginal (truncated to bounds) or the uniform on bounds.
 
@@ -178,12 +218,15 @@ class _Marginal:
                     f"the prior of {p.name!r} has no mass inside its bounds"
                 )
             self.log_norm = float(np.log(mass))
+        self._fast = None if self.dist is None else _fast_logpdf(self.dist)
 
     def logpdf(self, v) -> float:
         if v < self.lo or v > self.hi:
             return -np.inf
         if self.dist is None:
             return -self.log_norm
+        if self._fast is not None:
+            return self._fast(float(v)) - self.log_norm
         return float(self.dist.logpdf(v)) - self.log_norm
 
     def transform(self, u):
