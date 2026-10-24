@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+from scipy import stats
 from sklearn.gaussian_process.kernels import RBF, Matern
 
 from helpers import (
@@ -13,7 +14,15 @@ from helpers import (
 )
 from rxmc import Parameter
 from rxmc.covariance import StructuredCovariance, chol_logdet
-from rxmc.terms import Term, kernel, noise, normalization, offset, statistical
+from rxmc.terms import (
+    Term,
+    constant_amplitude,
+    kernel,
+    noise,
+    normalization,
+    offset,
+    statistical,
+)
 
 
 def build(terms, x, y, offsets, active=None, rows=None, labels=None):
@@ -324,3 +333,68 @@ class TestSegments:
         # so the segments describe the unmasked support
         seen = self.capture(np.arange(9), active=np.r_[0:2, 3:9])
         assert seen["segments"] == (slice(0, 3), slice(3, 6), slice(6, 9))
+
+
+class TestNonFinite:
+    """A non-finite covariance is zero density at a theta, an error at compile."""
+
+    def setup_method(self):
+        from rxmc import Comparison, Dataset, Model
+
+        x = np.linspace(0.0, 2.0, 6)
+        self.m = Parameter("m", prior=stats.norm(0, 5))
+        model = Model(lambda x, m: m * x, [self.m])
+        self.comps = [
+            Comparison(
+                Dataset(x, 2.0 * x + 0.1 * k, 0.1 * np.ones(6), label=f"d{k}"), model
+            )
+            for k in range(2)
+        ]
+
+    def problem(self, terms, comps=None):
+        from rxmc import Constraint, Problem
+
+        return Problem([Constraint(comps or self.comps[:1], terms=terms)])
+
+    def assert_no_density(self, p, theta):
+        assert p.log_likelihood(theta) == -np.inf
+        assert p.log_posterior(theta) == -np.inf
+        assert p.chi2(theta) == np.inf
+
+    def test_overflowing_kernel_amplitude_structured_path(self):
+        la = Parameter("log_A", prior=stats.norm(0, 1))
+        gp = kernel(
+            RBF(0.5, "fixed"), amplitude=constant_amplitude, amplitude_params=(la,)
+        )
+        p = self.problem([gp])
+        assert not p.constraints[0].covariance.dense
+        assert np.isfinite(p.log_likelihood(np.array([2.0, 0.0])))
+        self.assert_no_density(p, np.array([2.0, 400.0]))  # exp(400)**2 overflows
+
+    def test_overflowing_kernel_amplitude_dense_path(self):
+        la = Parameter("log_A", prior=stats.norm(0, 1))
+        gp = kernel(
+            RBF(0.5, "fixed"), amplitude=constant_amplitude, amplitude_params=(la,)
+        )
+        p = self.problem([gp], comps=self.comps)  # one kernel over both: dense
+        assert p.constraints[0].covariance.dense
+        self.assert_no_density(p, np.array([2.0, 400.0]))
+
+    def test_finite_values_whose_square_overflows(self):
+        # exp(400) is finite; the diagonal adds its square, which is not
+        p = self.problem([noise(Parameter("log_eps", prior=stats.norm(0, 1)))])
+        self.assert_no_density(p, np.array([2.0, 400.0]))
+
+    def test_parametric_term_returning_nan(self):
+        s = Parameter("s", prior=stats.norm(0, 1))
+        t = Term(lambda c, s: np.sqrt(s) * np.ones(len(c)), (s,), kind="diag")
+        p = self.problem([t])
+        assert np.isfinite(p.log_likelihood(np.array([2.0, 0.04])))
+        with np.errstate(invalid="ignore"):
+            self.assert_no_density(p, np.array([2.0, -1.0]))
+
+    def test_constant_term_with_nan_fails_at_compile_and_names_it(self):
+        bad = np.full(6, 0.1)
+        bad[2] = np.nan
+        with pytest.raises(ValueError, match="non-finite.*declaration"):
+            self.problem([Term(bad, kind="diag")])

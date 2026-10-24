@@ -29,6 +29,12 @@ evaluated once; a covariance with no parametric part is factored once.
 ``B`` must be positive definite.  A block covered only by modes is singular in
 ``B`` even when ``Sigma`` is not; when every term is constant this is caught at
 construction and reported with the block's label.
+
+A term that returns inf or NaN on its active rows, or values whose square or
+sum overflows, is treated the same way: at a ``theta`` it is zero density
+(``log_likelihood`` is ``-inf``, ``chi2`` is ``+inf``) so an optimiser or
+sampler moves on; in a constant term, evaluated once, it is a declaration
+error raised at construction with the term named.
 """
 
 from __future__ import annotations
@@ -190,6 +196,9 @@ class StructuredCovariance:
                 labels=e.labels,
             )
             pos, keep = e.pos[e.keep], e.keep
+            on_active = v[np.ix_(keep, keep)] if t.kind == "matrix" else v[keep]
+            if not np.all(np.isfinite(on_active)):
+                self._nonfinite(t, theta is None)
             if t.kind == "diag":
                 D[pos] += v[keep] ** 2
             elif t.kind == "mode":
@@ -276,9 +285,34 @@ class StructuredCovariance:
         except np.linalg.LinAlgError as err:
             error = ValueError if self.is_constant else _SingularCovariance
             raise error(self._singular_message(D)) from err
+        except ValueError as err:
+            # scipy's check_finite: finite term values whose sum or square
+            # overflowed (a huge amplitude).  Parametric: no density there.
+            if self.is_constant:
+                raise
+            raise _SingularCovariance(
+                "the constraint's covariance is not finite at this theta"
+            ) from err
         if self.is_constant:
             self._cache = factors
         return factors
+
+    def _nonfinite(self, term, constant: bool):
+        """A term returned inf or NaN on its active rows.
+
+        Evaluated once at construction (a constant term) it is a declaration
+        error and raises ``ValueError`` naming the term; evaluated at a
+        ``theta`` it means the error model has no density there, which the
+        compiled constraint reads as ``log_likelihood == -inf``.
+        """
+        msg = f"{term!r} returned a non-finite value on its active rows"
+        if constant:
+            raise ValueError(
+                msg + "; a constant term is evaluated once, so this is an error "
+                "in its declaration (an array with NaN, or a fn that divides by "
+                "zero on the data)"
+            )
+        raise _SingularCovariance(msg + " at this theta")
 
     def _constant_blocks(self) -> list[int]:
         """The blocks whose ``B`` no parametric diag or matrix entry touches."""
