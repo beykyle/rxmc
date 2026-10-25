@@ -314,7 +314,8 @@ kernel(kernel, coords=None, amplitude=None, amplitude_params=(), jitter=1e-10,
 # KernelTerm(Term) adds kernel, n_kernel, amplitude, jitter so predictive.gp_predictive_draws
 #          can condition the discrepancy from the term alone.  A derived hyperparameter is
 #          bounded by the log of the kernel's bounds (a uniform prior in log-theta).
-# params=: the hyperparameter Parameter objects, one per free element in kernel.theta order;
+# params=: the hyperparameter Parameter objects, keyed by name (kernel_param_names; positional
+#          only for a single free hyperparameter; superseded detail: see design.md);
 #          None derives fresh ones named f"{prefix}_{name}".  Pass the same objects to share
 #          hyperparameters between per-block kernels.  Two kernel terms with derived
 #          names and the same prefix fail compile on the duplicate name; the error says

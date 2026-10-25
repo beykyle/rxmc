@@ -418,6 +418,30 @@ class TestKernel:
         with pytest.raises(ValueError, match="needs 2 Parameters"):
             kernel(k, params={"k1__constant_value": A, "k2__length_scale": [l1]})
 
+    def test_unordered_containers_are_refused(self):
+        ps = [Parameter(f"l{i}") for i in range(4)]
+        with pytest.raises(TypeError, match="ordered.*set"):
+            kernel(RBF([1.0] * 4), params=set(ps))
+        with pytest.raises(TypeError, match="ordered.*set"):
+            kernel(RBF([1.0] * 4), params={"length_scale": set(ps)})
+        with pytest.raises(TypeError, match="ordered.*dict"):
+            kernel(RBF([1.0] * 2), params={"length_scale": {ps[0]: 1, ps[1]: 2}})
+        with pytest.raises(TypeError, match="ordered.*generator"):
+            kernel(RBF(1.0), params=(p for p in ps[:1]))
+        with pytest.raises(TypeError, match="ordered.*float"):
+            kernel(RBF(1.0), params=1.0)
+
+    def test_a_fixed_hyperparameter_key_is_named_as_fixed(self):
+        k = ConstantKernel(1.0, "fixed") * RBF(1.0)
+        with pytest.raises(ValueError, match=r"fixed \(not sampled\) \['k1__"):
+            kernel(
+                k,
+                params={
+                    "k1__constant_value": Parameter("a"),
+                    "k2__length_scale": Parameter("b"),
+                },
+            )
+
     def test_positional_is_fine_for_one_hyperparameter_even_anisotropic(self):
         l1, l2 = Parameter("l1"), Parameter("l2")
         t = kernel(RBF(length_scale=[1.0, 1.0]), params=[l1, l2])

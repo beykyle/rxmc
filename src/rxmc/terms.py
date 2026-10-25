@@ -580,6 +580,21 @@ def kernel_param_names(kernel) -> list[str]:
     return [hp.name for hp in kernel.hyperparameters if not hp.fixed]
 
 
+def _ordered(v, what) -> list:
+    """A Parameter, list or tuple as a list; anything unordered is refused.
+
+    A set would reorder the elements of an anisotropic hyperparameter by hash.
+    """
+    if isinstance(v, Parameter):
+        return [v]
+    if not isinstance(v, (list, tuple)):
+        raise TypeError(
+            f"{what} must be a Parameter, list or tuple (ordered), got "
+            f"{type(v).__name__}"
+        )
+    return list(v)
+
+
 def _resolve_kernel_params(kernel, params) -> list:
     """``params=`` as a list of :class:`Parameter` in ``kernel.theta`` order.
 
@@ -592,13 +607,15 @@ def _resolve_kernel_params(kernel, params) -> list:
     names = [hp.name for hp in free]
     nk = sum(hp.n_elements for hp in free)
     if isinstance(params, Mapping):
-        keys = list(params)
+        fixed = [hp.name for hp in kernel.hyperparameters if hp.fixed]
         missing = [n for n in names if n not in params]
-        unknown = [k for k in keys if k not in names]
-        if missing or unknown:
+        unknown = [k for k in params if k not in names and k not in fixed]
+        given_fixed = [k for k in params if k in fixed]
+        if missing or unknown or given_fixed:
             raise ValueError(
                 f"params= keys must be the kernel's free hyperparameters {names} "
                 f"(kernel.theta order); missing {missing}, unknown {unknown}"
+                + (f", fixed (not sampled) {given_fixed}" if given_fixed else "")
             )
         out = []
         for hp in free:
@@ -610,7 +627,7 @@ def _resolve_kernel_params(kernel, params) -> list:
                     )
                 out.append(v)
             else:
-                v = list(v) if not isinstance(v, Parameter) else [v]
+                v = _ordered(v, f"params[{hp.name!r}]")
                 if len(v) != hp.n_elements:
                     raise ValueError(
                         f"params[{hp.name!r}] needs {hp.n_elements} Parameters "
@@ -618,9 +635,7 @@ def _resolve_kernel_params(kernel, params) -> list:
                     )
                 out.extend(v)
         return out
-    if isinstance(params, Parameter):
-        params = [params]
-    out = list(params)
+    out = _ordered(params, "params=")
     if len(free) > 1:
         raise TypeError(
             f"the kernel has {len(free)} free hyperparameters {names}; pass "

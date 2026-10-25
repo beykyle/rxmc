@@ -144,8 +144,14 @@ def _joint_dim(joint) -> int | None:
     return None if dim is None else int(dim)
 
 
-_LOG_2PI = float(np.log(2.0 * np.pi))
 _LOG_PI = float(np.log(np.pi))
+
+
+_FAST_FAMILIES = {
+    type(stats.norm): "norm",
+    type(stats.uniform): "uniform",
+    type(stats.hypsecant): "hypsecant",
+}
 
 
 def _fast_logpdf(dist):
@@ -153,12 +159,15 @@ def _fast_logpdf(dist):
 
     A frozen scipy ``logpdf`` costs ~100 us of argument handling per call, which
     is a large share of a cheap posterior evaluated once per parameter.  The
-    closed forms here are exact; ``hypsecant`` is also made overflow-free
-    (``log cosh`` via ``logaddexp``), where scipy's returns ``-inf`` past
-    ``|x| ~ 710``.  Anything else falls back to ``dist.logpdf``.
+    family is matched by exact type (a user distribution that calls itself
+    ``"norm"`` falls back).  ``norm`` and ``uniform`` follow scipy's operation
+    order and are bit-identical to it where it is finite; they return ``-inf``
+    instead of raising where ``z`` overflows, and ``uniform`` returns ``-inf``
+    at NaN where scipy returns NaN.  ``hypsecant`` is overflow-free (``log
+    cosh`` via ``logaddexp``) where scipy's returns ``-inf`` past ``|x| ~ 710``.
     """
-    family = getattr(getattr(dist, "dist", None), "name", None)
-    if family not in ("norm", "uniform", "hypsecant"):
+    family = _FAST_FAMILIES.get(type(getattr(dist, "dist", None)))
+    if family is None:
         return None
     try:
         _, loc, scale = dist.dist._parse_args(*dist.args, **dist.kwds)
@@ -169,11 +178,15 @@ def _fast_logpdf(dist):
         return None
     log_scale = float(np.log(scale))
     if family == "norm":
-        c = -0.5 * _LOG_2PI - log_scale
-        return lambda v: c - 0.5 * ((v - loc) / scale) ** 2
+        log_c = float(np.log(np.sqrt(2 * np.pi)))  # scipy's _norm_pdf_logC
+
+        def norm(v):
+            z = (v - loc) / scale  # float ops overflow to inf, never raise
+            return -z * z / 2.0 - log_c - log_scale
+
+        return norm
     if family == "uniform":
-        hi = loc + scale
-        return lambda v: -log_scale if loc <= v <= hi else -np.inf
+        return lambda v: -log_scale if 0.0 <= (v - loc) / scale <= 1.0 else -np.inf
     # hypsecant: pdf = sech(z) / pi;  log cosh z = logaddexp(z, -z) - log 2
     c = float(np.log(2.0)) - _LOG_PI - log_scale
 
