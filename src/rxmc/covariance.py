@@ -418,7 +418,7 @@ class StructuredCovariance:
                 d2 -= float(s @ s)
             return d2, float(logdet)
 
-    def matrix(self, ym, theta=(), entries=None):
+    def matrix(self, ym, theta=(), entries=None, check=True):
         """The dense covariance on the active rows, for display and predictives.
 
         ``entries`` restricts the sum to a subset of :attr:`entries` (the
@@ -428,16 +428,16 @@ class StructuredCovariance:
         is assembled directly, without the constant-piece cache.
 
         Raises ``ValueError`` if the matrix is not finite, naming the term when
-        one term alone is responsible.
+        one term alone is responsible; ``check=False`` returns it as is.
         """
         theta = np.asarray(theta, dtype=float)
         with np.errstate(over="ignore", invalid="ignore"):
             if entries is None:
-                pieces = self._assemble(ym, theta, check=True)
+                pieces = self._assemble(ym, theta, check=check)
             else:
-                pieces = self._pieces(entries, ym, theta, check=True)
+                pieces = self._pieces(entries, ym, theta, check=check)
             Sigma = self._dense_matrix(*pieces)
-        if not np.all(np.isfinite(Sigma)):
+        if check and not np.all(np.isfinite(Sigma)):
             raise ValueError(
                 "the covariance is not finite at this theta: every term is "
                 "finite on its own, but their sum or a low-rank product overflows"

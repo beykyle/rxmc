@@ -292,7 +292,7 @@ class Term:
         return f"Term(kind={self.kind!r}, params=({names}), on={self.on!r})"
 
 
-@dataclass(eq=False, frozen=True)
+@dataclass(eq=False, frozen=True, repr=False)
 class KernelTerm(Term):
     """A :func:`kernel` term that also carries what GP conditioning needs.
 
