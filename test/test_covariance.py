@@ -351,50 +351,110 @@ class TestNonFinite:
             for k in range(2)
         ]
 
-    def problem(self, terms, comps=None):
+    def problem(self, terms, comps=None, masks=None):
         from rxmc import Constraint, Problem
 
-        return Problem([Constraint(comps or self.comps[:1], terms=terms)])
+        c = Constraint(comps or self.comps[:1], terms=terms)
+        return Problem([c if masks is None else c.masked(masks)])
 
     def assert_no_density(self, p, theta):
         assert p.log_likelihood(theta) == -np.inf
         assert p.log_posterior(theta) == -np.inf
         assert p.chi2(theta) == np.inf
 
-    def test_overflowing_kernel_amplitude_structured_path(self):
+    def amplitude_kernel(self):
         la = Parameter("log_A", prior=stats.norm(0, 1))
-        gp = kernel(
+        return kernel(
             RBF(0.5, "fixed"), amplitude=constant_amplitude, amplitude_params=(la,)
         )
-        p = self.problem([gp])
+
+    # -- the likelihood: -inf, and no numpy warnings ---------------------------
+
+    @pytest.mark.filterwarnings("error")
+    def test_overflowing_kernel_amplitude_structured_path(self):
+        p = self.problem([self.amplitude_kernel()])
         assert not p.constraints[0].covariance.dense
         assert np.isfinite(p.log_likelihood(np.array([2.0, 0.0])))
         self.assert_no_density(p, np.array([2.0, 400.0]))  # exp(400)**2 overflows
 
+    @pytest.mark.filterwarnings("error")
     def test_overflowing_kernel_amplitude_dense_path(self):
-        la = Parameter("log_A", prior=stats.norm(0, 1))
-        gp = kernel(
-            RBF(0.5, "fixed"), amplitude=constant_amplitude, amplitude_params=(la,)
-        )
-        p = self.problem([gp], comps=self.comps)  # one kernel over both: dense
+        p = self.problem([self.amplitude_kernel()], comps=self.comps)  # dense
         assert p.constraints[0].covariance.dense
         self.assert_no_density(p, np.array([2.0, 400.0]))
 
+    @pytest.mark.filterwarnings("error")
     def test_finite_values_whose_square_overflows(self):
         # exp(400) is finite; the diagonal adds its square, which is not
         p = self.problem([noise(Parameter("log_eps", prior=stats.norm(0, 1)))])
         self.assert_no_density(p, np.array([2.0, 400.0]))
 
-    def test_parametric_term_returning_nan(self):
+    @pytest.mark.filterwarnings("error")
+    def test_overflowing_residual_on_the_woodbury_path(self):
+        # every term finite; z@z and s@s overflow and d2 = inf - inf is NaN
+        from rxmc import Comparison, Dataset, Model
+
+        m = Parameter("m", prior=stats.norm(0, 200))
+        x = np.linspace(0.0, 2.0, 6)
+        comp = Comparison(
+            Dataset(x, 2.0 * x, 0.1 * np.ones(6)),
+            Model(lambda x, m: np.exp(m) * x, [m]),
+        )
+        p = self.problem([offset(magnitude=10.0)], comps=[comp])
+        assert np.isfinite(p.log_likelihood(np.array([0.5])))
+        self.assert_no_density(p, np.array([370.0]))
+
+    def test_parametric_nan_is_zero_density_and_warns_once(self):
+        import warnings
+
         s = Parameter("s", prior=stats.norm(0, 1))
         t = Term(lambda c, s: np.sqrt(s) * np.ones(len(c)), (s,), kind="diag")
         p = self.problem([t])
         assert np.isfinite(p.log_likelihood(np.array([2.0, 0.04])))
-        with np.errstate(invalid="ignore"):
-            self.assert_no_density(p, np.array([2.0, -1.0]))
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            for _ in range(10):
+                self.assert_no_density(p, np.array([2.0, -1.0]))
+        # one named warning; numpy's per-call "invalid value in sqrt" is silenced
+        assert len(caught) == 1
+        assert issubclass(caught[0].category, RuntimeWarning)
+        assert "NaN" in str(caught[0].message) and "d0" in str(caught[0].message)
+
+    # -- construction: a constant term is checked once and named ---------------
 
     def test_constant_term_with_nan_fails_at_compile_and_names_it(self):
         bad = np.full(6, 0.1)
         bad[2] = np.nan
-        with pytest.raises(ValueError, match="non-finite.*declaration"):
+        with pytest.raises(ValueError, match="kind='diag'.*non-finite.*declaration"):
             self.problem([Term(bad, kind="diag")])
+
+    @pytest.mark.parametrize("kind", ["mode", "matrix"])
+    def test_constant_mode_or_matrix_with_nan_names_it(self, kind):
+        bad = np.full(6, 0.1) if kind == "mode" else 0.01 * np.eye(6)
+        bad[(2,) if kind == "mode" else (2, 4)] = np.nan
+        if kind == "matrix":
+            bad[4, 2] = np.nan
+        with pytest.raises(ValueError, match=f"kind='{kind}'.*non-finite"):
+            self.problem([Term(bad, kind=kind)])
+
+    def test_nan_on_a_masked_row_compiles(self):
+        bad = np.full(6, 0.1)
+        bad[2] = np.nan
+        mask = np.ones(6, bool)
+        mask[2] = False
+        p = self.problem([Term(bad, kind="diag")], masks=[mask])
+        assert np.isfinite(p.log_likelihood(np.array([2.0])))
+
+    def test_constant_square_overflow_raises_beside_a_parametric_term(self):
+        terms = [
+            Term(np.full(6, 1e200), kind="diag"),
+            noise(Parameter("log_eps", prior=stats.norm(0, 1))),
+        ]
+        with pytest.raises(ValueError, match="non-finite.*declaration"):
+            self.problem(terms)
+
+    @pytest.mark.filterwarnings("error")
+    def test_constant_mode_whose_product_overflows_raises(self):
+        # the mode column is finite; W^T W is not
+        with pytest.raises(ValueError, match="overflow when combined"):
+            self.problem([Term(np.full(6, 1e200), kind="mode")])

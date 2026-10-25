@@ -217,7 +217,7 @@ class Term:
         if self.kind == "matrix":
             if a.ndim != 2 or a.shape[0] != a.shape[1]:
                 raise ValueError(f"matrix term expects a square block, got {a.shape}")
-            if not np.allclose(a, a.T):
+            if not np.allclose(a, a.T, equal_nan=True):
                 raise ValueError("matrix term must be symmetric")
         elif a.ndim != 1:
             raise ValueError(f"{self.kind} term expects a vector, got shape {a.shape}")
