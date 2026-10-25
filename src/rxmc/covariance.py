@@ -62,15 +62,16 @@ class _SingularCovariance(ValueError):
     """
 
 
-def _chol_logdet_unchecked(Sigma):
-    """:func:`chol_logdet` without scipy's finite scan; NaN/inf propagate to logdet."""
-    L = sla.cholesky(Sigma, lower=True, check_finite=False)
-    return L, 2.0 * float(np.sum(np.log(np.diag(L))))
+def chol_logdet(Sigma, check_finite=True):
+    """Lower Cholesky factor and log-determinant of a positive-definite matrix.
 
-
-def chol_logdet(Sigma):
-    """Lower Cholesky factor and log-determinant of a positive-definite matrix."""
-    L = sla.cholesky(np.asarray(Sigma, dtype=float), lower=True)
+    ``check_finite=False`` skips scipy's scan: a non-finite ``Sigma`` then gives
+    a non-finite factor and log-determinant (or ``LinAlgError``) instead of
+    ``ValueError``.
+    """
+    L = sla.cholesky(
+        np.asarray(Sigma, dtype=float), lower=True, check_finite=check_finite
+    )
     return L, 2.0 * float(np.sum(np.log(np.diag(L))))
 
 
@@ -270,15 +271,15 @@ class StructuredCovariance:
     def _factor(self, D, U, M, X):
         """Factor the covariance; cached when constant.
 
-        Unchecked: a non-finite input gives a non-finite ``logdet`` (scipy's
-        Cholesky returns NaN/inf factors rather than raising), which the
+        Unchecked: a non-finite input gives a non-finite ``logdet`` (or a
+        ``LinAlgError``, depending on where LAPACK meets it), both of which the
         compiled constraint reads as zero density.
         """
         if self.is_constant and self._cache is not None:
             return self._cache
         try:
             if self.dense:
-                L, logdet = _chol_logdet_unchecked(self._dense_matrix(D, U, M, X))
+                L, logdet = chol_logdet(self._dense_matrix(D, U, M, X), False)
                 factors = ("dense", L, logdet)
             else:
                 blocks = []
@@ -291,7 +292,7 @@ class StructuredCovariance:
                     B = np.diag(D[pos])
                     if M[b] is not None:
                         B = B + M[b]
-                    L, ld = _chol_logdet_unchecked(B)
+                    L, ld = chol_logdet(B, False)
                     logdet += ld
                     W = (
                         sla.solve_triangular(
@@ -307,7 +308,7 @@ class StructuredCovariance:
                     Ws.append(W)
                 if U:
                     W = np.vstack(Ws) if Ws else np.zeros((0, len(U)))
-                    Ls, lds = _chol_logdet_unchecked(np.eye(len(U)) + W.T @ W)
+                    Ls, lds = chol_logdet(np.eye(len(U)) + W.T @ W, False)
                     logdet += lds
                 else:
                     Ls = None

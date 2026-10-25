@@ -563,10 +563,6 @@ def _kernel_params(kernel, prefix) -> list:
     return params
 
 
-def _n_free_elements(kernel) -> int:
-    return sum(hp.n_elements for hp in kernel.hyperparameters if not hp.fixed)
-
-
 def kernel_param_names(kernel) -> list[str]:
     """The names of a kernel's free hyperparameters, in ``kernel.theta`` order.
 
@@ -605,7 +601,7 @@ def _resolve_kernel_params(kernel, params) -> list:
     """
     free = [hp for hp in kernel.hyperparameters if not hp.fixed]
     names = [hp.name for hp in free]
-    nk = sum(hp.n_elements for hp in free)
+    nk = kernel.n_dims
     if isinstance(params, Mapping):
         fixed = [hp.name for hp in kernel.hyperparameters if hp.fixed]
         missing = [n for n in names if n not in params]
@@ -706,7 +702,7 @@ def kernel(
     on : optional
         See :class:`Term`.
     """
-    nk = _n_free_elements(kernel)
+    nk = kernel.n_dims  # free hyperparameter elements (len(kernel.theta))
     if params is None:
         kparams = _kernel_params(kernel, prefix)
     else:
