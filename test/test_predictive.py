@@ -652,3 +652,18 @@ class TestInvalidRows:
         for given in (None, Problem([fit])):
             lp = heldout_log_predictive(held, samples, given=given)
             assert np.isfinite(lp[0]) and lp[1] == -np.inf
+
+    def test_matrix_raises_when_only_a_product_overflows(self):
+        from rxmc import Constraint, Problem
+        from rxmc.terms import offset
+
+        log_w = Parameter("log_w", prior=stats.norm(0, 1))
+        p = Problem([Constraint([self.comp], terms=[offset(log_w)])])
+        # the mode exp(360) ~ 1e156 is finite; its outer product is not
+        with pytest.raises(ValueError, match="low-rank product overflows"):
+            p.constraints[0].matrix(np.array([2.0, 360.0]))
+
+    def test_predictive_draws_raise_on_a_bad_prediction_with_a_finite_covariance(self):
+        samples = np.vstack([self.good, [np.inf, np.log(0.1)]])
+        with pytest.raises(ValueError, match="sample row 1.*not finite"):
+            predictive_draws(self.p, samples, rng=0)
