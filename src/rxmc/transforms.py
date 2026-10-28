@@ -15,7 +15,10 @@ three roles:
   (e.g. angle to momentum transfer).
 
 Anything callable is accepted wherever a ``Transform`` is expected and is wrapped
-as a parameter-free transform.  Transforms compose with ``|``: ``(f | g)(a)`` is
+as a parameter-free transform.  Numpy input (the data) is passed through as
+numpy, so a coordinate transform of the data alone may use numpy or scipy;
+anything applied to a prediction or a parameter is traced and needs
+``jax.numpy``.  Transforms compose with ``|``: ``(f | g)(a)`` is
 ``g(f(a))``, parameters concatenated in that order.
 """
 
@@ -25,6 +28,7 @@ from typing import Callable, Sequence
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from .params import Parameter
 
@@ -104,7 +108,10 @@ class Transform:
                 f"transform {self.name!r} expects {self.n_params} value(s), "
                 f"got {len(values)}"
             )
-        return jnp.asarray(self.fn(jnp.asarray(a, dtype=float), *values))
+        # data (numpy) stay numpy, so a parameter-free transform of the data
+        # alone may use numpy even under jit; traced input stays traced
+        a = a if isinstance(a, jax.Array) else np.asarray(a, dtype=float)
+        return self.fn(a, *values)
 
     def derivative(self, a, *values):
         """Elementwise derivative :math:`\\partial fn/\\partial a` at ``a``.

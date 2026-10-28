@@ -322,8 +322,8 @@ class KernelTerm(Term):
     amplitude : callable or array or None
         The amplitude as passed to :func:`kernel`.
     jitter : float
-        The diagonal nugget of every kernel block, relative to the block's mean
-        variance.
+        The diagonal nugget of every kernel block, relative to the kernel's
+        mean variance before the amplitude scales it.
     """
 
     build: Any = None
@@ -609,9 +609,11 @@ def kernel(
     amplitude_params : sequence of Parameter, optional
         Parameters consumed by ``amplitude``.
     jitter : float, optional
-        ``jitter * mean(diag K)`` is added to the diagonal after scaling, for
-        numerical stability; relative, so it never dominates a small variance
-        (a cross section in b/sr).
+        ``jitter * mean(diag K)`` is added to the kernel's diagonal *before*
+        the amplitude scales it, for numerical stability: each point's nugget
+        is then that fraction of its own variance, so it never dominates a
+        small variance (a cross section in b/sr, or the small end of a growing
+        amplitude).
     on : optional
         See :class:`Term`.
     """
@@ -631,12 +633,13 @@ def kernel(
     def fn(c, *values):
         X = as_2d(c.x)
         K = build(*values[:nk])(X, X)
-        if amplitude is not None:
-            a = amplitude(c, *values[nk:]) if callable(amplitude) else amplitude
-            a = jnp.broadcast_to(jnp.asarray(a, dtype=float), (len(c),))
-            K = jnp.outer(a, a) * K
         nugget = jitter * jnp.maximum(jnp.mean(jnp.diag(K)), np.finfo(float).tiny)
-        return K + nugget * jnp.eye(len(c))
+        K = K + nugget * jnp.eye(len(c))
+        if amplitude is None:
+            return K
+        a = amplitude(c, *values[nk:]) if callable(amplitude) else amplitude
+        a = jnp.broadcast_to(jnp.asarray(a, dtype=float), (len(c),))
+        return jnp.outer(a, a) * K
 
     return KernelTerm(
         fn,

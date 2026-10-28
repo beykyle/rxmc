@@ -351,6 +351,15 @@ class TestKernel:
         ):
             kernel(build, params)
 
+    def test_jitter_is_relative_to_each_points_own_variance(self):
+        """The nugget is added before the amplitude scales the kernel, so a
+        growing amplitude does not over-nugget its small end."""
+        x = np.linspace(0.0, 1.0, 5)
+        a = np.exp(4.0 * x)
+        far = tinygp.kernels.ExpSquared(scale=1e-3)  # off-diagonal ~ 0
+        K = np.asarray(kernel(far, amplitude=a, jitter=1e-3).value(x, x))
+        np.testing.assert_allclose(np.diag(K), (1.0 + 1e-3) * a**2)
+
     def test_builder_params_are_the_terms_params(self):
         build, params = rbf()
         t = kernel(build, params)
