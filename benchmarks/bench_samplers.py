@@ -7,7 +7,10 @@ JAX rxmc only (NUTS needs the gradient)::
 Each sampler runs a fixed budget from the prior on the same problem:
 
 * emcee: ``max(32, 2 ndim + 2)`` walkers on ``log_posterior_batch`` with
-  ``vectorize=True``, the first third discarded, walkers taken as chains;
+  ``vectorize=True``, the first third discarded, walkers taken as chains
+  (they are not independent: each move uses the other walkers, so the ESS
+  is optimistic); emcee's own autocorrelation time ``tau`` is recorded too,
+  with whether the kept chain is longer than the ``50 tau`` emcee asks for;
 * dynesty: ``rwalk`` with 200 live points to ``dlogz = 0.5``, its effective
   sample size Kish's ``(sum w)^2 / sum w^2`` of the importance weights;
 * NUTS: blackjax's window adaptation, then draws, on
@@ -75,9 +78,14 @@ def run_emcee(problem, steps, seed=0):
     sampler.random_state = np.random.RandomState(seed).get_state()
     sampler.run_mcmc(problem.sample_prior(n_walkers, rng=seed), steps, progress=False)
     wall = time.perf_counter() - t0
-    chains = np.swapaxes(sampler.get_chain(discard=steps // 3), 0, 1)
-    out = _summary(chains, wall, n_walkers * steps)
-    out.update(walkers=n_walkers, steps=steps)
+    kept = sampler.get_chain(discard=steps // 3)
+    out = _summary(np.swapaxes(kept, 0, 1), wall, n_walkers * steps)
+    # emcee's own integrated autocorrelation time, in steps; it trusts the
+    # estimate only for a chain longer than 50 tau
+    tau = float(np.max(sampler.get_autocorr_time(discard=steps // 3, quiet=True)))
+    out.update(
+        walkers=n_walkers, steps=steps, tau=tau, tau_reliable=len(kept) > 50 * tau
+    )
     return out
 
 
@@ -168,37 +176,36 @@ def agreement(results):
     return worst
 
 
+def _row(v):
+    """``(min ESS, ESS/s, R-hat, tau)`` as table text; ESS only when converged."""
+    ok = converged(v)
+    rhat = v.get("max_rhat")
+    rhat = "—" if rhat is None else f"{rhat:.3f}" + ("" if ok else " ✗")
+    tau = ""
+    if "tau" in v:
+        tau = f"{v['tau']:.0f}" + ("" if v["tau_reliable"] else " (< 50 τ)")
+    ess = f"{v['min_ess']:.0f}" if ok else "—"
+    rate = f"{v['ess_per_s']:.2f}" if ok else "—"
+    return ess, rate, rhat, tau
+
+
 def report(results, markdown=False):
     """Print the comparison table of a run."""
+    head = ("problem", "sampler", "wall time", "evaluations", "min ESS", "ESS/s")
+    head += ("R-hat", "emcee τ (steps)")
     if markdown:
-        print(
-            "| problem | sampler | wall time | evaluations | min ESS | ESS/s | R-hat |"
-        )
-        print("|---|---|---|---|---|---|---|")
+        print("| " + " | ".join(head) + " |")
+        print("|" + "---|" * len(head))
     for name, d in results.items():
         if not markdown:
             print(f"{name} ({d['ndim']} parameters)")
         for sampler, v in d["samplers"].items():
-            rhat = v.get("max_rhat")
-            flag = "" if converged(v) else "  not converged"
+            cells = (f"{name} ({d['ndim']})", sampler, f"{v['wall_s']:.0f} s")
+            cells += (str(v["evaluations"]), *_row(v))
             if markdown:
-                ess = f"{v['min_ess']:.0f}" if converged(v) else "—"
-                rate = f"{v['ess_per_s']:.2f}" if converged(v) else "—"
-                rh = (
-                    "—"
-                    if rhat is None
-                    else f"{rhat:.3f}" + ("" if converged(v) else " ✗")
-                )
-                print(
-                    f"| {name} ({d['ndim']}) | {sampler} | {v['wall_s']:.0f} s | "
-                    f"{v['evaluations']} | {ess} | {rate} | {rh} |"
-                )
+                print("| " + " | ".join(cells) + " |")
             else:
-                print(
-                    f"  {sampler:8s} {v['wall_s']:8.1f} s  {v['evaluations']:9d} evals  "
-                    f"min ESS {v['min_ess']:8.0f}  ESS/s {v['ess_per_s']:8.2f}  "
-                    f"R-hat {rhat if rhat is not None else float('nan'):.3f}{flag}"
-                )
+                print("  " + "  ".join(f"{c:>10s}" for c in cells[1:]))
         if not markdown:
             print(f"  converged means agree to {agreement(d['samplers']):.1f} MCSE")
 
@@ -209,19 +216,29 @@ def main(argv=None):
     ap.add_argument("--problems", nargs="*", default=list(BUDGETS))
     ap.add_argument("--report", type=Path, help="print a saved run and exit")
     ap.add_argument("--markdown", action="store_true")
+    ap.add_argument(
+        "--only",
+        choices=["emcee", "dynesty", "NUTS"],
+        help="re-run one sampler into the saved --out file",
+    )
     args = ap.parse_args(argv)
     if args.report:
         return report(json.loads(args.report.read_text())["problems"], args.markdown)
+    saved = json.loads(args.out.read_text())["problems"] if args.only else {}
     results = {}
     for name in args.problems:
         problem, _ = PROBLEMS[name]()
         b = BUDGETS[name]
-        print(f"{name} ({problem.ndim} parameters)", flush=True)
-        r = {
-            "emcee": run_emcee(problem, b["emcee"]),
-            "dynesty": run_dynesty(problem),
-            "NUTS": run_nuts(problem, b["warmup"], b["draws"]),
+        runs = {
+            "emcee": lambda: run_emcee(problem, b["emcee"]),
+            "dynesty": lambda: run_dynesty(problem),
+            "NUTS": lambda: run_nuts(problem, b["warmup"], b["draws"]),
         }
+        r = dict(saved[name]["samplers"]) if args.only else {}
+        for sampler, run in runs.items():
+            if sampler == args.only or not args.only:
+                r[sampler] = run()
+        r = {k: r[k] for k in runs}
         results[name] = dict(ndim=problem.ndim, names=problem.names, samplers=r)
         results[name]["max_mean_difference_in_mcse"] = agreement(r)
         report({name: results[name]})

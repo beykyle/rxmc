@@ -679,34 +679,42 @@ wave up to `lmax` (elastic agrees to 1e-6).
 (blackjax, on `log_posterior_unconstrained`) from the prior on four of the
 problems, each to a fixed budget, and scores them by the smallest bulk
 effective sample size over the parameters per second of wall time,
-compilation included.  A chain with split R-hat above 1.01 has not
-converged, and its ESS is not reported (✗).
+compilation included.  A chain with split
+[R-hat](https://en.wikipedia.org/wiki/Gelman-Rubin_statistic) above 1.01 has
+not converged, and its ESS is not reported (✗).  emcee's walkers are taken
+as chains, which overstates its ESS (each move uses the other walkers), so
+emcee's own integrated autocorrelation time τ is shown too, flagged where the
+kept chain is shorter than the 50 τ emcee asks for.
 
-| problem | sampler | wall time | evaluations | min ESS | ESS/s | R-hat |
-|---|---|---|---|---|---|---|
-| linear (2) | emcee | 2 s | 96000 | — | — | 1.011 ✗ |
-| linear (2) | dynesty | 13 s | 36235 | 613 | 46.22 | — |
-| linear (2) | NUTS | 6 s | 61527 | 798 | 143.01 | 1.004 |
-| gp (4) | emcee | 19 s | 96000 | — | — | 1.048 ✗ |
-| gp (4) | dynesty | 35 s | 58979 | 1242 | 35.34 | — |
-| gp (4) | NUTS | 180 s | 195402 | — | — | 1.066 ✗ |
-| elastic (5) | emcee | 154 s | 48000 | — | — | 4.604 ✗ |
-| elastic (5) | dynesty | 255 s | 91558 | 957 | 3.75 | — |
-| elastic (5) | NUTS | 316 s | 49989 | 753 | 2.39 | 1.001 |
-| hierarchy (33) | emcee | 12 s | 408000 | — | — | 1.130 ✗ |
-| hierarchy (33) | dynesty | 1757 s | 783617 | 2442 | 1.39 | — |
-| hierarchy (33) | NUTS | 28 s | 215227 | 231 | 8.20 | 1.004 |
+| problem | sampler | wall time | evaluations | min ESS | ESS/s | R-hat | emcee τ (steps) |
+|---|---|---|---|---|---|---|---|
+| linear (2) | emcee | 2 s | 96000 | — | — | 1.011 ✗ | 30 |
+| linear (2) | dynesty | 13 s | 36235 | 613 | 46.22 | — |  |
+| linear (2) | NUTS | 6 s | 61527 | 798 | 143.01 | 1.004 |  |
+| gp (4) | emcee | 20 s | 96000 | — | — | 1.048 ✗ | 84 (< 50 τ) |
+| gp (4) | dynesty | 35 s | 58979 | 1242 | 35.34 | — |  |
+| gp (4) | NUTS | 180 s | 195402 | — | — | 1.066 ✗ |  |
+| elastic (5) | emcee | 158 s | 48000 | — | — | 4.604 ✗ | 80 (< 50 τ) |
+| elastic (5) | dynesty | 255 s | 91558 | 957 | 3.75 | — |  |
+| elastic (5) | NUTS | 316 s | 49989 | 753 | 2.39 | 1.001 |  |
+| hierarchy (33) | emcee | 12 s | 408000 | — | — | 1.130 ✗ | 518 (< 50 τ) |
+| hierarchy (33) | dynesty | 1757 s | 783617 | 2442 | 1.39 | — |  |
+| hierarchy (33) | NUTS | 28 s | 215227 | 231 | 8.20 | 1.004 |  |
 
 Every converged run agrees with the others to 2.3 Monte Carlo standard
-errors or better.  NUTS converged wherever it was started near the
-posterior's bulk, and its advantage grows with the dimension: on the
-33-parameter hierarchy it is six times dynesty's rate in a sixtieth of the
-time.  On the GP problem, started from the prior, it meets the funnel
-between a log variance pressed against its bound and the length scale that
-then goes unconstrained, and does not mix; from the MAP it does
-(`gradient_based_sampling`).  emcee converged on none of these budgets: in
-five or more dimensions its stretch moves need far longer chains.  dynesty
-is the robust default and the only one of the three to give the evidence.
+errors or better.  NUTS, started from the prior like the others, converged
+everywhere but the GP problem, and its advantage grows with the dimension:
+on the 33-parameter hierarchy it is six times dynesty's rate in a sixtieth
+of the time.  On the GP problem it meets a
+[funnel](https://mc-stan.org/docs/stan-users-guide/reparameterization.html):
+a log variance pressed against its bound leaves the length scale
+unconstrained, and the chains do not mix.  Started near the mode, NUTS
+mixes on the related GP of `gradient_based_sampling`, and on the optical
+model there, whose local modes defeat chains started from the prior.  emcee
+converged on none of these budgets (the line only marginally misses, R-hat
+1.011 with τ = 30 steps); its own τ says the same, from 84 steps on the GP to
+518 on the hierarchy, where 50 τ would be 26 000 steps.  dynesty is the
+robust default and the only one of the three to give the evidence.
 
 ## 4. Capability map
 
@@ -792,7 +800,7 @@ Two tiers, chosen per assertion.
 Three index tests keep the documents honest: `test_recipes_index.py`
 (one file per `## NN.` heading, each quoting its recipe; the recipe-18
 legend equal to the tests' legend), `test_notebooks_index.py` (each
-notebook cites the recipes of the design's table, all ten exist), and
+notebook cites the recipes of the design's table, all eleven exist), and
 `test_regression.py` (the 0.x pins).  `test/helpers.py` holds the dense
 references and `STUDY_LEGEND`, the labelled error-model forms of recipe
 18 built against hand-written matrices.
