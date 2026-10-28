@@ -758,7 +758,7 @@ Two tiers, chosen per assertion.
 Three index tests keep the documents honest: `test_recipes_index.py`
 (one file per `## NN.` heading, each quoting its recipe; the recipe-18
 legend equal to the tests' legend), `test_notebooks_index.py` (each
-notebook cites the recipes of the design's table, all nine exist), and
+notebook cites the recipes of the design's table, all ten exist), and
 `test_regression.py` (the 0.x pins).  `test/helpers.py` holds the dense
 references and `STUDY_LEGEND`, the labelled error-model forms of recipe
 18 built against hand-written matrices.
@@ -767,20 +767,20 @@ references and `STUDY_LEGEND`, the labelled error-model forms of recipe
 
 The notebooks in `examples/` each name the recipes they teach in their
 first cell.  Runtimes are wall times on an eight-core laptop, one kernel at
-a time unless noted.
+a time unless noted (`pytest --nbmake`, JAX rxmc on jitr's jax-core branch).
 
 | notebook | recipes | driver | content | runtime |
 |---|---|---|---|---|
-| `linear_calibration` | 1, 2, 17, 40 | emcee | the whole workflow on a line with an inferred constant noise; prior and posterior predictive on a new grid with `grid_draws`, the model's band against a measurement's, and why reported per-point errors cannot go there; coverage of both | 23 s |
-| `error_models` | 2, 4, 19 | emcee | the covariance ladder on one comparison, the Peelle matrix as a fixed term, offsets known, free and ignored | 85 s |
-| `sharing_error_models` | 5 | dynesty | two experiments with opposite normalisation defects: sharing a parameter, a mode per dataset, one mode spanning both, and the assembled covariance seen directly; one panel per error model | 102 s |
-| `normalization_and_covariance_structure` | 3, 4, 6, 27 | dynesty | six treatments of four experiments' normalisations on a cubic with a free, non-zero constant term, one of them badly mis-quoted and alone in its range; Peelle's puzzle in the two-point case it was found in; a gallery of covariance structures from `matrix(theta)` | 1003 s |
-| `gp_discrepancy` | 7 | emcee, dynesty | mean-zero discrepancies with amplitudes growing in x: four rungs on a toy line, three on n+⁴⁰Ca missing its surface absorption; the three predictive objects (model plus discrepancy, plus experimental, and the conditioned regression it does not use), with the equations | 483 s |
-| `robust_likelihoods` | 9, 12, 39 | emcee | Student-t versus Gaussian on three gross outliers; the iterative rejection loop, including the round that over-rejects and recovers; tempering a correctly specified 200-point line, with the prior on the corner plot and the predictive coverage | 80 s |
-| `error_scale_and_usu` | 34 | emcee | a global scale on the reported errors under both likelihoods; a USU offset on the technique we suspect | 90 s |
-| `local_optical_model_calibration` | 10, 14, 15, 16, 17, 18, 19, 21, 40 | dynesty | EXFOR O1199007, p + ⁴⁰Ca at 35 MeV, which quotes no systematics, read from a plain dict: the unit contract; log-space residuals with the jitr α+Ca error model (reported statistics plus inferred point-to-point and common relative errors, as custom terms) against linear residuals with the reported errors alone, compared by evidence with the Jacobian, by predictives for the potential alone (on a grid) and with every error term (at the measured angles), and by three coverage curves each; the singular guard | 929 s |
-| `alpha_ca_error_model_comparison` | 7, 10, 13, 17, 18, 19, 40 | dynesty | real ⁴⁴Ca(α,α) data without reported errors, in log space with the jitr error model (inferred point-to-point and common relative errors as custom terms); a Matérn GP in angle, its length-scale prior spanning one point spacing to the full range, with a constant amplitude against one growing as an inferred power of q, by evidence; the potential alone and the full predictive on a fine grid, their coverage, and the mean-zero envelope that says *where* the potential fails | 426 s |
-| `hierarchical_calibration` | 22, 24, 30, 35, 38 | dynesty | eight schools, with the shrinkage explained rather than assumed; a hierarchy on the physics parameters recovering the evidence a misspecified energy dependence threw away, scored in sample and at a held-out energy | 748 s |
+| `linear_calibration` | 1, 2, 17, 40 | emcee | the whole workflow on a line with an inferred constant noise; prior and posterior predictive on a new grid with `grid_draws`, the model's band against a measurement's, and why reported per-point errors cannot go there; coverage of both | 10 s |
+| `error_models` | 2, 4, 19 | emcee | the covariance ladder on one comparison, the Peelle matrix as a fixed term, offsets known, free and ignored | 13 s |
+| `sharing_error_models` | 5 | dynesty | two experiments with opposite normalisation defects: sharing a parameter, a mode per dataset, one mode spanning both, and the assembled covariance seen directly; one panel per error model | 80 s |
+| `normalization_and_covariance_structure` | 3, 4, 6, 27 | dynesty | six treatments of four experiments' normalisations on a cubic with a free, non-zero constant term, one of them badly mis-quoted and alone in its range; Peelle's puzzle in the two-point case it was found in; a gallery of covariance structures from `matrix(theta)` | 445 s |
+| `gp_discrepancy` | 7 | emcee, dynesty | mean-zero discrepancies with amplitudes growing in x: four rungs on a toy line, three on n+⁴⁰Ca missing its surface absorption; the three predictive objects (model plus discrepancy, plus experimental, and the conditioned regression it does not use), with the equations | 255 s |
+| `robust_likelihoods` | 9, 12, 39 | emcee | Student-t versus Gaussian on three gross outliers; the iterative rejection loop, including the round that over-rejects and recovers; tempering a correctly specified 200-point line, with the prior on the corner plot and the predictive coverage | 23 s |
+| `error_scale_and_usu` | 34 | emcee | a global scale on the reported errors under both likelihoods; a USU offset on the technique we suspect | 16 s |
+| `local_optical_model_calibration` | 10, 14, 15, 16, 17, 18, 19, 21, 40 | dynesty | EXFOR O1199007, p + ⁴⁰Ca at 35 MeV, which quotes no systematics, read from a plain dict: the unit contract; log-space residuals with the jitr α+Ca error model (reported statistics plus inferred point-to-point and common relative errors, as custom terms) against linear residuals with the reported errors alone, compared by evidence with the Jacobian, by predictives for the potential alone (on a grid) and with every error term (at the measured angles), and by three coverage curves each; the singular guard | 421 s |
+| `alpha_ca_error_model_comparison` | 7, 10, 13, 17, 18, 19, 40 | dynesty | real ⁴⁴Ca(α,α) data without reported errors, in log space with the jitr error model (inferred point-to-point and common relative errors as custom terms); a Matérn GP in angle, its length-scale prior spanning one point spacing to the full range, with a constant amplitude against one growing as an inferred power of q, by evidence; the potential alone and the full predictive on a fine grid, their coverage, and the mean-zero envelope that says *where* the potential fails | 160 s |
+| `hierarchical_calibration` | 22, 24, 30, 35, 38 | dynesty | eight schools, with the shrinkage explained rather than assumed; a hierarchy on the physics parameters recovering the evidence a misspecified energy dependence threw away, scored in sample and at a held-out energy | 767 s |
 
 **`hierarchical_calibration` in detail.**  The truth is
 `y = a0(E) + a1(E) x + a2(E) x²`, measured by seven synthetic datasets at
@@ -819,11 +819,11 @@ docs/               this document, recipes.md, examples.rst, api.rst, groundup_d
 Runtime dependencies: `numpy`, `scipy`, `jax`, `tinygp`, `jitr` (jax-core
 branch) and `exfor-tools`.  Importing `rxmc` turns on `jax_enable_x64` for
 the process.
-Extras: `examples` (emcee, dynesty, corner, matplotlib, scikit-learn,
-dill, jupyter, ipykernel, tqdm), `validation` (examples plus pytest,
-nbmake, nbqa, ruff, black, isort, build), `docs` (sphinx, the pydata
-theme, myst-nb).  Python 3.12 or later.  Kernels are tinygp; scikit-learn
-stays in the extras only until the notebooks are ported.
+Extras: `examples` (emcee, dynesty, corner, matplotlib, dill, jupyter,
+ipykernel, tqdm), `validation` (examples plus pytest, nbmake, nbqa, ruff,
+black, isort, build, and scikit-learn, which the tests use as an
+independent reference for the kernels), `docs` (sphinx, the pydata theme,
+myst-nb).  Python 3.12 or later.
 
 ## 8. Open questions and non-goals
 

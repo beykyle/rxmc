@@ -16,7 +16,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 EXAMPLES = ROOT / "examples"
 RECIPES = ROOT / "docs" / "recipes.md"
 
-# design document section 9, item 8: the nine notebooks and their recipes
+# design document section 9, item 8: the ten notebooks and their recipes
 NOTEBOOKS = {
     "linear_calibration": {1, 2, 17, 40},
     "error_models": {2, 4, 19},
