@@ -11,7 +11,10 @@ emcee, dynesty and ``black-box-bayes`` need: ``ndim``, ``names``,
 ``log_prior``, ``log_likelihood``, ``log_posterior``, ``prior_transform`` and
 ``sample_prior``, and what a gradient-based sampler or optimiser needs:
 ``grad_log_posterior``, ``value_and_grad_log_posterior`` and
-``hessian_log_posterior``.
+``hessian_log_posterior``.  ``log_posterior_unconstrained`` is the same
+density on ``R^ndim`` (bounded parameters mapped through ``log`` or
+``logit``; ``to_theta`` and ``to_unconstrained`` convert), for HMC/NUTS,
+whose trajectories cannot cross the ``-inf`` wall at a bound.
 
 The densities are written in ``jax.numpy`` and compiled with ``jax.jit`` once
 per problem, so ``jax.grad``, ``jax.hessian`` and ``jax.vmap`` work through
@@ -746,6 +749,12 @@ class Problem:
         self.index.check_names_unique()
         self._prior = _Prior(self.index, self.priors)
         self._weighted = [(c.weight, c) for c in self.constraints if c.weight != 0.0]
+        # which slots the unconstrained map sends through exp (one finite bound)
+        # or a scaled sigmoid (two); static, so the map traces to fixed ops
+        lo, hi = self.bounds.T
+        self._lo_only = np.flatnonzero(np.isfinite(lo) & ~np.isfinite(hi))
+        self._hi_only = np.flatnonzero(~np.isfinite(lo) & np.isfinite(hi))
+        self._both = np.flatnonzero(np.isfinite(lo) & np.isfinite(hi))
         self._jit()
 
     def _jit(self):
@@ -757,6 +766,9 @@ class Problem:
         self._vg_j = jax.jit(jax.value_and_grad(self._log_posterior_impl))
         self._hess_j = jax.jit(jax.hessian(self._log_posterior_impl))
         self._batch_j = jax.jit(jax.vmap(self._log_posterior_impl))
+        self._to_theta_j = jax.jit(lambda z: self._to_theta_impl(z)[0])
+        self._to_z_j = jax.jit(self._to_unconstrained_impl)
+        self._lpu_j = jax.jit(self._log_posterior_unconstrained_impl)
 
     def __getstate__(self):
         state = self.__dict__.copy()
@@ -862,6 +874,63 @@ class Problem:
     def hessian_log_posterior(self, theta) -> np.ndarray:
         """The ``(ndim, ndim)`` Hessian of :meth:`log_posterior` (e.g. Laplace)."""
         return np.asarray(self._hess_j(self._theta(theta)))
+
+    # -- the unconstrained space ----------------------------------------------
+
+    def _to_theta_impl(self, z):
+        """``(theta, log|d theta / d z|)``: ``exp`` away from one finite bound,
+        a scaled sigmoid between two, the identity otherwise."""
+        lo, hi = self.bounds.T
+        a, b, c = self._lo_only, self._hi_only, self._both
+        z = jnp.asarray(z, dtype=float)
+        theta = z.at[a].set(lo[a] + jnp.exp(z[a]))
+        theta = theta.at[b].set(hi[b] - jnp.exp(z[b]))
+        width = hi[c] - lo[c]
+        theta = theta.at[c].set(lo[c] + width * jax.nn.sigmoid(z[c]))
+        log_jac = (
+            jnp.sum(z[a])
+            + jnp.sum(z[b])
+            + jnp.sum(
+                np.log(width) + jax.nn.log_sigmoid(z[c]) + jax.nn.log_sigmoid(-z[c])
+            )
+        )
+        return theta, log_jac
+
+    def _to_unconstrained_impl(self, theta):
+        lo, hi = self.bounds.T
+        a, b, c = self._lo_only, self._hi_only, self._both
+        theta = jnp.asarray(theta, dtype=float)
+        z = theta.at[a].set(jnp.log(theta[a] - lo[a]))
+        z = z.at[b].set(jnp.log(hi[b] - theta[b]))
+        return z.at[c].set(
+            jax.scipy.special.logit((theta[c] - lo[c]) / (hi[c] - lo[c]))
+        )
+
+    def _log_posterior_unconstrained_impl(self, z):
+        theta, log_jac = self._to_theta_impl(z)
+        return self._log_posterior_impl(theta) + log_jac
+
+    def to_theta(self, z):
+        """Map a point of ``R^ndim`` into the bounds (see
+        :meth:`log_posterior_unconstrained`)."""
+        return _host(self._to_theta_j(self._theta(z)))
+
+    def to_unconstrained(self, theta):
+        """The inverse of :meth:`to_theta`, for ``theta`` strictly inside the bounds."""
+        return _host(self._to_z_j(self._theta(theta)))
+
+    def log_posterior_unconstrained(self, z) -> float:
+        """:meth:`log_posterior` at ``to_theta(z)`` plus its log-Jacobian.
+
+        The density of ``z = to_unconstrained(theta)``, finite on all of
+        ``R^ndim`` where the posterior is: a parameter with one finite bound
+        is sampled as the log of its distance from it, one with two as the
+        logit of its position between them.  Gradient samplers (HMC/NUTS,
+        recipe 41) need this, because their trajectories cannot cross the
+        ``-inf`` wall at a bound.  A float on a concrete ``z``, the traced
+        value under JAX.
+        """
+        return _host(self._lpu_j(self._theta(z)))
 
     def log_jacobian(self) -> float:
         """Sum of the constraints' comparison-space log-Jacobians, each times its

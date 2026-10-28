@@ -320,3 +320,57 @@ def test_bounded_custom_joint_has_a_finite_gradient_out_of_bounds():
     assert np.all(jax.grad(p.log_prior)(out) == 0.0)
     assert np.all(p.grad_log_posterior(out) == 0.0)
     assert np.isfinite(p.log_posterior([2.0, 1.0]))
+
+
+def four_bound_kinds():
+    """One parameter per kind of bound: none, below, between, above."""
+    params = [
+        Parameter("free", prior=stats.norm(0, 1)),
+        Parameter("pos", prior=stats.norm(1, 1), bounds=(0.0, np.inf)),
+        Parameter("box", bounds=(-1.0, 2.0)),
+        Parameter("neg", prior=stats.norm(0, 1), bounds=(-np.inf, 0.5)),
+    ]
+    model = Model(lambda x, a, b, c, d: a * x + b + c + d, params)
+    return Problem([Constraint([Comparison(data(n=5), model)])])
+
+
+def test_the_unconstrained_map_round_trips_with_its_jacobian():
+    problem = four_bound_kinds()
+    theta = np.array([0.3, 0.7, 0.4, -0.2])
+    z = problem.to_unconstrained(theta)
+    np.testing.assert_allclose(problem.to_theta(z), theta, rtol=1e-12)
+    J = jax.jacfwd(lambda z: problem._to_theta_impl(z)[0])(z)
+    _, log_jac = problem._to_theta_impl(z)
+    assert log_jac == pytest.approx(np.log(abs(np.linalg.det(J))))
+    assert problem.log_posterior_unconstrained(z) == pytest.approx(
+        problem.log_posterior(theta) + log_jac
+    )
+    np.testing.assert_allclose(
+        jax.grad(problem.log_posterior_unconstrained)(z),
+        fd_grad(problem.log_posterior_unconstrained, z),
+        rtol=1e-5,
+    )
+    # finite, with a finite gradient, far out in every direction
+    far = np.array([30.0, -40.0, 50.0, 60.0])
+    assert np.isfinite(problem.log_posterior_unconstrained(far))
+    assert np.all(np.isfinite(jax.grad(problem.log_posterior_unconstrained)(far)))
+
+
+@pytest.mark.parametrize("bounds", [(0.0, np.inf), (-1.0, 2.0), (-np.inf, 0.5)])
+def test_the_unconstrained_density_has_the_bounded_densitys_mass(bounds):
+    from scipy.integrate import quad
+
+    t = Parameter("t", prior=stats.norm(0.2, 1.0), bounds=bounds)
+    problem = Problem(
+        [Constraint([Comparison(data(n=3), Model(lambda x, t: t * x, [t]))])]
+    )
+    peak = max(
+        problem.log_posterior_unconstrained([z]) for z in np.linspace(-5, 5, 201)
+    )
+
+    def mass(f, lo, hi):
+        return quad(lambda v: np.exp(f([v]) - peak), lo, hi, limit=200)[0]
+
+    bounded = mass(problem.log_posterior, *bounds)
+    free = mass(problem.log_posterior_unconstrained, -np.inf, np.inf)
+    assert free == pytest.approx(bounded, rel=1e-6)
