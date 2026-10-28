@@ -89,7 +89,7 @@ def set_up_solver(
     wavelengths_beyond_range: float = 2.0,
     zeros_per_node: int = 5,
 ):
-    """Set up a ``jitr`` differential workspace for a reaction at one energy.
+    """Set up a ``jitr`` workspace for a reaction at one energy.
 
     Parameters
     ----------

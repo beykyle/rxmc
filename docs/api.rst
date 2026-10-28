@@ -52,6 +52,7 @@ Covariance terms
    rxmc.terms.proportional_error
    rxmc.terms.systematic
    rxmc.terms.kernel
+   rxmc.terms.kernel_params
    rxmc.terms.ones
    rxmc.terms.ym
    rxmc.terms.averaging
@@ -135,3 +136,29 @@ Units
 
    rxmc.units.parse_unit
    rxmc.units.check_angle_grid
+
+Module overviews
+----------------
+
+The rules each module enforces, as its docstring states them.
+
+The compile step
+~~~~~~~~~~~~~~~~
+
+.. automodule:: rxmc.problem
+   :no-members:
+
+.. autodata:: rxmc.problem.JAX_LOGPDFS
+   :no-value:
+
+Covariance terms
+~~~~~~~~~~~~~~~~
+
+.. automodule:: rxmc.terms
+   :no-members:
+
+The structured covariance
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. automodule:: rxmc.covariance
+   :no-members:

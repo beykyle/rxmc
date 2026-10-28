@@ -827,15 +827,25 @@ class Problem:
     # -- densities ------------------------------------------------------------
 
     def log_prior(self, theta) -> float:
+        """Log prior density at ``theta``; ``-inf`` outside its support."""
         return _host(self._log_prior_j(self._theta(theta)))
 
     def log_likelihood(self, theta) -> float:
+        """Weighted sum of the constraints' log likelihoods at ``theta``."""
         return _host(self._log_likelihood_j(self._theta(theta)))
 
     def log_posterior(self, theta) -> float:
+        """Log prior plus log likelihood at ``theta``.
+
+        A float on a concrete ``theta``, the traced value under ``jax.grad``
+        or ``jax.vmap``.  ``-inf`` outside the prior's support (the forward
+        models do not run, and the gradient is zero) or where a covariance is
+        singular (the gradient stays finite).
+        """
         return _host(self._log_posterior_j(self._theta(theta)))
 
     def chi2(self, theta) -> float:
+        """Sum of the constraints' chi-square statistics at ``theta``."""
         return _host(self._chi2_j(self._theta(theta)))
 
     # -- derivatives ------------------------------------------------------------
@@ -866,6 +876,7 @@ class Problem:
         )
 
     def prior_transform(self, u) -> np.ndarray:
+        """Map a point of the unit cube to ``theta`` (nested sampling)."""
         u = np.asarray(u, dtype=float)
         if u.shape != (self.ndim,):
             raise ValueError(f"u must have shape ({self.ndim},), got {u.shape}")
@@ -902,10 +913,15 @@ class Problem:
         return self.names
 
     def starting_location(self, n: int) -> np.ndarray:
+        """``(n, ndim)`` draws from the prior (:meth:`sample_prior`)."""
         return self.sample_prior(n)
 
     def log_posterior_batch(self, thetas) -> np.ndarray:
-        """:meth:`log_posterior` over the rows of ``thetas`` (vectorised)."""
+        """:meth:`log_posterior` over the rows of ``thetas``.
+
+        One ``jax.vmap`` call; with emcee, pass it with ``vectorize=True``
+        instead of a process pool.
+        """
         thetas = jnp.asarray(thetas, dtype=float)
         if thetas.ndim != 2 or thetas.shape[1] != self.ndim:
             raise ValueError(

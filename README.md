@@ -140,8 +140,9 @@ print(problem.names, sampler.results.logz[-1])
 Python 3.12 or later; the runtime dependencies are `numpy`, `scipy`, `jax`,
 `tinygp` (Gaussian-process kernels), `jitr` and `exfor-tools`.  `jitr` is
 taken from its `jax-core` branch (the JAX solver of the next jitr release)
-until that release is on PyPI.  Until the 1.0 pre-releases are on PyPI
-(`pip install --pre rxmc`), install from GitHub:
+until that release is on PyPI; the 1.0 pre-releases wait on it, since PyPI
+does not accept a git dependency.  For a GPU, install a CUDA build of `jax`
+first.  Install from GitHub:
 
 ```bash
 git clone git@github.com:beykyle/rxmc.git

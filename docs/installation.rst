@@ -4,9 +4,11 @@ Installation
 ``rxmc`` requires Python 3.12 or later.  The runtime dependencies are
 ``numpy``, ``scipy``, ``jax``, ``tinygp``, ``jitr`` and ``exfor-tools``,
 installed automatically.  ``jitr`` is taken from its ``jax-core`` branch, the
-JAX solver of the next jitr release, until that release is on PyPI.
-Importing ``rxmc`` turns on JAX's 64-bit mode for the process.  Until the 1.0 pre-releases appear on PyPI (``pip install
---pre rxmc``), install from GitHub:
+JAX solver of the next jitr release, until that release is on PyPI; the rxmc
+1.0 pre-releases wait on it too, since PyPI does not accept a git dependency.
+Importing ``rxmc`` turns on JAX's 64-bit mode for the process.  For a GPU,
+install a CUDA build of ``jax`` first (see the JAX installation guide).
+Install from GitHub:
 
 .. code-block:: bash
 

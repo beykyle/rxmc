@@ -1,6 +1,6 @@
 # Recipes
 
-Short user stories for the ground-up `rxmc` described in `groundup_design.md`.
+Short user stories for `rxmc`, whose design is described in `design.md`.
 Each recipe says what a user wants, how it is spelled, and what behaviour
 they should expect.  Together they are the minimal set of use cases the
 rewrite must support; every one of them is backed by a notebook or a test
@@ -10,7 +10,7 @@ asserts its *Expected behaviour* bullets, and the richest recipes are
 tutorial notebooks (design document §7 and §9).  Snippets assume:
 
 ```python
-import numpy as np, jax.numpy as jnp, tinygp, rxmc as rx
+import numpy as np, jax.numpy as jnp, jax.scipy.stats as jst, tinygp, rxmc as rx
 from rxmc import terms as T, transforms as tf
 from scipy import stats
 ```
@@ -195,7 +195,8 @@ band = rx.predictive.grid_draws(problem, pred, x_fine, samples, terms=[gp])
 # what a measurement would show: the experimental terms too (recipe 40)
 full = rx.predictive.grid_draws(problem, pred, x_fine, samples, terms=[gp, eps])
 # GP regression on the residuals instead
-fit = rx.predictive.gp_predictive_draws(problem, gp, pred, x_fine, samples, conditioned=True)
+fit = rx.predictive.gp_predictive_draws(problem, gp, pred, x_fine, samples, terms=[gp],
+                                        conditioned=True)
 ```
 
 Expected behaviour:
@@ -363,6 +364,12 @@ Expected behaviour:
   `u = 0` and `u = 1`.
 - `problem.sample_prior(n)` gives an `(n, ndim)` array suitable as emcee's
   starting positions.
+- The log density is JAX.  Scipy marginals of the families in
+  `rx.problem.JAX_LOGPDFS` (norm, uniform, truncnorm, gamma, beta, lognorm,
+  halfnorm, cauchy, halfcauchy, t, expon, laplace, logistic, invgamma) are
+  translated; any other family needs `Parameter(..., logpdf=f)` with `f`
+  written in `jax.numpy`, or compile names the parameter.  A custom joint's
+  `logpdf` must be `jax.numpy` too, and is checked at compile.
 
 ## 14. From an EXFOR measurement to a dataset
 
@@ -451,13 +458,9 @@ Expected behaviour:
   compiled with `jax.jit` once per problem, and `grad_log_posterior`,
   `value_and_grad_log_posterior` and `hessian_log_posterior` serve
   gradient-based samplers (HMC/NUTS in blackjax or numpyro) and optimisers.
-- Parallelism: `log_posterior_batch` is one vectorised (`jax.vmap`) call,
-  so `emcee.EnsembleSampler(..., problem.log_posterior_batch,
-  vectorize=True)` needs no pool.  JAX is multithreaded and a fork-started
-  pool (Python's default on Linux) can deadlock: use a `"spawn"` context
-  and send the problem once per worker as `dill` bytes through the pool's
-  `initializer`.  MPI ranks are fresh interpreters and are unaffected (see
-  the design document on threads per rank).
+- Parallelism: `log_posterior_batch` with emcee's `vectorize=True` needs no
+  pool; for pools and MPI see the design document, "Parallel sampling"
+  (fork-started pools can deadlock under JAX).
 - `dill.loads(dill.dumps(problem)).log_posterior(theta)` equals
   `problem.log_posterior(theta)`, workspaces included.
 - `problem.NDIM`, `problem.parameter_names`, `problem.starting_location`,
@@ -657,7 +660,7 @@ Expected behaviour:
 - `c.meta("Elab")` is the comparison's energy broadcast to every point of the
   support, so the amplitude function is written once and works on any
   comparison.  On a term spanning comparisons it is the per-point concatenation.
-- With one `kernel_params(["length_scale"], prefix=f"gp{i}")` per call,
+- With one `kernel_params(["length_scale"], [(-3, 1)], prefix=f"gp{i}")` per call,
   each dataset has its own length scale.  That is also a legitimate model;
   it is just not this one.  Two calls declaring the same name with distinct
   objects fail compile on the duplicate name.
@@ -1023,12 +1026,14 @@ in the likelihood.*
 
 ```python
 emu = rx.Model(lambda x, *theta: emulator.mean(theta), params)             # x ignored: the grid is the design's
-emu_var = rx.Term(lambda c, *theta: np.sqrt(emulator.var(theta)), params, kind="diag", on=comp)
+emu_var = rx.Term(lambda c, *theta: jnp.sqrt(emulator.var(theta)), params, kind="diag", on=comp)
 c = rx.Constraint([rx.Comparison(d, emu)], terms=[emu_var, T.noise(log_eps)])
 ```
 
 Expected behaviour:
 
+- The emulator's `mean` and `var` must be written in `jax.numpy` (a GP
+  emulator in tinygp is), so the chain can differentiate through them.
 - The term declares the *same* `Parameter` objects as the model, so it
   receives the current `theta` and can evaluate the emulator variance
   there.  No special mechanism.
@@ -1183,15 +1188,15 @@ a covariance `B` with correlation `c`.  The reported data are the products
 # one comparison per quantity; the model is the quantity itself
 rhos = [rx.Parameter(f"rho_{i}", prior=stats.norm(r_i.mean(), 10.0)) for i in range(n)]
 comps = [rx.Comparison(rx.Dataset(np.full(len(r_i), i), r_i, N_i * sigma_i, label=f"q{i}"),
-                       rx.Model(lambda x, rho: np.full(len(x), rho), [rho_i]))
+                       rx.Model(lambda x, rho: jnp.full(len(x), rho), [rho_i]))
          for i, (r_i, rho_i) in enumerate(zip(products, rhos))]
 frac = sigma_N / N                                  # fractional normalisation errors
 corr = np.array([[1, c], [c, 1]])                   # the correlation matrix of the N_i
 
 def normalisations(c):                              # C_I: built from the prediction
-    u = np.concatenate([f * ym for f, ym in zip(frac, c.split(c.ym))])
+    u = jnp.concatenate([f * ym for f, ym in zip(frac, c.split(c.ym))])
     which = np.concatenate([np.full(s.stop - s.start, k) for k, s in enumerate(c.segments)])
-    return np.outer(u, u) * corr[np.ix_(which, which)]
+    return jnp.outer(u, u) * corr[np.ix_(which, which)]
 
 c_I = rx.Constraint(comps, terms=[rx.Term(normalisations, kind="matrix", on=comps)])
 c_F = rx.Constraint(comps, terms=[rx.Term(normalisations_from(y), kind="matrix", on=comps)])  # Peelle: from the data

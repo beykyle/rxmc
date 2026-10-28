@@ -4,7 +4,8 @@ rxmc
 ``rxmc`` calibrates reaction models to experimental data by Bayesian
 inference, with the error model, statistical and systematic, experimental
 and theoretical, declared explicitly as part of the problem, and the
-calibration driven by external samplers (emcee, dynesty, black-box-bayes).
+calibration driven by external samplers (emcee, dynesty, black-box-bayes)
+and, with JAX gradients, by HMC or optimisers.
 
 - :doc:`recipes` states every supported use case with its spelling and the
   behaviour to expect; each recipe is a test.

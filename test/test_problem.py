@@ -298,6 +298,29 @@ class TestPriors:
             assert p.log_prior([v]) == pytest.approx(tn.logpdf(v))
         assert p.log_prior([-0.5]) == -np.inf and p.log_prior([4.5]) == -np.inf
 
+    def test_a_family_without_a_jax_translation_takes_logpdf(self):
+        dist = stats.weibull_min(1.5, scale=2.0)
+
+        def model(t):
+            return Model(lambda x, t: t * x, [t])
+
+        def compile_(t):
+            return Problem([Constraint([Comparison(dataset(), model(t))])])
+
+        with pytest.raises(TypeError, match="Parameter\\(..., logpdf=f\\)"):
+            compile_(Parameter("t", prior=dist))
+
+        def weibull(x, c=1.5, s=2.0):
+            z = jnp.where(x > 0, x / s, 1.0)
+            out = jnp.log(c / s) + (c - 1) * jnp.log(z) - z**c
+            return jnp.where(x > 0, out, -jnp.inf)
+
+        p = compile_(Parameter("t", prior=dist, logpdf=weibull))
+        for v in (0.5, 2.0, 4.0):
+            assert p.log_prior([v]) == pytest.approx(dist.logpdf(v))
+        # the scipy distribution still drives the unit-cube map
+        assert p.prior_transform([0.5])[0] == pytest.approx(dist.median())
+
     def test_marginal_truncated_far_in_the_upper_tail(self):
         t = Parameter("t", prior=stats.norm(), bounds=(8.3, np.inf))
         model = Model(lambda x, t: t * x, [t])

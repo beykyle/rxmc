@@ -51,7 +51,8 @@ The review checklist for every change.
 4. **Every user-supplied callable has one shape:** `fn(context, *values)`,
    where `context` is the grid `x` (models, transforms) or a `TermContext`
    (terms, bases, amplitudes) and `values` are the sampled values of the
-   parameters the node declares, in declaration order.
+   parameters the node declares, in declaration order.  (Kernel builders are
+   the exception: `build(*values)` returns a tinygp kernel.)
 5. **Sharing is spelled by passing the same `Parameter` object.**  Inside a
    term, between terms, between a model and a term, across constraints.
    There is no second identity notion and no value equality anywhere.
@@ -101,6 +102,7 @@ class Parameter:
     name: str
     bounds: tuple[float, float] = (-inf, inf)
     prior: object | None = None      # frozen scipy univariate: logpdf, cdf, ppf, rvs
+    logpdf: Callable | None = None   # jnp prior density when its family is not in JAX_LOGPDFS
     unit: str = ""
     latex: str | None = None
     label -> str                     # latex, falling back to name
@@ -187,7 +189,7 @@ class Model:                                  # fn(x, *values) -> y in physical 
 
 class Predictor:                              # a model bound to a grid
     params, x
-    def __call__(self, *values) -> ndarray
+    def __call__(self, *values) -> array      # jax
 
 def polynomial(order) -> Model                # a_0 + a_1 x + ...; params a0..an, no priors
 ```
@@ -228,7 +230,7 @@ class Term:
 
 @dataclass(eq=False, frozen=True)
 class KernelTerm(Term):                    # what kernel() returns
-    kernel, n_kernel, amplitude, jitter
+    build, n_kernel, amplitude, jitter
 ```
 
 | `kind` | `fn` returns | contribution |
@@ -376,25 +378,17 @@ prior block mentions, a hyperprior's hyperparameter, get slots after every
 constraint.  Names are then checked unique and the prior assembled.
 Compile the same declarations twice and you get two independent problems.
 
-**The densities.**  The last step of `__init__` wraps the pure-JAX densities
-in `jax.jit` (and `value_and_grad`, `hessian`, `vmap` of the posterior).
-Every index the densities use, the gathers, rows, block positions and
-active rows, is a numpy array fixed at compile, so the traced function sees
-only `theta`.  Python control flow on values is gone from the hot path: a
-non-finite prediction or a singular parametric covariance gives `-inf`
-through `jnp.where`, and `log_posterior` evaluates the prior first and runs
-the likelihood under `lax.cond`, so outside the prior's support the forward
-models do not run and the gradient is zero.  A `where` masks the value but
-not the gradient (the discarded branch still sends `0 * NaN` back), so
-every density evaluates its NaN-prone piece at a safe input instead: a
-marginal or bounded joint prior at an interior point, a singular covariance
-through the identity factor of `chol_logdet`.  A rejected `theta` inside
-the prior's support therefore has the prior's gradient alone.  The one gap
-is a forward model whose own Jacobian is NaN where its value is (rxmc's
-transforms take the log safely; a user model must do the same).
-On a concrete `theta` the public methods return Python floats; under a JAX
-transformation they return the tracer, so `jax.grad(problem.log_posterior)`
-works.  Pickling drops the compiled functions and unpickling rebuilds them.
+**The densities.**  The last step of `__init__` compiles the pure-JAX
+densities once with `jax.jit`; every index they use is numpy fixed at
+compile, so the traced function sees only `theta`.  On a concrete `theta`
+the public methods return Python floats, and under a JAX transformation the
+tracer, so `jax.grad(problem.log_posterior)` works.  `log_posterior`
+evaluates the prior first and runs the likelihood under `lax.cond`: outside
+the prior's support the forward models do not run and the gradient is zero.
+A non-finite prediction or a singular covariance gives `-inf`; NaN-prone
+pieces are evaluated at a safe input, so a rejected `theta` keeps a finite
+gradient (a user model must take its logs safely itself).  Pickling drops
+the compiled functions and unpickling rebuilds them.
 
 **Prior assembly.**  Each slot is covered by its parameter's marginal or by
 exactly one joint block `(params, joint)`, where `joint` has
@@ -653,11 +647,13 @@ happens.  In order of preference:
 3. **MPI.**  `mpirun`/`srun` start every rank as a fresh interpreter, so the
    fork problem does not arise (do not `MPI.Comm.Spawn` from a JAX-loaded
    process, and do not mix fork pools into a rank).  Each rank compiles its
-   own densities, and each rank's XLA thread pool defaults to every core:
-   with several ranks on a node, limit threads per rank (e.g.
-   `XLA_FLAGS="--xla_cpu_multi_thread_eigen=false
-   intra_op_parallelism_threads=1"` and `OMP_NUM_THREADS=1`).  On GPUs set
+   own densities, and each rank's XLA thread pool defaults to every core, so
+   with several ranks on a node limit the threads per rank.  On GPUs set
    `XLA_PYTHON_CLIENT_PREALLOCATE=false` or pin one device per rank.
+
+   ```bash
+   XLA_FLAGS="--xla_cpu_multi_thread_eigen=false intra_op_parallelism_threads=1" OMP_NUM_THREADS=1 mpirun -n 8 python run.py
+   ```
 
 ### Performance
 
@@ -699,7 +695,7 @@ test that pins it.  Recipe numbers refer to `recipes.md`.
 | per-dataset Kennedy and O'Hagan scale | `Comparison(d_i, omp \| scale(rho_i))` | test_model, recipe 6 |
 | sampled mean discrepancy | `omp + Model(delta_fn, phi)`; alone or with `kernel` | test_model, recipe 8 |
 | multiplicative `x`-dependent correction | `omp * Model(g_fn, phi)` | test_model |
-| GP discrepancy in `x` or momentum transfer, with amplitude | `kernel(k, on=comp, coords=..., amplitude=..., amplitude_params=...)` | test_terms::TestStudyForms, recipe 7 |
+| GP discrepancy in `x` or momentum transfer, with amplitude | `kernel(build, params, on=comp, coords=..., amplitude=..., amplitude_params=...)` | test_terms::TestStudyForms, recipe 7 |
 | posterior predictive on a new grid, error model included | `grid_draws(problem, predictor, x_pred, samples)`; `model_only=True`; `comparison=` | test_predictive::TestGridDraws, recipe 40 |
 | point-by-point errors refused on a new grid | `grid_draws` raises naming the term | test_predictive, recipe 40 |
 | GP discrepancy on a grid from the problem alone; GP regression instead | `gp_predictive_draws(problem, term, predictor, x_pred, samples)`; `conditioned=True` | test_predictive, recipe 7 |
@@ -720,7 +716,7 @@ test that pins it.  Recipe numbers refer to `recipes.md`.
 | cut posterior by multiple imputation | stage-1 and per-draw stage-2 problems | recipe 29 |
 | simulation-based calibration | `sample_prior`, `predictive_draws`, `dataclasses.replace(d, y=)` | recipe 31 |
 | emulator as `Model`, its variance as a `diag` term sharing parameters | recipe 32 | test_terms |
-| MAP and Laplace | `scipy.optimize` on `log_posterior`, `problem.bounds` | recipe 33 |
+| MAP and Laplace | `scipy.optimize` with `jac=grad_log_posterior`; `hessian_log_posterior` | recipe 33 |
 | global error scale and USU modes | `diag` term closing over `comp.y_err` with `statistical=False`; `offset(parameter=, on=technique)` | recipe 34 |
 | energy-dependent parameters | per-comparison `Model` instances closing over `meta`, shared objects | test_model, recipe 35 |
 | discrepancy on a physical basis | `systematic` modes or `omp + Model(basis_sum)` | recipe 36 |
@@ -728,6 +724,9 @@ test that pins it.  Recipe numbers refer to `recipes.md`.
 | classic normal hierarchical model | marginalised, non-centred, centred | recipe 38 |
 | SafeBayes | `replace(c, weight=η)` and prefix masks | recipe 25 |
 | joint MVN prior; truncated marginals; `prior_transform` | `Problem(priors=[(omp.params, mvn)])`; `Parameter(prior=, bounds=)` | test_problem, recipe 13 |
+| prior family without a JAX translation | `Parameter(prior=dist, logpdf=f)`, `f` in `jax.numpy`; `JAX_LOGPDFS` | test_problem, recipe 13 |
+| gradients: HMC/NUTS, MAP, Laplace | `grad_log_posterior`, `value_and_grad_log_posterior`, `hessian_log_posterior`; `jax.grad(problem.log_posterior)` | test_autodiff, recipe 33 |
+| parallel sampling | `log_posterior_batch` (emcee `vectorize=True`); spawn pool with a `dill` initializer; MPI | recipe 16 |
 | emcee, dynesty, black-box-bayes drivers | the flat interface; `dill` round trip | test_problem, recipe 16 |
 | EXFOR to dataset with unit conversion | `from_measurement(m, reaction=, quantity=)` | test_measurement, recipe 14 |
 | elastic `dXS/dA`, `dXS/dRuth`, `Ay`; (p,n) IAS | `ElasticXS`, `IsobaricAnalogPN` | test_reactions, recipe 15 |
@@ -817,22 +816,21 @@ examples/           the notebooks and plotstyle.py; data/ (committed measurement
 docs/               this document, recipes.md, examples.rst, api.rst, groundup_design.md (history)
 ```
 
-Runtime dependencies: `numpy`, `scipy`, `jax`, `tinygp`, `jitr` (its
-`jax-core` branch, the JAX solver of the next release, until that release is
-on PyPI) and `exfor-tools`.  Importing `rxmc` turns on `jax_enable_x64` for
+Runtime dependencies: `numpy`, `scipy`, `jax`, `tinygp`, `jitr` (jax-core
+branch) and `exfor-tools`.  Importing `rxmc` turns on `jax_enable_x64` for
 the process.
 Extras: `examples` (emcee, dynesty, corner, matplotlib, scikit-learn,
 dill, jupyter, ipykernel, tqdm), `validation` (examples plus pytest,
 nbmake, nbqa, ruff, black, isort, build), `docs` (sphinx, the pydata
-theme, myst-nb).  Python 3.12 or later.  Kernels are duck-typed on the
-scikit-learn interface, so scikit-learn is not a runtime dependency.
+theme, myst-nb).  Python 3.12 or later.  Kernels are tinygp; scikit-learn
+stays in the extras only until the notebooks are ported.
 
 ## 8. Open questions and non-goals
 
 - **Term-level partial masks.**  The factories accept `mask=`; a first-class
   `on=(comparison, point_mask)` would be tidier.  Not needed yet.
-- **Workspace caching across models.**  The angular basis is cached per
-  model instance; two models on one kinematics still build two.  A factor
+- **Workspace caching across models.**  The workspace at one energy is
+  cached per model instance; two models on one kinematics still build two.  A factor
   of a few in setup time, not in solve time.
 - **Cross-constraint modes.**  `U` is per constraint so that constraints
   stay independent and weights stay meaningful.  A mode that couples two

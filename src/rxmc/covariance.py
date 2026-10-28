@@ -380,8 +380,9 @@ class StructuredCovariance:
         r"""``(d2, logdet)`` of the residual ``y - ym`` on the active rows.
 
         ``ym`` is the full-length stacked prediction; ``theta`` the flat
-        parameter vector the entries' gathers index into.  Both are 0-d jax
-        arrays; ``logdet`` is NaN where a parametric covariance is singular.
+        parameter vector the entries' gathers index into.  Returns two 0-d
+        jax arrays; ``logdet`` is NaN where a parametric covariance is
+        singular.
         """
         theta = self._check_theta(theta)
         r = (self.y - ym)[self.active]

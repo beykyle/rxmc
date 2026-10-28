@@ -97,8 +97,9 @@ class TermContext:
     points; :meth:`meta` gives per-point dataset metadata (``c.meta("Elab")``).
 
     ``x`` and ``y`` are numpy (a function of them alone, such as a Legendre
-    basis from scipy, is a constant); ``ym`` and the term's parameter values
-    are traced by JAX, so anything computed from them uses ``jax.numpy``.
+    basis from scipy, is a constant) unless a parametric ``coords`` transform
+    makes ``x`` traced; ``ym`` and the term's parameter values are traced by
+    JAX, so anything computed from them uses ``jax.numpy``.
 
     A term spanning several comparisons sees their rows *gathered* into one
     stack, in constraint order.  :attr:`segments` are the slices of that stack
@@ -303,7 +304,7 @@ class Term:
 
 @dataclass(eq=False, frozen=True)
 class KernelTerm(Term):
-    """A :func:`kernel` term that also carries what GP conditioning needs.
+    """A :func:`~rxmc.terms.kernel` term that also carries what GP conditioning needs.
 
     :func:`~rxmc.predictive.gp_predictive_draws` reads these to condition the
     discrepancy at new points; the covariance machinery treats a
@@ -555,7 +556,9 @@ def kernel_params(names, bounds=None, prefix="discrepancy") -> list:
     ``discrepancy_log_ell`` with uniform priors on those bounds.  tinygp
     kernels carry no hyperparameter metadata, so the parameters (and the
     space they are sampled in) are declared here and the builder passed to
-    :func:`kernel` maps them to the kernel.
+    :func:`kernel` maps them to the kernel.  With ``bounds=None`` the
+    parameters carry no prior: give bounds, or cover them with a joint block
+    in ``Problem(priors=)``.
     """
     names = list(names)
     bounds = [None] * len(names) if bounds is None else list(bounds)
