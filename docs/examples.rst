@@ -39,3 +39,11 @@ Reactions and studies
    examples/local_optical_model_calibration.ipynb
    examples/alpha_ca_error_model_comparison.ipynb
    examples/hierarchical_calibration.ipynb
+
+Samplers
+--------
+
+.. toctree::
+   :maxdepth: 1
+
+   examples/gradient_based_sampling.ipynb
