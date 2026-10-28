@@ -117,7 +117,7 @@ print(problem.names, sampler.results.logz[-1])
 - [`docs/recipes.md`](docs/recipes.md): every supported use case with its
   spelling and expected behaviour.  Each recipe is a test under
   `test/recipes/`.
-- [`examples/`](examples/): nine notebooks, the tutorials for the recipes,
+- [`examples/`](examples/): the notebooks, the tutorials for the recipes,
   from a line to an error-model comparison on real α + ⁴⁴Ca data and a
   hierarchical calibration.
 - [`docs/design.md`](docs/design.md): the maintainer's description of the

@@ -657,7 +657,7 @@ Two tiers, chosen per assertion.
 Three index tests keep the documents honest: `test_recipes_index.py`
 (one file per `## NN.` heading, each quoting its recipe; the recipe-18
 legend equal to the tests' legend), `test_notebooks_index.py` (each
-notebook cites the recipes of the design's table, all nine exist), and
+notebook cites the recipes of the design's table, and every one exists), and
 `test_regression.py` (the 0.x pins).  `test/helpers.py` holds the dense
 references and `STUDY_LEGEND`, the labelled error-model forms of recipe
 18 built against hand-written matrices.
@@ -675,6 +675,7 @@ a time unless noted.
 | `sharing_error_models` | 5 | dynesty | two experiments with opposite normalisation defects: sharing a parameter, a mode per dataset, one mode spanning both, and the assembled covariance seen directly; one panel per error model | 102 s |
 | `normalization_and_covariance_structure` | 3, 4, 6, 27 | dynesty | six treatments of four experiments' normalisations on a cubic with a free, non-zero constant term, one of them badly mis-quoted and alone in its range; Peelle's puzzle in the two-point case it was found in; a gallery of covariance structures from `matrix(theta)` | 1003 s |
 | `gp_discrepancy` | 7 | emcee, dynesty | mean-zero discrepancies with amplitudes growing in x: four rungs on a toy line, three on n+⁴⁰Ca missing its surface absorption; the three predictive objects (model plus discrepancy, plus experimental, and the conditioned regression it does not use), with the equations | 483 s |
+| `spectral_mixture_discrepancy` | 7, 33, 40 | MAP, emcee | a defect with two scales on a line, a three-component spectral-mixture discrepancy written as a user sklearn kernel and keyed `params=`; periodogram-seeded multistart MAP; each component backed out with `gp_predictive_draws(conditioned=True)`; the identifiability of θ, with the L² projection θ* as the only recoverable target; Plumlee's orthogonal kernel as a second user kernel; a chain against each Laplace approximation, which agrees for Plumlee and is several times too narrow and misplaced for Kennedy–O'Hagan | 930 s |
 | `robust_likelihoods` | 9, 12, 39 | emcee | Student-t versus Gaussian on three gross outliers; the iterative rejection loop, including the round that over-rejects and recovers; tempering a correctly specified 200-point line, with the prior on the corner plot and the predictive coverage | 80 s |
 | `error_scale_and_usu` | 34 | emcee | a global scale on the reported errors under both likelihoods; a USU offset on the technique we suspect | 90 s |
 | `local_optical_model_calibration` | 10, 14, 15, 16, 17, 18, 19, 21, 40 | dynesty | EXFOR O1199007, p + ⁴⁰Ca at 35 MeV, which quotes no systematics, read from a plain dict: the unit contract; log-space residuals with the jitr α+Ca error model (reported statistics plus inferred point-to-point and common relative errors, as custom terms) against linear residuals with the reported errors alone, compared by evidence with the Jacobian, by predictives for the potential alone (on a grid) and with every error term (at the measured angles), and by three coverage curves each; the singular guard | 929 s |
