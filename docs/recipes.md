@@ -1057,11 +1057,11 @@ et al., Technometrics 49, 138 (2007).
 it is good enough.*
 
 ```python
-from scipy.optimize import minimize
-res = minimize(lambda t: -problem.log_posterior(t), problem.sample_prior(1)[0], method="L-BFGS-B",
-               jac=lambda t: -problem.grad_log_posterior(t), bounds=problem.bounds)
-H = -problem.hessian_log_posterior(res.x)                # exact, by automatic differentiation
+fit = rx.optimize.find_map(problem, n_starts=8, rng=0)   # L-BFGS-B, exact gradient, from 8 prior draws
+H = -problem.hessian_log_posterior(fit.x)                # exact, by automatic differentiation
 cov = np.linalg.inv(H)                                   # Laplace covariance
+print(fit.ends)                                          # log posterior at each search's end: local modes?
+mle = rx.optimize.find_mle(problem, rng=0)               # the likelihood's maximum, by Nelder-Mead
 ```
 
 Expected behaviour:
@@ -1072,7 +1072,11 @@ Expected behaviour:
   not; compare against a chain before reporting.
 - This is the dominant uncertainty-propagation practice in nuclear DFT
   (inverse Hessian at the optimum, propagated linearly).
-- `problem.bounds` feeds the optimiser; the prior handles the rest.
+- `find_map` searches inside `problem.support`, the bounds narrowed by the
+  priors' supports, and keeps the best of its starts; `fit.ends` shows
+  whether the others stopped in other modes.  `find_mle` has the same
+  signature and return, maximising the likelihood without gradients (where
+  an ensemble sampler is started, recipe 16).
 
 References: Pruitt, Lovell, Hebborn, Nunes, *The role of the likelihood for
 elastic scattering uncertainty quantification*, arXiv:2403.00753; Schunck
@@ -1409,7 +1413,7 @@ gradient of the posterior.*
 import blackjax, jax
 
 logdensity = problem.log_posterior_unconstrained       # the posterior on R^ndim
-z0 = problem.to_unconstrained(problem.sample_prior(1, rng=0)[0])
+z0 = problem.to_unconstrained(rx.optimize.find_map(problem, rng=0).x)   # start at the MAP
 warmup = blackjax.window_adaptation(blackjax.nuts, logdensity)
 (state, tuned), _ = warmup.run(jax.random.key(0), z0, num_steps=1000)
 step = jax.jit(blackjax.nuts(logdensity, **tuned).step)

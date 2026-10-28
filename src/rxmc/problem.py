@@ -806,6 +806,13 @@ class Problem:
     def bounds(self) -> np.ndarray:
         return self.index.bounds
 
+    @property
+    def support(self) -> np.ndarray:
+        """``(ndim, 2)``: each parameter's bounds narrowed by its marginal
+        prior's support (a uniform or half-normal prior bounds a parameter on
+        its own), the box an optimiser or the unconstrained map works in."""
+        return self._support.copy()
+
     def columns(self, params) -> np.ndarray:
         """Chain columns of one parameter or of a sequence of them."""
         return self.index.slots(params)

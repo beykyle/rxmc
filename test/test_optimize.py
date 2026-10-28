@@ -1,0 +1,56 @@
+"""rx.optimize: the posterior mode and the maximum of the likelihood."""
+
+import numpy as np
+import pytest
+from scipy import stats
+
+import rxmc as rx
+from rxmc import Comparison, Constraint, Dataset, Model, Parameter, Problem
+
+
+def line(prior_scale=5.0, bounds=(-np.inf, np.inf)):
+    m = Parameter("m", prior=stats.norm(0, prior_scale))
+    b = Parameter("b", prior=stats.norm(0, prior_scale), bounds=bounds)
+    return Model(lambda x, m, b: m * x + b, [m, b])
+
+
+def data(seed=0, n=8):
+    rng = np.random.default_rng(seed)
+    x = np.linspace(0.5, 2.5, n)
+    return Dataset(x, 2.0 * x + 1.0 + rng.normal(0, 0.1, n), 0.1 * np.ones(n))
+
+
+def weighted_least_squares(d, prior_scale=None):
+    X = np.column_stack([d.x, np.ones_like(d.x)])
+    A = X.T @ (X / d.y_err[:, None] ** 2)
+    if prior_scale is not None:  # a normal prior adds its precision
+        A = A + np.eye(2) / prior_scale**2
+    return np.linalg.solve(A, X.T @ (d.y / d.y_err**2))
+
+
+def test_map_is_the_analytic_posterior_mode():
+    d = data()
+    p = Problem([Constraint([Comparison(d, line(prior_scale=0.5))])])
+    fit = rx.optimize.find_map(p, n_starts=4, rng=0)
+    np.testing.assert_allclose(fit.x, weighted_least_squares(d, 0.5), rtol=1e-6)
+    assert fit.fun == pytest.approx(p.log_posterior(fit.x))
+    assert len(fit.ends) == 4 and fit.ends[0] == pytest.approx(fit.fun)
+    assert fit.nfev > 0 and fit.wall > 0
+
+
+def test_mle_ignores_the_prior():
+    d = data()
+    p = Problem([Constraint([Comparison(d, line(prior_scale=0.5))])])
+    fit = rx.optimize.find_mle(p, n_starts=4, rng=0)
+    np.testing.assert_allclose(fit.x, weighted_least_squares(d), rtol=1e-4)
+    assert fit.fun == pytest.approx(p.log_likelihood(fit.x))
+
+
+def test_an_optimum_on_a_bound_is_found_inside():
+    # the intercept wants 1.0; its bound caps it at 0.8
+    p = Problem([Constraint([Comparison(data(), line(bounds=(0.0, 0.8)))])])
+    for find in (rx.optimize.find_map, rx.optimize.find_mle):
+        fit = find(p, n_starts=3, rng=1)
+        b = fit.x[p.columns(p.params[1])][0]
+        assert 0.0 < b < 0.8 and b == pytest.approx(0.8, abs=1e-4)
+        assert np.isfinite(fit.fun)

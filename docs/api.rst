@@ -85,6 +85,16 @@ The structured covariance
    rxmc.problem.CompiledConstraint
    rxmc.problem.ParameterIndex
 
+Point estimates
+---------------
+
+.. autosummary::
+   :toctree: generated/
+   :nosignatures:
+
+   rxmc.optimize.find_map
+   rxmc.optimize.find_mle
+
 Diagnostics
 -----------
 

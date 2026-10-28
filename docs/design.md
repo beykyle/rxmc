@@ -757,7 +757,7 @@ test that pins it.  Recipe numbers refer to `recipes.md`.
 | cut posterior by multiple imputation | stage-1 and per-draw stage-2 problems | recipe 29 |
 | simulation-based calibration | `sample_prior`, `predictive_draws`, `dataclasses.replace(d, y=)` | recipe 31 |
 | emulator as `Model`, its variance as a `diag` term sharing parameters | recipe 32 | test_terms |
-| MAP and Laplace | `scipy.optimize` with `jac=grad_log_posterior`; `hessian_log_posterior` | recipe 33 |
+| MAP, MLE and Laplace | `rx.optimize.find_map` (L-BFGS-B, exact gradient), `find_mle` (Nelder-Mead), both within `problem.support`; `hessian_log_posterior` | test_optimize, recipe 33 |
 | global error scale and USU modes | `diag` term closing over `comp.y_err` with `statistical=False`; `offset(parameter=, on=technique)` | recipe 34 |
 | energy-dependent parameters | per-comparison `Model` instances closing over `meta`, shared objects | test_model, recipe 35 |
 | discrepancy on a physical basis | `systematic` modes or `omp + Model(basis_sum)` | recipe 36 |

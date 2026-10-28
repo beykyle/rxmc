@@ -382,6 +382,9 @@ def test_a_prior_with_finite_support_bounds_the_unconstrained_map():
     scale = Parameter("scale", prior=stats.halfnorm(scale=2.0))
     model = Model(lambda x, a, b: a * x + b, [log_s, scale])
     problem = Problem([Constraint([Comparison(data(n=5), model)])])
+    np.testing.assert_allclose(
+        problem.support, [[np.log(0.05), np.log(2.0)], [0.0, np.inf]]
+    )
     far = np.array([-50.0, -50.0])
     theta = problem.to_theta(far)
     assert np.log(0.05) <= theta[0] < np.log(2.0) and theta[1] >= 0.0

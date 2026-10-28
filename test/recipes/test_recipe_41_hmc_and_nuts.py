@@ -10,6 +10,7 @@ import jax
 import numpy as np
 from scipy import stats
 
+import rxmc as rx
 from common import line_data, line_problem, linear_posterior
 from rxmc import Comparison, Constraint, Model, Parameter, Problem
 
@@ -17,7 +18,7 @@ from rxmc import Comparison, Constraint, Model, Parameter, Problem
 def nuts(problem, seed, n_warmup=300, n_draws=1000):
     """The recipe's spelling: one adapted NUTS chain, mapped back to theta."""
     logdensity = problem.log_posterior_unconstrained
-    z0 = problem.to_unconstrained(problem.sample_prior(1, rng=seed)[0])
+    z0 = problem.to_unconstrained(rx.optimize.find_map(problem, rng=seed).x)
     k_warm, k_draw = jax.random.split(jax.random.key(seed))
     warmup = blackjax.window_adaptation(blackjax.nuts, logdensity)
     (state, tuned), _ = warmup.run(k_warm, z0, num_steps=n_warmup)

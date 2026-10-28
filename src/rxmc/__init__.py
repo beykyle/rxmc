@@ -17,6 +17,7 @@ from . import data as data
 from . import diagnostics as diagnostics
 from . import likelihood as likelihood
 from . import model as model
+from . import optimize as optimize
 from . import predictive as predictive
 from . import problem as problem
 from . import reactions as reactions
