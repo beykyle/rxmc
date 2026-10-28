@@ -866,7 +866,8 @@ Extras: `examples` (emcee, dynesty, blackjax, corner, matplotlib, dill, jupyter,
 ipykernel, tqdm), `validation` (examples plus pytest, nbmake, nbqa, ruff,
 black, isort, build, and scikit-learn, which the tests use as an
 independent reference for the kernels), `docs` (sphinx, the pydata theme,
-myst-nb).  Python 3.12 or later.
+myst-nb), `samplers` (ptemcee, pocomc, PyMC and a CPU torch: the sampler
+benchmark's extra samplers).  Python 3.12 or later.
 
 ## 8. Open questions and non-goals
 

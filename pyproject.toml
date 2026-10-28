@@ -64,6 +64,14 @@ validation = [
   "scikit-learn>=1.0",
   "tqdm>=4.66",
 ]
+# the sampler benchmark's extra samplers (benchmarks/bench_samplers.py); pocomc
+# brings torch, which uv takes from PyTorch's CPU index (see tool.uv below)
+samplers = [
+  "pocomc>=1.2",
+  "ptemcee @ git+https://github.com/NuclearTalent/ptemcee_2025@modernize",
+  "pymc>=5.0",
+  "torch",  # for pocomc; listed so tool.uv.sources can point it at the CPU wheels
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -106,3 +114,11 @@ addopts = "-m 'not slow'"
 markers = [
   "slow: converged-chain tier; deselected by default, run with -m slow on pushes and PRs to main",
 ]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }

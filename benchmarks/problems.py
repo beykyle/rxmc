@@ -12,6 +12,11 @@ regimes of the performance comparison in the JAX rewrite plan:
 * ``elastic``     -- recipes 15/26: ElasticXS at several energies with a
                      proportional model error (solver-bound)
 * ``ias``         -- an IsobaricAnalogPN prediction at one energy
+* ``omp``         -- the log-space p + 40Ca optical model of the notebooks
+                     ``local_optical_model_calibration`` and
+                     ``gradient_based_sampling``: EXFOR O1199007 at 35 MeV,
+                     seven potential parameters and two inferred relative
+                     errors (9 parameters; JAX rxmc only)
 * ``hierarchy``   -- recipe 38 at scale: 30 lines sharing a slope, their
                      intercepts non-centred about a common mean (33
                      parameters; the sampler benchmark's high-dimensional case)
@@ -213,6 +218,83 @@ def hierarchy(n_groups=30, n=5):
     return p, _thetas(p)
 
 
+def omp():
+    import jax.numpy as jnp
+    import jitr
+    import pandas as pd
+    from jitr.optical_potentials.potential_forms import (
+        coulomb_charged_sphere,
+        thomas_safe,
+        woods_saxon_prime_safe,
+        woods_saxon_safe,
+    )
+
+    from rxmc import transforms as tf
+
+    here = __import__("pathlib").Path(__file__).resolve().parents[1]
+    df = pd.read_csv(here / "examples" / "data" / "p40ca_elastic_35mev.csv")
+    measurement = {
+        "x": df["angle_cm_deg"].to_numpy(),
+        "y": df["ratio_to_rutherford"].to_numpy(),
+        "statistical_err": df["stat_err"].to_numpy(),
+        "Einc": 35.0,
+        "quantity": "dXS/dRuth",
+        "y_units": "no-dim",
+        "x_units": "CM-degrees",
+        "systematic_norm_err": 0.0,
+        "systematic_offset_err": 0.0,
+        "subentry": "O1199007",
+    }
+    reaction = jitr.reactions.ElasticReaction(target=(40, 20), projectile=(1, 1))
+    data = rxmc.from_measurement(measurement, reaction=reaction)
+    A13, mso = 40 ** (1 / 3), 1.0 / jitr.utils.constants.WAVENUMBER_PION
+
+    def central(r, Vv, Wv, Rv, av, Wd, Rd, ad):
+        surface = -4 * ad * woods_saxon_prime_safe(r, Rd, ad)
+        return -(Vv + 1j * Wv) * woods_saxon_safe(r, Rv, av) - 1j * Wd * surface
+
+    def spin_orbit(r, Vso, Rso, aso):
+        return Vso * mso**2 * thomas_safe(r, Rso, aso)
+
+    def coulomb(r):
+        return coulomb_charged_sphere(r, 20, 1.3 * A13)
+
+    names = ["Vv", "Wv", "Rv", "av", "Wd", "Rd", "ad"]
+    start = [45.0, 3.0, 1.18 * A13, 0.68, 6.0, 1.28 * A13, 0.55]
+    sd = [8.0, 3.0, 0.25, 0.15, 5.0, 0.25, 0.15]
+    lower = [0.0, 0.0, 1.0, 0.2, 0.0, 1.0, 0.2]
+    params = [
+        Parameter(n, prior=stats.norm(m, s), bounds=(lo, np.inf))
+        for n, m, s, lo in zip(names, start, sd, lower)
+    ]
+    model = rxmc.reactions.ElasticXS(
+        "dXS/dRuth",
+        central,
+        spin_orbit,
+        lambda ws, *x: (tuple(x), (5.5, 1.0 * A13, 0.6)),
+        params,
+        coulomb=coulomb,
+        lmax=30,
+    )
+    log_uniform = stats.uniform(np.log(0.05), np.log(2.0) - np.log(0.05))
+    log_s = Parameter("log_s", prior=log_uniform)
+    log_b = Parameter("log_b", prior=log_uniform)
+
+    def point_to_point_sd(c, log_s, log_b):
+        s2, b2 = jnp.exp(2 * log_s), jnp.exp(2 * log_b)
+        return jnp.full(len(c), jnp.sqrt(jnp.log1p(s2 / (1 + b2))))
+
+    def common_sd(c, log_b):
+        return jnp.full(len(c), jnp.sqrt(jnp.log1p(jnp.exp(2 * log_b))))
+
+    errors = [
+        T.Term(point_to_point_sd, (log_s, log_b), kind="diag"),
+        T.Term(common_sd, (log_b,), kind="mode"),
+    ]
+    p = Problem([Constraint([Comparison(data, model, space=tf.log)], terms=errors)])
+    return p, _thetas(p)
+
+
 PROBLEMS = {
     "linear": linear,
     "modes": modes,
@@ -221,6 +303,7 @@ PROBLEMS = {
     "elastic": elastic,
     "ias": ias,
     "hierarchy": hierarchy,
+    "omp": omp,
 }
 
 __all__ = ["PROBLEMS", "JAX", "rxmc"]
