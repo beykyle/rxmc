@@ -9,7 +9,17 @@ rows, factors the constant parts of every covariance, and assembles the
 prior so that every slot is covered exactly once.  The result exposes what
 emcee, dynesty and ``black-box-bayes`` need: ``ndim``, ``names``,
 ``log_prior``, ``log_likelihood``, ``log_posterior``, ``prior_transform`` and
-``sample_prior``.
+``sample_prior``, and what a gradient-based sampler or optimiser needs:
+``grad_log_posterior``, ``value_and_grad_log_posterior`` and
+``hessian_log_posterior``.
+
+The densities are written in ``jax.numpy`` and compiled with ``jax.jit`` once
+per problem, so ``jax.grad``, ``jax.hessian`` and ``jax.vmap`` work through
+``log_posterior`` and everything under it: the models, the covariance terms,
+the likelihood and the prior.  Called on a concrete ``theta`` the densities
+return a Python ``float`` (what emcee, dynesty and scipy expect); under a JAX
+transformation they return the traced value.  ``prior_transform`` and
+``sample_prior`` are not differentiated and stay numpy/scipy.
 
 Prior rules, per slot (see :class:`~rxmc.params.Parameter`):
 
@@ -28,6 +38,12 @@ Prior rules, per slot (see :class:`~rxmc.params.Parameter`):
   already be normalised on its truncated support.  A hyperprior is a joint
   block that includes its hyperparameter.
 
+The log density of a prior is evaluated in ``jax.numpy``.  A frozen scipy
+marginal is translated to an equivalent JAX density for the families in
+:data:`JAX_LOGPDFS`; any other marginal needs its density written in
+``jax.numpy`` as ``Parameter(logpdf=...)``.  A custom joint's ``logpdf`` must
+be written in ``jax.numpy``; a frozen multivariate normal is translated.
+
 Nothing user-facing is mutated by compiling.  Compile the same declarations
 twice and you get two independent problems.
 """
@@ -37,16 +53,25 @@ from __future__ import annotations
 import warnings
 from typing import Any, Iterable, Sequence
 
+import jax
+import jax.numpy as jnp
+import jax.scipy.stats as jst
 import numpy as np
 from scipy import stats
 from scipy.stats.distributions import rv_frozen
 
 from .constraint import Constraint
-from .covariance import StructuredCovariance, _SingularCovariance
+from .covariance import StructuredCovariance
 from .params import Parameter
 from .terms import statistical
 
-__all__ = ["Problem", "ParameterIndex", "CompiledConstraint", "clip_unit_cube"]
+__all__ = [
+    "Problem",
+    "ParameterIndex",
+    "CompiledConstraint",
+    "clip_unit_cube",
+    "JAX_LOGPDFS",
+]
 
 
 def clip_unit_cube(u) -> np.ndarray:
@@ -123,13 +148,91 @@ class ParameterIndex:
                 f"duplicate parameter name(s) {sorted(set(dup))}: distinct Parameter "
                 "objects with one name would become two chain columns with the same "
                 "label.  Pass the SAME object everywhere the value is shared, or "
-                "name them apart (prefix= for kernel terms, nu= for StudentT)."
+                "name them apart (prefix= of kernel_params, nu= for StudentT)."
             )
 
 
 # ----------------------------------------------------------------------------
 # The prior
 # ----------------------------------------------------------------------------
+
+
+def _host(x):
+    """``x`` itself under a JAX transformation; otherwise numpy (a ``float`` when
+    0-d), so samplers and user code get plain values."""
+    if isinstance(x, jax.core.Tracer):
+        return x
+    x = np.asarray(x)
+    return float(x) if x.ndim == 0 else x
+
+
+def _std_uniform(z):
+    return jnp.where((z >= 0) & (z <= 1), 0.0, -jnp.inf)
+
+
+def _std_lognorm(z, s):
+    pos = z > 0
+    zs = jnp.where(pos, z, 1.0)
+    out = -jnp.log(zs * s * jnp.sqrt(2 * jnp.pi)) - jnp.log(zs) ** 2 / (2 * s**2)
+    return jnp.where(pos, out, -jnp.inf)
+
+
+def _std_halfnorm(z):
+    return jnp.where(z >= 0, jnp.log(2.0) + jst.norm.logpdf(z), -jnp.inf)
+
+
+def _std_halfcauchy(z):
+    return jnp.where(z >= 0, jnp.log(2.0) + jst.cauchy.logpdf(z), -jnp.inf)
+
+
+def _std_truncnorm(z, a, b):
+    log_mass = jnp.log(jax.scipy.special.ndtr(b) - jax.scipy.special.ndtr(a))
+    return jnp.where((z >= a) & (z <= b), jst.norm.logpdf(z) - log_mass, -jnp.inf)
+
+
+def _std_invgamma(z, a):
+    pos = z > 0
+    zs = jnp.where(pos, z, 1.0)
+    out = -jax.scipy.special.gammaln(a) - (a + 1) * jnp.log(zs) - 1.0 / zs
+    return jnp.where(pos, out, -jnp.inf)
+
+
+#: scipy family name -> standardised JAX log density ``f(z, *shapes)`` with
+#: ``z = (x - loc) / scale``.
+JAX_LOGPDFS = {
+    "norm": jst.norm.logpdf,
+    "uniform": _std_uniform,
+    "gamma": jst.gamma.logpdf,
+    "beta": jst.beta.logpdf,
+    "lognorm": _std_lognorm,
+    "halfnorm": _std_halfnorm,
+    "cauchy": jst.cauchy.logpdf,
+    "halfcauchy": _std_halfcauchy,
+    "t": jst.t.logpdf,
+    "expon": jst.expon.logpdf,
+    "laplace": jst.laplace.logpdf,
+    "logistic": jst.logistic.logpdf,
+    "invgamma": _std_invgamma,
+    "truncnorm": _std_truncnorm,
+}
+
+
+def _jax_logpdf(dist, name):
+    """A JAX log density equal to a frozen scipy univariate's ``logpdf``."""
+    family = getattr(getattr(dist, "dist", None), "name", None)
+    if family not in JAX_LOGPDFS:
+        raise TypeError(
+            f"the prior of {name!r} ({family or type(dist).__name__}) has no JAX "
+            f"translation; supported scipy families are {sorted(JAX_LOGPDFS)}.  "
+            "Give the parameter its density in jax.numpy as "
+            "Parameter(..., logpdf=f), or cover it with a joint block whose "
+            "logpdf is written in jax.numpy"
+        )
+    shapes, loc, scale = dist.dist._parse_args(*dist.args, **dist.kwds)
+    f, shapes = JAX_LOGPDFS[family], tuple(float(a) for a in shapes)
+    loc, scale = float(loc), float(scale)
+    log_scale = np.log(scale)
+    return lambda x: f((x - loc) / scale, *shapes) - log_scale
 
 
 def _is_frozen_mvn(joint) -> bool:
@@ -178,13 +281,23 @@ class _Marginal:
                     f"the prior of {p.name!r} has no mass inside its bounds"
                 )
             self.log_norm = float(np.log(mass))
-
-    def logpdf(self, v) -> float:
-        if v < self.lo or v > self.hi:
-            return -np.inf
+        # the JAX density, and a point inside the support at which it is
+        # evaluated when v is outside (so the discarded branch of the where
+        # has a finite gradient)
         if self.dist is None:
-            return -self.log_norm
-        return float(self.dist.logpdf(v)) - self.log_norm
+            self._logpdf = None
+        elif p.logpdf is not None:
+            self._logpdf = p.logpdf
+        else:
+            self._logpdf = _jax_logpdf(self.dist, p.name)
+        self.safe = float(self.transform(0.5))
+
+    def logpdf(self, v):
+        inside = (v >= self.lo) & (v <= self.hi)
+        if self._logpdf is None:
+            return jnp.where(inside, -self.log_norm, -jnp.inf)
+        lp = self._logpdf(jnp.where(inside, v, self.safe)) - self.log_norm
+        return jnp.where(inside, lp, -jnp.inf)
 
     def transform(self, u):
         if self.dist is None:
@@ -203,6 +316,12 @@ class _Joint:
         self.params, self.joint, self.slots = tuple(params), joint, slots
         self.bounds = np.asarray([p.bounds for p in self.params], dtype=float)
         self.bounded = bool(np.any(np.isfinite(self.bounds)))
+        # a point inside the bounds, at which the density is evaluated when the
+        # values are outside (so the discarded branch has a finite gradient)
+        lo, hi = self.bounds.T
+        self.safe = np.clip(0.0, lo + 1.0, hi - 1.0)
+        both = np.isfinite(lo) & np.isfinite(hi)
+        self.safe[both] = 0.5 * (lo[both] + hi[both])
         self.names = [p.name for p in self.params]
         if not hasattr(joint, "logpdf"):
             raise TypeError(f"joint prior over {self.names} must have logpdf(values)")
@@ -215,8 +334,12 @@ class _Joint:
         if _is_frozen_mvn(joint):
             self._L = np.linalg.cholesky(np.atleast_2d(joint.cov))
             self._mean = np.atleast_1d(joint.mean)
+            mean, cov = jnp.asarray(self._mean), jnp.asarray(np.atleast_2d(joint.cov))
+            self._logpdf = lambda v: jst.multivariate_normal.logpdf(v, mean, cov)
         else:
             self._L = None
+            self._logpdf = joint.logpdf
+            _check_traceable(self._logpdf, len(self.params), self.names)
         # a truncated MVN is renormalised by its mass inside the bounds; the box
         # probability is quasi-Monte Carlo from 3 dimensions, so it is seeded
         self.log_mass = 0.0
@@ -235,13 +358,13 @@ class _Joint:
             self._L is not None or hasattr(self.joint, "prior_transform")
         )
 
-    def logpdf(self, values) -> float:
-        if self.bounded and (
-            np.any(values < self.bounds[:, 0]) or np.any(values > self.bounds[:, 1])
-        ):
-            return -np.inf
-        # item(): a length-1 array is fine, a longer one (a mis-sized joint) is not
-        return float(np.asarray(self.joint.logpdf(values)).item()) - self.log_mass
+    def logpdf(self, values):
+        inside = jnp.all((values >= self.bounds[:, 0]) & (values <= self.bounds[:, 1]))
+        # reshape(()): a length-1 result is fine, a longer one (a mis-sized
+        # joint) is not
+        lp = self._logpdf(jnp.where(inside, values, self.safe))
+        lp = jnp.reshape(lp, ()) - self.log_mass
+        return jnp.where(inside, lp, -jnp.inf) if self.bounded else lp
 
     def transform(self, u):
         if self.bounded:
@@ -286,6 +409,18 @@ class _Joint:
         )
 
 
+def _check_traceable(logpdf, n, names):
+    """Fail at compile, by name, when a joint's ``logpdf`` is not jax.numpy."""
+    try:
+        jax.eval_shape(logpdf, jax.ShapeDtypeStruct((n,), jnp.float64))
+    except Exception as err:  # any tracing failure: a numpy/scipy logpdf
+        raise TypeError(
+            f"the joint prior over {names} has a logpdf that JAX cannot trace "
+            f"({type(err).__name__}: {err}); write it with jax.numpy and "
+            "jax.scipy.stats so the posterior can be differentiated"
+        ) from None
+
+
 class _Prior:
     def __init__(self, index: ParameterIndex, priors):
         self.ndim = index.ndim
@@ -323,17 +458,13 @@ class _Prior:
             if p not in covered or p in univariate
         ]
 
-    def logpdf(self, theta) -> float:
+    def logpdf(self, theta):
         total = 0.0
         for m in self.marginals:
-            total += m.logpdf(theta[m.slot])
-            if total == -np.inf:
-                return -np.inf
+            total = total + m.logpdf(theta[m.slot])
         for j in self.joints:
-            total += j.logpdf(theta[j.slots])
-            if total == -np.inf:
-                return -np.inf
-        return float(total)
+            total = total + j.logpdf(theta[j.slots])
+        return jnp.asarray(total)
 
     def transform(self, u) -> np.ndarray:
         u = clip_unit_cube(u)
@@ -456,8 +587,27 @@ class CompiledConstraint:
             labels=self.labels,
         )
 
-    def ym(self, theta) -> np.ndarray:
-        """The stacked prediction in comparison space, all points."""
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state.pop("_jit_cache", None)
+        return state
+
+    def _jitted(self, key, fn):
+        """``jax.jit(fn)``, built once per key (the diagnostics call ``ym`` and
+        ``matrix`` per posterior sample)."""
+        cache = self.__dict__.setdefault("_jit_cache", {})
+        if key not in cache:
+            cache[key] = jax.jit(fn)
+        return cache[key]
+
+    def ym(self, theta):
+        """The stacked prediction in comparison space, all points.
+
+        A numpy array on a concrete ``theta``.
+        """
+        return _host(self._jitted("ym", self._ym)(jnp.asarray(theta, dtype=float)))
+
+    def _ym(self, theta):
         parts = []
         for (_, g, c), label in zip(self.predictors, self.labels):
             y = c.predict(*theta[g])
@@ -467,33 +617,34 @@ class CompiledConstraint:
                     f"grid of {c.n} point(s)"
                 )
             parts.append(y)
-        return np.concatenate(parts)
+        return jnp.concatenate(parts)
 
-    def predict_physical(self, theta) -> list[np.ndarray]:
+    def predict_physical(self, theta) -> list:
         return [c.predictor(*theta[g]) for _, g, c in self.predictors]
 
     def _stats(self, theta):
-        ym = self.ym(theta)
-        if not np.all(np.isfinite(ym[self.active])):
-            return None
-        try:
-            return self.covariance.distance(ym, theta)
-        except _SingularCovariance:
-            return None  # a parametric covariance singular at this theta: no density
-
-    def log_likelihood(self, theta) -> float:
-        s = self._stats(theta)
-        if s is None:
-            return -np.inf
-        return float(
-            self.likelihood.log_likelihood(*s, self.n_active, *theta[self.like_gather])
+        """``(d2, logdet, ok)``: ``ok`` is false where the prediction is not
+        finite on the active points or a parametric covariance is singular."""
+        ym = self._ym(theta)
+        d2, logdet = self.covariance.distance(ym, theta)
+        ok = (
+            jnp.all(jnp.isfinite(ym[self.active]))
+            & jnp.isfinite(d2)
+            & jnp.isfinite(logdet)
         )
+        return d2, logdet, ok
 
-    def chi2(self, theta) -> float:
-        s = self._stats(theta)
-        if s is None:
-            return np.inf
-        return float(self.likelihood.chi2(*s, self.n_active, *theta[self.like_gather]))
+    def log_likelihood(self, theta):
+        d2, logdet, ok = self._stats(theta)
+        ll = self.likelihood.log_likelihood(
+            d2, logdet, self.n_active, *theta[self.like_gather]
+        )
+        return jnp.where(ok, ll, -jnp.inf)
+
+    def chi2(self, theta):
+        d2, logdet, ok = self._stats(theta)
+        c2 = self.likelihood.chi2(d2, logdet, self.n_active, *theta[self.like_gather])
+        return jnp.where(ok, c2, jnp.inf)
 
     def entries_for(self, terms=None, statistical: bool = True):
         """Covariance entries of a term selection, or ``None`` for all of them.
@@ -518,15 +669,19 @@ class CompiledConstraint:
             chosen = self.statistical_terms + chosen
         return [e for e in self.covariance.entries if any(e.term is t for t in chosen)]
 
-    def matrix(self, theta, *, terms=None, statistical: bool = True) -> np.ndarray:
+    def matrix(self, theta, *, terms=None, statistical: bool = True):
         """The dense covariance on the active points at ``theta``.
 
         ``terms`` and ``statistical`` select part of the error model; see
         :meth:`entries_for`.  The default is the covariance the likelihood uses.
+        A numpy array on a concrete ``theta``.
         """
-        return self.covariance.matrix(
-            self.ym(theta), theta, entries=self.entries_for(terms, statistical)
+        entries = self.entries_for(terms, statistical)
+        key = ("matrix", None if entries is None else tuple(map(id, entries)))
+        fn = self._jitted(
+            key, lambda t: self.covariance.matrix(self._ym(t), t, entries=entries)
         )
+        return _host(fn(jnp.asarray(theta, dtype=float)))
 
     def __repr__(self):
         return f"CompiledConstraint({self.labels}, n_active={self.n_active})"
@@ -590,6 +745,28 @@ class Problem:
             self.index.add_all(params)
         self.index.check_names_unique()
         self._prior = _Prior(self.index, self.priors)
+        self._weighted = [(c.weight, c) for c in self.constraints if c.weight != 0.0]
+        self._jit()
+
+    def _jit(self):
+        """Compile the densities once per problem (and again after unpickling)."""
+        self._log_prior_j = jax.jit(self._log_prior_impl)
+        self._log_likelihood_j = jax.jit(self._log_likelihood_impl)
+        self._log_posterior_j = jax.jit(self._log_posterior_impl)
+        self._chi2_j = jax.jit(self._chi2_impl)
+        self._vg_j = jax.jit(jax.value_and_grad(self._log_posterior_impl))
+        self._hess_j = jax.jit(jax.hessian(self._log_posterior_impl))
+        self._batch_j = jax.jit(jax.vmap(self._log_posterior_impl))
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        for k in [k for k in state if k.endswith("_j")]:
+            del state[k]
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._jit()
 
     # -- structure ----------------------------------------------------------
 
@@ -613,39 +790,68 @@ class Problem:
         """Chain columns of one parameter or of a sequence of them."""
         return self.index.slots(params)
 
-    def _theta(self, theta) -> np.ndarray:
-        theta = np.asarray(theta, dtype=float)
+    def _theta(self, theta):
+        theta = jnp.asarray(theta, dtype=float)
         if theta.shape != (self.ndim,):
             raise ValueError(f"theta must have shape ({self.ndim},), got {theta.shape}")
         return theta
 
+    # -- densities: pure jax.numpy, compiled in _jit ---------------------------
+
+    def _log_prior_impl(self, theta):
+        return self._prior.logpdf(theta)
+
+    def _log_likelihood_impl(self, theta):
+        total = 0.0
+        for w, c in self._weighted:
+            total = total + w * c.log_likelihood(theta)
+        return jnp.asarray(total)
+
+    def _log_posterior_impl(self, theta):
+        # prior first: outside its support the forward models are not run (a
+        # cond executes one branch; under vmap it evaluates both and selects)
+        lp = self._prior.logpdf(theta)
+        return jax.lax.cond(
+            jnp.isfinite(lp),
+            lambda t: lp + self._log_likelihood_impl(t),
+            lambda t: jnp.asarray(-jnp.inf),
+            theta,
+        )
+
+    def _chi2_impl(self, theta):
+        total = 0.0
+        for c in self.constraints:
+            total = total + c.chi2(theta)
+        return jnp.asarray(total)
+
     # -- densities ------------------------------------------------------------
 
     def log_prior(self, theta) -> float:
-        return self._prior.logpdf(self._theta(theta))
+        return _host(self._log_prior_j(self._theta(theta)))
 
     def log_likelihood(self, theta) -> float:
-        theta = self._theta(theta)
-        total = 0.0
-        for c in self.constraints:
-            if c.weight == 0.0:
-                continue
-            ll = c.log_likelihood(theta)
-            if ll == -np.inf:
-                return -np.inf
-            total += c.weight * ll
-        return float(total)
+        return _host(self._log_likelihood_j(self._theta(theta)))
 
     def log_posterior(self, theta) -> float:
-        theta = self._theta(theta)
-        lp = self._prior.logpdf(theta)
-        if not np.isfinite(lp):
-            return -np.inf
-        return lp + self.log_likelihood(theta)
+        return _host(self._log_posterior_j(self._theta(theta)))
 
     def chi2(self, theta) -> float:
-        theta = self._theta(theta)
-        return float(sum(c.chi2(theta) for c in self.constraints))
+        return _host(self._chi2_j(self._theta(theta)))
+
+    # -- derivatives ------------------------------------------------------------
+
+    def grad_log_posterior(self, theta) -> np.ndarray:
+        """The gradient of :meth:`log_posterior` (a numpy array)."""
+        return np.asarray(self._vg_j(self._theta(theta))[1])
+
+    def value_and_grad_log_posterior(self, theta) -> tuple[float, np.ndarray]:
+        """``(log_posterior(theta), grad_log_posterior(theta))`` in one pass."""
+        v, g = self._vg_j(self._theta(theta))
+        return float(v), np.asarray(g)
+
+    def hessian_log_posterior(self, theta) -> np.ndarray:
+        """The ``(ndim, ndim)`` Hessian of :meth:`log_posterior` (e.g. Laplace)."""
+        return np.asarray(self._hess_j(self._theta(theta)))
 
     def log_jacobian(self) -> float:
         """Sum of the constraints' comparison-space log-Jacobians, each times its
@@ -671,14 +877,18 @@ class Problem:
         return self._prior.sample(int(n), rng)
 
     def predict(self, theta, physical: bool = False) -> list[list[np.ndarray]]:
-        """Per constraint, per comparison: the prediction on all points."""
+        """Per constraint, per comparison: the prediction on all points.
+
+        numpy arrays on a concrete ``theta``.
+        """
         theta = self._theta(theta)
         out = []
         for c in self.constraints:
             if physical:
-                out.append(c.predict_physical(theta))
+                out.append([_host(y) for y in c.predict_physical(theta)])
             else:
-                out.append([cmp.predict(*theta[g]) for _, g, cmp in c.predictors])
+                ym = c.ym(theta)
+                out.append([ym[o] for o in c.offsets])
         return out
 
     # -- black-box-bayes spellings ------------------------------------------------
@@ -695,8 +905,13 @@ class Problem:
         return self.sample_prior(n)
 
     def log_posterior_batch(self, thetas) -> np.ndarray:
-        thetas = np.asarray(thetas, dtype=float)
-        return np.asarray([self.log_posterior(t) for t in thetas])
+        """:meth:`log_posterior` over the rows of ``thetas`` (vectorised)."""
+        thetas = jnp.asarray(thetas, dtype=float)
+        if thetas.ndim != 2 or thetas.shape[1] != self.ndim:
+            raise ValueError(
+                f"thetas must have shape (n, {self.ndim}), got {thetas.shape}"
+            )
+        return np.asarray(self._batch_j(thetas))
 
     def __repr__(self):
         return f"Problem(ndim={self.ndim}, constraints={len(self.constraints)})"

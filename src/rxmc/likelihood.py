@@ -17,9 +17,10 @@ from __future__ import annotations
 
 from math import inf
 
+import jax.numpy as jnp
 import numpy as np
+from jax.scipy.special import betaln, gammaln
 from scipy import stats
-from scipy.special import betaln, gammaln
 
 from .params import Parameter
 
@@ -36,10 +37,10 @@ class Likelihood:
 
     params: tuple[Parameter, ...] = ()
 
-    def log_likelihood(self, d2, logdet, n, *values) -> float:
+    def log_likelihood(self, d2, logdet, n, *values):
         raise NotImplementedError
 
-    def chi2(self, d2, logdet, n, *values) -> float:
+    def chi2(self, d2, logdet, n, *values):
         return d2
 
     def predictive_scale(self, rng, size, *values) -> np.ndarray:
@@ -54,7 +55,7 @@ class Likelihood:
 class Gaussian(Likelihood):
     """Multivariate-normal likelihood over the stacked residual (parameter-free)."""
 
-    def log_likelihood(self, d2, logdet, n, *values) -> float:
+    def log_likelihood(self, d2, logdet, n, *values):
         return log_likelihood(d2, logdet, n)
 
 
@@ -95,25 +96,25 @@ class StudentT(Likelihood):
         """``sqrt(nu / w)`` with ``w ~ chi2(nu)``: the multivariate-t mixing scale."""
         return np.sqrt(nu / rng.chisquare(nu, size))
 
-    def log_likelihood(self, d2, logdet, n, nu) -> float:
+    def log_likelihood(self, d2, logdet, n, nu):
         # lnG((n+nu)/2) - lnG(nu/2), without the cancellation at large nu
         return (
             gammaln(n / 2.0)
             - betaln(nu / 2.0, n / 2.0)
-            - 0.5 * n * np.log(np.pi * nu)
+            - 0.5 * n * jnp.log(jnp.pi * nu)
             - 0.5 * logdet
-            - 0.5 * (nu + n) * np.log1p(d2 / nu)
+            - 0.5 * (nu + n) * jnp.log1p(d2 / nu)
         )
 
 
 class Chi2(Likelihood):
     """Generalised chi-squared functional: drops the log-det normalisation."""
 
-    def log_likelihood(self, d2, logdet, n, *values) -> float:
+    def log_likelihood(self, d2, logdet, n, *values):
         return -0.5 * d2
 
 
-def log_likelihood(d2: float, logdet: float, n: int) -> float:
+def log_likelihood(d2, logdet, n: int):
     r"""Multivariate-normal log likelihood from pre-computed statistics.
 
     Parameters

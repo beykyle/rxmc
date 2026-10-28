@@ -2,13 +2,14 @@
 
 import numpy as np
 import pytest
-from sklearn.gaussian_process.kernels import RBF, Matern
 
 from helpers import (
     STUDY_LEGEND,
     assemble_dense,
     index_params,
     mahalanobis,
+    matern52,
+    rbf,
     study_form,
 )
 from rxmc import Parameter
@@ -137,7 +138,7 @@ class TestMultiBlock:
         assert np.any(ref[:3, 3:6] != 0.0)  # the modes really couple blocks
 
     def test_rank_two_woodbury_with_block_local_kernel(self):
-        gp = kernel(Matern(0.5, nu=2.5), jitter=0.0, prefix="gp")
+        gp = kernel(*matern52("gp"), jitter=0.0)
         terms = [
             statistical(self.stat),
             offset(parameter=self.omega),
@@ -156,7 +157,7 @@ class TestMultiBlock:
         np.testing.assert_allclose(cov.matrix(self.ym, theta), ref)
 
     def test_cross_block_matrix_forces_dense_path(self):
-        gp = kernel(RBF(1.0), jitter=0.0)
+        gp = kernel(*rbf(), jitter=0.0)
         terms = [statistical(self.stat), gp]
         rows = [np.arange(9), np.arange(6)]  # spans blocks 0 and 1
         cov, params = build(terms, self.x, self.y, self.offsets, rows=rows)

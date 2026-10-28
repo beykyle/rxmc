@@ -1,10 +1,12 @@
 """GP conditioning, and posterior-predictive draws on a new grid."""
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 from scipy import stats
 from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel
+from tinygp.kernels import ExpSquared
 
 from rxmc import (
     Comparison,
@@ -36,8 +38,12 @@ from rxmc.terms import (
 from rxmc.transforms import log
 
 
-def make_kernel():
-    return ConstantKernel(1.0) * RBF(length_scale=0.7) + WhiteKernel(1e-6)
+def build(log_var, log_ell):
+    """The tinygp twin of sklearn's ``ConstantKernel * RBF`` in log theta."""
+    return jnp.exp(log_var) * ExpSquared(scale=jnp.exp(log_ell))
+
+
+THETA = np.array([0.0, np.log(0.7)])  # ConstantKernel(1.0) * RBF(0.7)
 
 
 class TestGPPosteriorPredictive:
@@ -46,12 +52,11 @@ class TestGPPosteriorPredictive:
         self.X_train = np.sort(rng.uniform(-2, 2, 12))
         self.residuals = np.sin(self.X_train) + 0.05 * rng.standard_normal(12)
         self.X_pred = np.linspace(-2.5, 2.5, 25)
-        self.kernel = make_kernel()
-        self.theta = self.kernel.theta
+        self.theta = THETA
 
     def test_matches_sklearn_gpr(self):
         gpr = GaussianProcessRegressor(
-            kernel=self.kernel.clone_with_theta(self.theta),
+            kernel=ConstantKernel(1.0) * RBF(length_scale=0.7),
             optimizer=None,
             alpha=0.01,
             normalize_y=False,
@@ -59,7 +64,7 @@ class TestGPPosteriorPredictive:
         gpr.fit(self.X_train[:, None], self.residuals)
         mean_sk, cov_sk = gpr.predict(self.X_pred[:, None], return_cov=True)
         mean, cov = gp_posterior_predictive(
-            self.kernel,
+            build,
             self.theta,
             self.X_train,
             self.residuals,
@@ -70,16 +75,15 @@ class TestGPPosteriorPredictive:
         np.testing.assert_allclose(cov, cov_sk, atol=1e-6)
 
     def test_noiseless_interpolation_and_2d_inputs(self):
-        k = ConstantKernel(1.0) * RBF(length_scale=0.7)
         mean, cov = gp_posterior_predictive(
-            k, k.theta, self.X_train, self.residuals, self.X_train
+            build, THETA, self.X_train, self.residuals, self.X_train
         )
         # the nugget keeps a near-singular K invertible; interpolation to 1e-2
         np.testing.assert_allclose(mean, self.residuals, atol=1e-2)
         assert np.all(np.diag(cov) < 1e-2)
         X2 = np.column_stack([self.X_train, self.X_train**2])
         mean2, cov2 = gp_posterior_predictive(
-            k, k.theta, X2, self.residuals, X2[:5], train_noise_var=0.01
+            build, THETA, X2, self.residuals, X2[:5], train_noise_var=0.01
         )
         assert mean2.shape == (5,) and cov2.shape == (5, 5)
 
@@ -111,9 +115,12 @@ def problem(terms_first, space=None, err=0.05, fixed=True):
     model = line()
     comp = Comparison(d, model) if space is None else Comparison(d, model, space=space)
     if fixed:
-        gp = kernel(RBF(0.3, "fixed"))
+        gp = kernel(ExpSquared(scale=0.3))
     else:
-        gp = kernel(RBF(0.3), params=[Parameter("log_ell", prior=stats.norm(-1, 1))])
+        gp = kernel(
+            lambda le: ExpSquared(scale=jnp.exp(le)),
+            [Parameter("log_ell", prior=stats.norm(-1, 1))],
+        )
     eps = noise(Parameter("log_eps", prior=stats.norm(-3, 1)))
     terms = [eps, gp] if terms_first == "noise" else [gp, eps]
     p = Problem([Constraint([comp], terms=terms)])
@@ -177,10 +184,10 @@ class TestGPPredictiveDraws:
         lA1, lA2 = (Parameter("log_A", prior=stats.norm(0, 1)) for _ in range(2))
         slope = Parameter("slope", prior=stats.norm(0, 1))
         gp_c = kernel(
-            RBF(0.3, "fixed"), amplitude=constant_amplitude, amplitude_params=(lA1,)
+            ExpSquared(scale=0.3), amplitude=constant_amplitude, amplitude_params=(lA1,)
         )
         gp_g = kernel(
-            RBF(0.3, "fixed"),
+            ExpSquared(scale=0.3),
             amplitude=exp_growth_amplitude(1.0),
             amplitude_params=(lA2, slope),
         )
@@ -240,9 +247,9 @@ class TestGPPredictiveDraws:
         m1, m2 = line(), line()
         lA = Parameter("log_A", prior=stats.norm(0, 1))
         gp_amp = kernel(
-            RBF(0.3, "fixed"), amplitude=constant_amplitude, amplitude_params=(lA,)
+            ExpSquared(scale=0.3), amplitude=constant_amplitude, amplitude_params=(lA,)
         )
-        gp_fix = kernel(ConstantKernel(A**2, "fixed") * RBF(0.3, "fixed"))
+        gp_fix = kernel(A**2 * ExpSquared(scale=0.3))
         p1 = Problem([Constraint([Comparison(d, m1)], terms=[gp_amp])])
         p2 = Problem([Constraint([Comparison(d, m2)], terms=[gp_fix])])
         chain1 = np.tile([0.5, 0.2, np.log(A)], (8, 1))
@@ -262,12 +269,12 @@ class TestGPPredictiveDraws:
         m1, m2 = line(), line()
         lA1, lA2 = (Parameter("log_A", prior=stats.norm(0, 1)) for _ in range(2))
         gp_meta = kernel(
-            RBF(0.3, "fixed"),
-            amplitude=lambda c, lA: np.exp(lA) * c.meta("Elab") / 50.0,
+            ExpSquared(scale=0.3),
+            amplitude=lambda c, lA: jnp.exp(lA) * c.meta("Elab") / 50.0,
             amplitude_params=(lA1,),
         )
         gp_const = kernel(
-            RBF(0.3, "fixed"), amplitude=constant_amplitude, amplitude_params=(lA2,)
+            ExpSquared(scale=0.3), amplitude=constant_amplitude, amplitude_params=(lA2,)
         )
         p1 = Problem([Constraint([Comparison(d, m1)], terms=[gp_meta])])
         p2 = Problem([Constraint([Comparison(d, m2)], terms=[gp_const])])
@@ -282,11 +289,11 @@ class TestGPPredictiveDraws:
         np.testing.assert_allclose(b1, b2, atol=1e-8)
 
     def test_one_bare_callable_is_one_space(self):
-        # space=np.log wraps into a new Transform on each comparison
+        # space=jnp.log wraps into a new Transform on each comparison
         model = line()
         ds = [Dataset(X, Y + 1.0 + k, np.full(10, 0.05), label=f"d{k}") for k in (0, 1)]
-        comps = [Comparison(d, model, space=np.log) for d in ds]
-        gp = kernel(RBF(0.3, "fixed"), on=comps)
+        comps = [Comparison(d, model, space=jnp.log) for d in ds]
+        gp = kernel(ExpSquared(scale=0.3), on=comps)
         p = Problem([Constraint(comps, terms=[gp])])
         chain = np.tile([0.5, 1.2], (4, 1))
         band = gp_predictive_draws(
@@ -300,7 +307,7 @@ class TestGPPredictiveDraws:
             Comparison(Dataset(X, Y, np.full(10, 0.05), label=lab), model)
             for lab in "ab"
         )
-        gp = kernel(RBF(0.3, "fixed"), on=c2)
+        gp = kernel(ExpSquared(scale=0.3), on=c2)
         c = Constraint([c1, c2], terms=[gp]).masked(
             [np.ones(10, bool), np.zeros(10, bool)]
         )
@@ -322,7 +329,7 @@ class TestGPPredictiveDraws:
         with pytest.raises(TypeError, match="KernelTerm"):
             gp_predictive_draws(p, Term(np.ones(10), kind="diag"), pred, X_PRED, chain)
         with pytest.raises(ValueError, match="not part of any constraint"):
-            gp_predictive_draws(p, kernel(RBF(1.0, "fixed")), pred, X_PRED, chain)
+            gp_predictive_draws(p, kernel(ExpSquared(scale=1.0)), pred, X_PRED, chain)
         with pytest.raises(ValueError, match=r"\(n, 3\)"):
             gp_predictive_draws(p, gp, pred, X_PRED, chain[:, :2])
 
@@ -380,7 +387,7 @@ class TestGridDraws:
             predictive_draws(p, rows, rng=1, levels=(5, 95)),
             predictive_band(at_data, (5, 95)),
         )
-        gp = kernel(RBF(0.3, "fixed"))
+        gp = kernel(ExpSquared(scale=0.3))
         pk, mk, _ = one([gp])
         rk = np.tile([0.5, 0.2], (50, 1))
         pk_pred = mk.bind(X_GRID, {})
@@ -408,7 +415,7 @@ class TestGridDraws:
         """Every term a function: the grid draw and the data draw agree."""
         eps = noise(Parameter("log_eps", prior=stats.norm(-2, 1)))
         eta = normalization(Parameter("log_eta", prior=stats.norm(-2, 1)))
-        gp = kernel(ConstantKernel(0.04, "fixed") * RBF(0.3, "fixed"))
+        gp = kernel(0.04 * ExpSquared(scale=0.3))
         p, model, _ = one([eps, eta, gp])
         theta = np.array([0.5, 0.2, np.log(0.1), np.log(0.2)])
         mean, cov = cov_of(p, model, theta, x=X)
@@ -461,8 +468,8 @@ class TestGridDraws:
         log_l = Parameter("log_l", prior=stats.norm(-1, 1))
 
         def sq_exp(c, ll):
-            dx = np.subtract.outer(c.x, c.x)
-            return 0.04 * np.exp(-0.5 * dx**2 / np.exp(ll) ** 2)
+            dx = c.x[:, None] - c.x[None, :]
+            return 0.04 * jnp.exp(-0.5 * dx**2 / jnp.exp(ll) ** 2)
 
         p, model, _ = one([Term(sq_exp, (log_l,), kind="matrix")])
         theta = np.array([0.5, 0.2, np.log(0.5)])
@@ -471,7 +478,10 @@ class TestGridDraws:
         np.testing.assert_allclose(cov, 0.04 * np.exp(-0.5 * dx**2 / 0.25), atol=2e-3)
 
     def test_a_kernel_through_grid_draws_is_the_gp_function_unconditioned(self):
-        gp = kernel(RBF(0.3), params=[Parameter("log_ell", prior=stats.norm(-1, 1))])
+        gp = kernel(
+            lambda le: ExpSquared(scale=jnp.exp(le)),
+            [Parameter("log_ell", prior=stats.norm(-1, 1))],
+        )
         eps = noise(Parameter("log_eps", prior=stats.norm(-3, 1)))
         p, model, _ = one([eps, gp])
         rows = np.column_stack(
@@ -486,7 +496,7 @@ class TestGridDraws:
         )
 
     def test_joint_draws_are_curves_and_independent_draws_are_not(self):
-        gp = kernel(RBF(0.5, "fixed"))
+        gp = kernel(ExpSquared(scale=0.5))
         p, model, _ = one([gp])
         pred = model.bind(X_GRID, {})
         rows = np.array([0.5, 0.2])
@@ -502,7 +512,7 @@ class TestGridDraws:
         model = line()
         log_a = Parameter("log_a", prior=stats.norm(-2, 1))
         by_energy = Term(
-            lambda c, la: np.exp(la) * c.meta("Elab") / 50.0 * np.ones(len(c)),
+            lambda c, la: jnp.exp(la) * c.meta("Elab") / 50.0 * jnp.ones(len(c)),
             (log_a,),
             kind="diag",
         )

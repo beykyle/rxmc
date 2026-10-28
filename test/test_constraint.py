@@ -1,5 +1,6 @@
 """Comparison and Constraint: comparison space, reported terms, masks, support."""
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -45,9 +46,9 @@ class TestComparison:
         assert c.log_jacobian() == pytest.approx(4 * np.log(2.0))
         np.testing.assert_allclose(c.y_err, 2.0 * dataset().y_err)
 
-    def test_finite_difference_step_is_relative_to_tiny_data(self):
-        y = np.array([1e-6, 9e-7, 2e-6])  # b/sr-sized, below the old absolute step
-        c = Comparison(Dataset(np.arange(3.0), y, 0.1 * y), line, space=np.log10)
+    def test_autodiff_derivative_is_exact_on_tiny_data(self):
+        y = np.array([1e-6, 9e-7, 2e-6])  # b/sr-sized
+        c = Comparison(Dataset(np.arange(3.0), y, 0.1 * y), line, space=jnp.log10)
         np.testing.assert_allclose(c.y_err, 0.1 / np.log(10), rtol=1e-6)
 
     def test_non_positive_data_under_log_does_not_raise(self):
@@ -58,7 +59,7 @@ class TestComparison:
     def test_parametric_space_rejected_and_callable_accepted(self):
         with pytest.raises(ValueError, match="parameter-free"):
             Comparison(dataset(), line, space=scale())
-        c = Comparison(dataset(), line, space=np.sqrt)
+        c = Comparison(dataset(), line, space=jnp.sqrt)
         np.testing.assert_allclose(c.y, np.sqrt(dataset().y))
 
     def test_predictor_is_bound_with_meta(self):

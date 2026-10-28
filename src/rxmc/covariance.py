@@ -29,34 +29,68 @@ evaluated once; a covariance with no parametric part is factored once.
 ``B`` must be positive definite.  A block covered only by modes is singular in
 ``B`` even when ``Sigma`` is not; when every term is constant this is caught at
 construction and reported with the block's label.
+
+The layout (which rows each term writes, which block it lives in, the active
+positions of every block) is fixed at construction and held as numpy index
+arrays; only the values are computed per ``theta``, in ``jax.numpy``, so
+:meth:`StructuredCovariance.distance` is traceable and differentiable.  A
+parametric covariance that is not positive definite at some ``theta`` gives a
+NaN ``logdet`` there rather than raising (:func:`chol_logdet`), with a finite
+gradient; the compiled constraint reads that as zero density.
 """
 
 from __future__ import annotations
 
+import jax
+import jax.numpy as jnp
+import jax.scipy.linalg as jsla
 import numpy as np
-import scipy.linalg as sla
 
 from .terms import Term
 
 __all__ = ["StructuredCovariance", "chol_logdet"]
 
 
-class _SingularCovariance(ValueError):
-    """A parametric covariance that is singular at the requested ``theta``.
-
-    The compiled constraint reads it as zero density (``log_likelihood`` is
-    ``-inf``) so a sampler stepping onto such a point moves on.
-    """
-
-
+@jax.custom_jvp
 def chol_logdet(Sigma):
-    """Lower Cholesky factor and log-determinant of a positive-definite matrix."""
-    L = sla.cholesky(np.asarray(Sigma, dtype=float), lower=True)
-    return L, 2.0 * float(np.sum(np.log(np.diag(L))))
+    """Lower Cholesky factor and log-determinant of a positive-definite matrix.
+
+    Where ``Sigma`` is not positive definite the factor is the identity and the
+    log-determinant NaN, with a zero tangent: the caller reads the NaN as zero
+    density, and the gradient there stays finite (a failed factor would
+    otherwise send NaN back through the discarded branch).
+    """
+    Sigma = jnp.asarray(Sigma, dtype=float)
+    L = jnp.linalg.cholesky(Sigma)
+    ok = jnp.all(jnp.isfinite(L))
+    L = jnp.where(ok, L, jnp.eye(Sigma.shape[-1]))
+    return L, jnp.where(ok, 2.0 * jnp.sum(jnp.log(jnp.diag(L))), jnp.nan)
+
+
+@chol_logdet.defjvp
+def _chol_logdet_jvp(primals, tangents):
+    # the standard Cholesky derivative, dL = L Phi(L^-1 dSigma L^-T), but on the
+    # safe factor and a zeroed tangent where Sigma is not positive definite
+    L, logdet = chol_logdet(*primals)
+    dS = jnp.where(jnp.isfinite(logdet), tangents[0], 0.0)
+    dS = 0.5 * (dS + dS.T)
+    X = _solve_lower(L, _solve_lower(L, dS).T).T
+    phi = jnp.tril(X) - 0.5 * jnp.diag(jnp.diag(X))
+    return (L, logdet), (L @ phi, jnp.trace(X))
+
+
+def _solve_lower(L, b):
+    return jsla.solve_triangular(L, b, lower=True)
 
 
 class _Entry:
-    """One term placed on rows of the stack, with its gather into theta."""
+    """One term placed on rows of the stack, with its gather into theta.
+
+    Every index array here is numpy and fixed at construction: ``kept`` are
+    the term's support positions that are active, ``at`` their positions in
+    the active stack, and ``local`` (a matrix term inside one block) their
+    positions among that block's active rows.
+    """
 
     __slots__ = (
         "term",
@@ -64,12 +98,15 @@ class _Entry:
         "gather",
         "pos",
         "keep",
+        "kept",
+        "at",
+        "local",
         "block",
         "segments",
         "labels",
     )
 
-    def __init__(self, term, rows, gather, active, offsets, labels):
+    def __init__(self, term, rows, gather, active, offsets, block_pos, labels):
         self.term = term
         self.rows = np.asarray(rows, dtype=int)
         self.gather = np.asarray(gather, dtype=int)
@@ -78,6 +115,8 @@ class _Entry:
         lookup[active] = np.arange(len(active))
         self.pos = lookup[self.rows]
         self.keep = self.pos >= 0
+        self.kept = np.flatnonzero(self.keep)
+        self.at = self.pos[self.keep]
         # the block a matrix term lives in, or None if it crosses blocks
         blocks = {
             i
@@ -85,6 +124,11 @@ class _Entry:
             if np.any((self.rows >= o.start) & (self.rows < o.stop))
         }
         self.block = blocks.pop() if len(blocks) == 1 else None
+        self.local = (
+            np.searchsorted(block_pos[self.block], self.at)
+            if term.kind == "matrix" and self.block is not None
+            else None
+        )
         # the term's rows are in stack order, so each block's rows are contiguous
         # within them: slices of the support per block, and the block labels
         counts = [
@@ -137,43 +181,61 @@ class StructuredCovariance:
             if labels is not None
             else [f"block {i}" for i in range(len(self.offsets))]
         )
-        self.entries = []
-        for term, rows, gather in entries:
-            if not isinstance(term, Term):
-                raise TypeError(f"entries must hold Term objects, got {term!r}")
-            e = _Entry(term, rows, gather, self.active, self.offsets, self.labels)
-            if np.any(e.keep):
-                self.entries.append(e)
         self.n_active = int(self.active.size)
         # active rows of each block, as positions in the active stack
         self.block_pos = []
         for o in self.offsets:
             inside = (self.active >= o.start) & (self.active < o.stop)
             self.block_pos.append(np.flatnonzero(inside))
+        self.entries = []
+        for term, rows, gather in entries:
+            if not isinstance(term, Term):
+                raise TypeError(f"entries must hold Term objects, got {term!r}")
+            e = _Entry(
+                term,
+                rows,
+                gather,
+                self.active,
+                self.offsets,
+                self.block_pos,
+                self.labels,
+            )
+            if np.any(e.keep):
+                self.entries.append(e)
         self.dense = any(
             e.term.kind == "matrix" and e.block is None for e in self.entries
         )
         self.constant_entries = [e for e in self.entries if e.term.is_constant]
         self.parametric_entries = [e for e in self.entries if not e.term.is_constant]
         self.is_constant = not self.parametric_entries
+        # theta must reach every gather; checked on its (static) shape, since a
+        # jax gather out of range clamps instead of raising
+        self.n_theta = max(
+            (int(e.gather.max()) + 1 for e in self.entries if e.gather.size),
+            default=0,
+        )
         self._D0, self._U0, self._M0, self._X0 = self._pieces(
             self.constant_entries, None, None
         )
         self._cache = None
-        if self.is_constant:
-            self._factor(self._D0, self._U0, self._M0, self._X0)
+        # a singular constant covariance fails now, by label, rather than as a
+        # zero density at every theta.  Modes never enter B, so on the
+        # structured path every block no parametric diag or matrix term
+        # touches has a constant B, checked on its own
+        if self.is_constant and self.dense:
+            if not _is_pd(self._dense_matrix(self._D0, self._U0, self._M0, self._X0)):
+                raise ValueError(self._singular_message(self._D0))
         elif not self.dense:
-            # modes never enter B, so a block no parametric diag or matrix term
-            # touches has a constant B: a singular one fails now, by label, rather
-            # than as a zero density at every theta
             self._check_blocks(self._D0, self._M0, self._constant_blocks())
+        if self.is_constant:
+            self._cache = self._factor(self._D0, self._U0, self._M0, self._X0)
 
     # -- assembly -------------------------------------------------------------
 
     def _pieces(self, entries, ym, theta):
         """``(D, U_columns, M_blocks, cross_blocks)`` from a set of entries."""
         n = self.n_active
-        D = np.zeros(n)
+        D = jnp.zeros(n)
         U = []
         M = [None] * len(self.offsets)
         X = []  # (positions, matrix) for cross-block matrix terms (dense path)
@@ -189,27 +251,30 @@ class StructuredCovariance:
                 segments=e.segments,
                 labels=e.labels,
             )
-            pos, keep = e.pos[e.keep], e.keep
             if t.kind == "diag":
-                D[pos] += v[keep] ** 2
+                D = D.at[e.at].add(v[e.kept] ** 2)
             elif t.kind == "mode":
-                col = np.zeros(n)
-                col[pos] = v[keep]
-                U.append(col)
+                U.append(jnp.zeros(n).at[e.at].set(v[e.kept]))
             else:
-                sub = v[np.ix_(keep, keep)]
+                sub = v[np.ix_(e.kept, e.kept)]
                 if e.block is None:
-                    X.append((pos, sub))
+                    X.append((e.at, sub))
                 else:
                     b = e.block
                     if M[b] is None:
-                        M[b] = np.zeros(
-                            (len(self.block_pos[b]), len(self.block_pos[b]))
-                        )
-                    # positions of this term's rows within the block's active rows
-                    local = np.searchsorted(self.block_pos[b], pos)
-                    M[b][np.ix_(local, local)] += sub
+                        nb = len(self.block_pos[b])
+                        M[b] = jnp.zeros((nb, nb))
+                    M[b] = M[b].at[np.ix_(e.local, e.local)].add(sub)
         return D, U, M, X
+
+    def _check_theta(self, theta):
+        theta = jnp.asarray(theta, dtype=float)
+        if theta.ndim != 1 or theta.shape[0] < self.n_theta:
+            raise ValueError(
+                f"theta has shape {theta.shape} but the covariance's terms index "
+                f"{self.n_theta} parameter(s)"
+            )
+        return theta
 
     def _assemble(self, ym, theta):
         """Constant pieces plus the parametric ones at ``theta``."""
@@ -224,61 +289,50 @@ class StructuredCovariance:
         return D, U, M, list(self._X0) + X
 
     def _dense_matrix(self, D, U, M, X):
-        Sigma = np.diag(D)
+        Sigma = jnp.diag(D)
         for b, Mb in enumerate(M):
             if Mb is not None:
-                Sigma[np.ix_(self.block_pos[b], self.block_pos[b])] += Mb
+                pos = self.block_pos[b]
+                Sigma = Sigma.at[np.ix_(pos, pos)].add(Mb)
         for pos, sub in X:
-            Sigma[np.ix_(pos, pos)] += sub
-        for col in U:
-            Sigma += np.outer(col, col)
+            Sigma = Sigma.at[np.ix_(pos, pos)].add(sub)
+        if U:
+            Uc = jnp.column_stack(U)
+            Sigma = Sigma + Uc @ Uc.T
         return Sigma
 
     # -- factorisation ---------------------------------------------------------
 
     def _factor(self, D, U, M, X):
-        """Factor the covariance; cached when constant."""
-        if self.is_constant and self._cache is not None:
+        """Factor the covariance; the cached factors when constant."""
+        if self._cache is not None:
             return self._cache
-        try:
-            if self.dense:
-                L, logdet = chol_logdet(self._dense_matrix(D, U, M, X))
-                factors = ("dense", L, logdet)
-            else:
-                blocks = []
-                logdet = 0.0
-                Ws = []
-                for b, pos in enumerate(self.block_pos):
-                    if pos.size == 0:
-                        blocks.append(None)
-                        continue
-                    B = np.diag(D[pos])
-                    if M[b] is not None:
-                        B = B + M[b]
-                    L, ld = chol_logdet(B)
-                    logdet += ld
-                    W = (
-                        sla.solve_triangular(
-                            L, np.column_stack([c[pos] for c in U]), lower=True
-                        )
-                        if U
-                        else np.zeros((pos.size, 0))
-                    )
-                    blocks.append((pos, L, W))
-                    Ws.append(W)
-                if U:
-                    W = np.vstack(Ws) if Ws else np.zeros((0, len(U)))
-                    Ls, lds = chol_logdet(np.eye(len(U)) + W.T @ W)
-                    logdet += lds
-                else:
-                    Ls = None
-                factors = ("structured", blocks, Ls, logdet)
-        except np.linalg.LinAlgError as err:
-            error = ValueError if self.is_constant else _SingularCovariance
-            raise error(self._singular_message(D)) from err
-        if self.is_constant:
-            self._cache = factors
-        return factors
+        if self.dense:
+            L, logdet = chol_logdet(self._dense_matrix(D, U, M, X))
+            return ("dense", L, logdet)
+        blocks = []
+        logdet = 0.0
+        Ws = []
+        Uc = jnp.column_stack(U) if U else None
+        for b, pos in enumerate(self.block_pos):
+            if pos.size == 0:
+                blocks.append(None)
+                continue
+            B = jnp.diag(D[pos])
+            if M[b] is not None:
+                B = B + M[b]
+            L, ld = chol_logdet(B)
+            logdet = logdet + ld
+            W = _solve_lower(L, Uc[pos]) if U else jnp.zeros((pos.size, 0))
+            blocks.append((pos, L, W))
+            Ws.append(W)
+        if U:
+            W = jnp.vstack(Ws) if Ws else jnp.zeros((0, len(U)))
+            Ls, lds = chol_logdet(jnp.eye(len(U)) + W.T @ W)
+            logdet = logdet + lds
+        else:
+            Ls = None
+        return ("structured", blocks, Ls, logdet)
 
     def _constant_blocks(self) -> list[int]:
         """The blocks whose ``B`` no parametric diag or matrix entry touches."""
@@ -286,23 +340,21 @@ class StructuredCovariance:
         for e in self.parametric_entries:
             if e.term.kind == "mode":
                 continue
-            pos = e.pos[e.keep]
             varying.update(
-                b for b, bp in enumerate(self.block_pos) if np.isin(pos, bp).any()
+                b for b, bp in enumerate(self.block_pos) if np.isin(e.at, bp).any()
             )
         return [b for b in range(len(self.block_pos)) if b not in varying]
 
     def _check_blocks(self, D, M, blocks):
-        try:
-            for b in blocks:
-                pos = self.block_pos[b]
-                if pos.size:
-                    B = np.diag(D[pos]) + (0.0 if M[b] is None else M[b])
-                    sla.cholesky(B, lower=True)
-        except np.linalg.LinAlgError as err:
-            raise ValueError(self._singular_message(D, blocks)) from err
+        for b in blocks:
+            pos = self.block_pos[b]
+            if pos.size:
+                B = jnp.diag(D[pos]) + (0.0 if M[b] is None else M[b])
+                if not _is_pd(B):
+                    raise ValueError(self._singular_message(D, blocks))
 
     def _singular_message(self, D, blocks=None):
+        D = np.asarray(D)
         blocks = range(len(self.block_pos)) if blocks is None else blocks
         offenders = [
             self.labels[b] for b in blocks if np.any(D[self.block_pos[b]] == 0.0)
@@ -328,15 +380,16 @@ class StructuredCovariance:
         r"""``(d2, logdet)`` of the residual ``y - ym`` on the active rows.
 
         ``ym`` is the full-length stacked prediction; ``theta`` the flat
-        parameter vector the entries' gathers index into.
+        parameter vector the entries' gathers index into.  Both are 0-d jax
+        arrays; ``logdet`` is NaN where a parametric covariance is singular.
         """
-        theta = np.asarray(theta, dtype=float)
-        r = (self.y - np.asarray(ym, dtype=float))[self.active]
+        theta = self._check_theta(theta)
+        r = (self.y - ym)[self.active]
         kind, *rest = self._factor(*self._assemble(ym, theta))
         if kind == "dense":
             L, logdet = rest
-            z = sla.solve_triangular(L, r, lower=True)
-            return float(z @ z), float(logdet)
+            z = _solve_lower(L, r)
+            return z @ z, logdet
         blocks, Ls, logdet = rest
         d2 = 0.0
         w = None
@@ -344,13 +397,13 @@ class StructuredCovariance:
             if blk is None:
                 continue
             pos, L, W = blk
-            z = sla.solve_triangular(L, r[pos], lower=True)
-            d2 += float(z @ z)
+            z = _solve_lower(L, r[pos])
+            d2 = d2 + z @ z
             w = W.T @ z if w is None else w + W.T @ z
         if Ls is not None and w is not None:
-            s = sla.solve_triangular(Ls, w, lower=True)
-            d2 -= float(s @ s)
-        return d2, float(logdet)
+            s = _solve_lower(Ls, w)
+            d2 = d2 - s @ s
+        return jnp.asarray(d2), jnp.asarray(logdet)
 
     def matrix(self, ym, theta=(), entries=None):
         """The dense covariance on the active rows, for display and tests.
@@ -361,7 +414,16 @@ class StructuredCovariance:
         but not the experimental errors needs.  Default: every entry.  A subset
         is assembled directly, without the constant-piece cache.
         """
-        theta = np.asarray(theta, dtype=float)
+        theta = self._check_theta(theta)
         if entries is None:
             return self._dense_matrix(*self._assemble(ym, theta))
         return self._dense_matrix(*self._pieces(entries, ym, theta))
+
+
+def _is_pd(B) -> bool:
+    """Whether a concrete matrix is positive definite (has a Cholesky factor)."""
+    try:
+        np.linalg.cholesky(np.asarray(B))
+    except np.linalg.LinAlgError:
+        return False
+    return True

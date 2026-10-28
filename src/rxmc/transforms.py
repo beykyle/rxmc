@@ -1,7 +1,7 @@
 """
 Low-level transforms shared across rxmc.
 
-A :class:`Transform` is a numpy-style callable ``fn(a, *values) -> array`` with an
+A :class:`Transform` is a ``jax.numpy`` callable ``fn(a, *values) -> array`` with an
 optional tuple of :class:`~rxmc.params.Parameter` s (``values`` are their sampled
 values) and optional analytic ``derivative``/``inverse``.  The same type serves
 three roles:
@@ -23,7 +23,8 @@ from __future__ import annotations
 
 from typing import Callable, Sequence
 
-import numpy as np
+import jax
+import jax.numpy as jnp
 
 from .params import Parameter
 
@@ -31,17 +32,19 @@ __all__ = ["Transform", "as_transform", "identity", "log", "exp", "scale"]
 
 
 class Transform:
-    """A numpy-style transform with optional parameters.
+    """A ``jax.numpy`` transform with optional parameters.
 
     Parameters
     ----------
     fn : callable
-        ``fn(a, *values) -> np.ndarray``.
+        ``fn(a, *values) -> array``, written with ``jax.numpy`` so that
+        gradients flow through it.
     params : sequence of Parameter, optional
         Parameters whose sampled values are passed as ``*values``.
     derivative : callable, optional
-        ``derivative(a, *values) -> np.ndarray``, :math:`\\partial fn/\\partial a`
-        elementwise.  Used for delta-method error propagation and Jacobians.
+        ``derivative(a, *values) -> array``, :math:`\\partial fn/\\partial a`
+        elementwise.  Used for delta-method error propagation and Jacobians;
+        when omitted it is taken by automatic differentiation of ``fn``.
     inverse : Transform or callable, optional
         The inverse transform (parameter-free transforms only).
     name : str, optional
@@ -101,21 +104,20 @@ class Transform:
                 f"transform {self.name!r} expects {self.n_params} value(s), "
                 f"got {len(values)}"
             )
-        a = np.asarray(a, dtype=float)
-        return np.asarray(self.fn(a, *values), dtype=float)
+        return jnp.asarray(self.fn(jnp.asarray(a, dtype=float), *values))
 
     def derivative(self, a, *values):
         """Elementwise derivative :math:`\\partial fn/\\partial a` at ``a``.
 
-        Falls back to a central finite difference when no analytic derivative
-        was supplied.
+        Falls back to automatic differentiation of ``fn`` (elementwise, so
+        ``fn`` must act on each entry independently) when no analytic
+        derivative was supplied.
         """
-        a = np.asarray(a, dtype=float)
+        a = jnp.asarray(a, dtype=float)
         if self.derivative_fn is not None:
-            return np.asarray(self.derivative_fn(a, *values), dtype=float)
-        # a step relative to a, so data far below 1 (b/sr) keep their precision
-        h = 1e-6 * np.where(a == 0.0, 1.0, np.abs(a))
-        return (self(a + h, *values) - self(a - h, *values)) / (2 * h)
+            return jnp.asarray(self.derivative_fn(a, *values))
+        d = jax.grad(lambda ai: self.fn(ai, *values))
+        return jnp.vectorize(d)(a)
 
     def __or__(self, other) -> "Transform":
         """``(f | g)(a) = g(f(a))`` with parameters ``f.params + g.params``."""
@@ -168,22 +170,23 @@ def _identity(a):
 
 
 def _safe_log(a):
-    """``log(a)`` for an ndarray ``a``, ``-inf`` where ``a <= 0`` (no warnings)."""
-    out = np.full(np.shape(a), -np.inf, dtype=float)
+    """``log(a)``, ``-inf`` where ``a <= 0``.
+
+    The inner ``where`` keeps the gradient finite at the points the outer one
+    discards.
+    """
     pos = a > 0
-    out[pos] = np.log(a[pos])
-    return out
+    return jnp.where(pos, jnp.log(jnp.where(pos, a, 1.0)), -jnp.inf)
 
 
 def _reciprocal(a):
-    with np.errstate(divide="ignore"):
-        return 1.0 / a
+    return 1.0 / a
 
 
-identity = Transform(_identity, derivative=np.ones_like, name="identity")
+identity = Transform(_identity, derivative=jnp.ones_like, name="identity")
 identity._inverse = identity
 
-exp = Transform(np.exp, derivative=np.exp, name="exp")
+exp = Transform(jnp.exp, derivative=jnp.exp, name="exp")
 log = Transform(_safe_log, derivative=_reciprocal, inverse=exp, name="log")
 """Natural log; ``-inf`` (no warnings) where the argument is not positive."""
 exp._inverse = log
@@ -219,14 +222,14 @@ def scale(parameter: Parameter | None = None, log: bool = True, name=None) -> Tr
         )
     if log:
         return Transform(
-            lambda a, v: np.exp(v) * a,
+            lambda a, v: jnp.exp(v) * a,
             (parameter,),
-            derivative=lambda a, v: np.full_like(a, np.exp(v)),
+            derivative=lambda a, v: jnp.full_like(a, jnp.exp(v)),
             name="scale",
         )
     return Transform(
         lambda a, v: v * a,
         (parameter,),
-        derivative=lambda a, v: np.full_like(a, v),
+        derivative=lambda a, v: jnp.full_like(a, v),
         name="scale",
     )

@@ -7,7 +7,9 @@ inferred or marginalised, whether the model is allowed a discrepancy, which
 points are held out.  A reviewer can read the declaration and write down the
 likelihood.  The library owns no sampler: a compiled problem exposes the
 densities and the prior transform that emcee, dynesty or black-box-bayes
-need.
+need.  The densities are written in JAX, so `jax.grad` works through the
+posterior (the reaction solver included) for HMC, optimisation or a Laplace
+approximation.
 
 ##  Documentation
 
@@ -57,7 +59,15 @@ from rxmc import terms as T
 log_eta = rx.Parameter("log_eta", prior=stats.norm(-2.0, 1.0))
 problem = rx.Problem([rx.Constraint([rx.Comparison(data, line)], terms=[T.normalization(log_eta)])])
 print(problem.names)  # ['m', 'b', 'log_eta']
+
+# the densities are JAX: exact gradients and Hessians of the log posterior
+theta = np.array([0.6, 2.0, -2.0])
+print(problem.grad_log_posterior(theta), problem.hessian_log_posterior(theta).shape)
 ```
+
+Models, terms and transforms are plain callables written with `jax.numpy`
+(`jnp.exp`, not `np.exp`), so that gradients flow through them; importing
+`rxmc` enables JAX's 64-bit mode.
 
 ## A reaction model
 
@@ -127,8 +137,10 @@ print(problem.names, sampler.results.logz[-1])
 
 ## Installation
 
-Python 3.12 or later; the runtime dependencies are `numpy`, `scipy`,
-`jitr >= 3.0` and `exfor-tools`.  Until the 1.0 pre-releases are on PyPI
+Python 3.12 or later; the runtime dependencies are `numpy`, `scipy`, `jax`,
+`tinygp` (Gaussian-process kernels), `jitr` and `exfor-tools`.  `jitr` is
+taken from its `jax-core` branch (the JAX solver of the next jitr release)
+until that release is on PyPI.  Until the 1.0 pre-releases are on PyPI
 (`pip install --pre rxmc`), install from GitHub:
 
 ```bash

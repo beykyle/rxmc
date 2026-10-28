@@ -8,7 +8,16 @@ whether the model is allowed a discrepancy, which points are held out,
 appears in the declaration, so that a reviewer can read the declaration and
 write down the likelihood.  The library owns no sampler: a compiled
 `Problem` exposes the densities and the prior transform that emcee, dynesty
-or `black-box-bayes` need.
+or `black-box-bayes` need, and their gradients and Hessians for
+gradient-based samplers and optimisers.
+
+The numerical backend is JAX.  Everything a density evaluation runs, the
+models (the `jitr` solver included), the covariance terms, the structured
+covariance, the likelihood and the prior's log density, is written in
+`jax.numpy` and compiled once per problem with `jax.jit`, so `jax.grad`,
+`jax.hessian` and `jax.vmap` work through `Problem.log_posterior`.  What
+needs no derivative stays numpy and scipy: the compile step's bookkeeping,
+the prior transform and prior draws, diagnostics and predictive draws.
 
 This document is the maintainer's description of the library as it is.
 Read it with `recipes.md`, which states every supported use case with its
@@ -124,7 +133,9 @@ def as_transform(t) -> Transform       # None -> identity; callable -> parameter
 One type, three roles: the comparison space of a `Comparison`, a mean
 transform composed onto a `Model`, and the coordinates a `Term` is
 evaluated in.  `is_identity` is an object-identity test on the singleton,
-the only fast path.
+the only fast path.  `fn` is written with `jax.numpy`; without an analytic
+`derivative=` the derivative is taken by automatic differentiation
+(elementwise), not by finite differences.
 
 ### 2.3 `units.py` and `data.py`
 
@@ -241,20 +252,24 @@ normalization(parameter=None, magnitude=None, mask=None, log=True, on=None)
 noise(parameter, log=True, basis=None, basis_params=(), on=None, coords=None)
 proportional_error(parameter, averaging=False, log=True, on=None)
 systematic(parameter, basis, log=True, basis_params=(), on=None, coords=None)
-kernel(kernel, coords=None, amplitude=None, amplitude_params=(), jitter=1e-10,
-       prefix="discrepancy", params=None, on=None) -> KernelTerm
+kernel(build, params=(), coords=None, amplitude=None, amplitude_params=(),
+       jitter=1e-10, on=None) -> KernelTerm       # build(*values) -> tinygp kernel
+kernel_params(names, bounds=None, prefix="discrepancy") -> list[Parameter]
 # bases and amplitudes: ones, ym, averaging, x_basis(scale), exp_growth(scale, base=ones),
 #                       constant_amplitude, exp_growth_amplitude(scale)
 ```
 
 `noise` and `proportional_error` are additive on top of the reported diagonal;
 `Constraint(statistical=False)` makes them replace it.  `normalization`
-reads `c.ym`, never `c.y`.  `kernel` derives one `Parameter` per free
-hyperparameter element in sklearn's log-theta space, bounded by the log of
-the kernel's bounds so it compiles with a uniform prior there; `params=`
-passes the objects instead, which is also how hyperparameters are shared
-between per-comparison kernels.  Two kernel terms with derived names and
-one prefix fail compile on the duplicate name.
+reads `c.ym`, never `c.y`.  `kernel` takes a builder `build(*values) ->
+tinygp kernel` and the parameters it consumes; the builder owns the
+parameterisation (log space, sums and products of kernels, an anisotropic
+metric through `tinygp.transforms.Linear`), and a tinygp kernel object
+itself is a fixed kernel.  tinygp kernels carry no hyperparameter metadata,
+so the parameters are declared, by hand or with `kernel_params`; passing
+the same objects to several `kernel` calls shares hyperparameters between
+per-comparison kernels.  Every term `fn`, basis and amplitude is written
+with `jax.numpy`.
 
 Hierarchy is sharing plus `meta`: a hyperparameter shared by several
 datasets is one object placed in one term per comparison, and anything
@@ -342,8 +357,9 @@ class Problem:
     index: ParameterIndex; constraints: tuple[CompiledConstraint, ...]; priors
     ndim, names, bounds, params
     def columns(self, params) -> ndarray
-    def log_prior / log_likelihood / log_posterior / chi2 (theta)
-    def prior_transform(self, u); def sample_prior(self, n, rng=None)
+    def log_prior / log_likelihood / log_posterior / chi2 (theta)   # float, or a tracer under JAX
+    def grad_log_posterior / value_and_grad_log_posterior / hessian_log_posterior (theta)
+    def prior_transform(self, u); def sample_prior(self, n, rng=None)   # numpy/scipy
     def predict(self, theta, physical=False) -> list[list[ndarray]]   # per constraint, per comparison
     def log_jacobian(self) -> float
     NDIM, parameter_names, starting_location(n), log_posterior_batch(thetas)   # black-box-bayes spellings
@@ -360,6 +376,26 @@ prior block mentions, a hyperprior's hyperparameter, get slots after every
 constraint.  Names are then checked unique and the prior assembled.
 Compile the same declarations twice and you get two independent problems.
 
+**The densities.**  The last step of `__init__` wraps the pure-JAX densities
+in `jax.jit` (and `value_and_grad`, `hessian`, `vmap` of the posterior).
+Every index the densities use, the gathers, rows, block positions and
+active rows, is a numpy array fixed at compile, so the traced function sees
+only `theta`.  Python control flow on values is gone from the hot path: a
+non-finite prediction or a singular parametric covariance gives `-inf`
+through `jnp.where`, and `log_posterior` evaluates the prior first and runs
+the likelihood under `lax.cond`, so outside the prior's support the forward
+models do not run and the gradient is zero.  A `where` masks the value but
+not the gradient (the discarded branch still sends `0 * NaN` back), so
+every density evaluates its NaN-prone piece at a safe input instead: a
+marginal or bounded joint prior at an interior point, a singular covariance
+through the identity factor of `chol_logdet`.  A rejected `theta` inside
+the prior's support therefore has the prior's gradient alone.  The one gap
+is a forward model whose own Jacobian is NaN where its value is (rxmc's
+transforms take the log safely; a user model must do the same).
+On a concrete `theta` the public methods return Python floats; under a JAX
+transformation they return the tracer, so `jax.grad(problem.log_posterior)`
+works.  Pickling drops the compiled functions and unpickling rebuilds them.
+
 **Prior assembly.**  Each slot is covered by its parameter's marginal or by
 exactly one joint block `(params, joint)`, where `joint` has
 `logpdf(values)` over those parameters in that order and optionally
@@ -374,6 +410,16 @@ block that includes its hyperparameter, whose `logpdf` is
 `sum log p(child | hyper) + log p(hyper)` and whose `prior_transform` draws
 the hyperparameter first (recipe 24).  A slot no prior covers, or covered
 twice, is a compile error naming it.
+
+The prior's log density is JAX.  A scipy marginal is translated to an
+equal JAX density for the families in `problem.JAX_LOGPDFS` (normal,
+uniform, truncated normal, gamma, beta, lognormal, half-normal, Cauchy,
+half-Cauchy, Student-t, exponential, Laplace, logistic, inverse gamma),
+with the truncation mass still computed by scipy at compile; any other
+family needs `Parameter(logpdf=...)`, its density in `jax.numpy`.  A
+frozen multivariate normal joint is translated; a custom joint's `logpdf`
+must be `jax.numpy` and is checked at compile with `jax.eval_shape`.  The
+unit-cube map and the draws stay scipy.
 
 **`CompiledConstraint`** holds the stacked `x`, `y`, `y_err`, the offsets
 and active rows, the predictors with their gathers, the covariance, the
@@ -403,7 +449,14 @@ d2 = zᵀz − (Wᵀz)ᵀ S⁻¹ (Wᵀz),   logdet Σ = Σ_b logdet B_b + logdet
 
 at cost `O(Σ_b n_b³ + N r² + r³)`.  Masking slices rows before assembly.
 Constant parts are evaluated once at compile; a constraint whose
-covariance is entirely constant caches its factors.  `B` must be positive
+covariance is entirely constant caches its factors.  The layout (each
+entry's active positions, its block, its positions inside the block) is
+numpy, fixed at compile; assembly is functional `.at[].add` updates and the
+factors are `jnp.linalg.cholesky` and `solve_triangular`, so the whole
+distance is differentiable.  A parametric covariance that is not positive
+definite at some `theta` gives a NaN log-determinant (`chol_logdet`
+substitutes the identity factor and zeroes its tangent, so the gradient
+stays finite), which the compiled constraint reads as `-inf`.  `B` must be positive
 definite: a comparison covered only by modes is singular in `B` even when
 `Σ` is not, and compile says so with the label and the remedies.  A
 constraint boundary is about the likelihood functional and the weight, not
@@ -502,15 +555,22 @@ class IsobaricAnalogPN(Model):
                  args_from_params, params, *, lmax=..., wavelengths_beyond_range=..., zeros_per_node=...)
     def bind(self, x, meta) -> Predictor      # reads reaction, Elab, ExIAS
 def rutherford(kinematics, angles_rad) -> ndarray     # mb/sr, closed form
-def momentum_transfer(angles_rad, k) -> ndarray        # 2 k sin(theta/2), for coords=
+def momentum_transfer(angles_rad, k) -> array          # 2 k sin(theta/2), for coords=
 ```
 
 `ElasticXS` evaluates `central(r, *args)`, `spin_orbit(r, *args)` and,
-when given, `coulomb(r, *args)` on the workspace's radial grid, where
+when given, `coulomb(r, *args)` on the workspace's mesh `ws.r`, where
 `args_from_params(ws, *values)` returns two or three argument tuples,
-solves with jitr and extracts `dXS/dA` (b/sr), `dXS/dRuth` or `Ay`.  The
-angular basis is cached per model instance and kinematics, so a plotting
-grid reuses the data grid's basis; the cache is dropped on pickling.  The
+solves with jitr's JAX R-matrix core (`ws.xs(Potential(...))`) and
+extracts `dXS/dA` (b/sr), `dXS/dRuth` or `Ay`; the potentials are
+`jax.numpy` (jitr's potential forms are), so the prediction is
+differentiable in the potential parameters.  The spin-orbit potential
+multiplies `l.sigma` for a spin-1/2 projectile.  `IsobaricAnalogPN` is the
+DWBA (p,n) cross section of `jitr.xs.quasielastic_pn` with its default
+isovector Lane coupling.  The workspace at one energy is cached per model
+instance and kinematics and moved to a new grid with `ws.at_angles`, so a
+plotting grid reuses the data grid's solver; the cache is dropped on
+pickling.  The
 model owns its solver and the data does not, so a masked view or an
 unpickled problem cannot lose a workspace.  There is no compound-elastic
 hook: that contribution is subtracted from `data.y` as preprocessing
@@ -527,8 +587,8 @@ error model, with its predictives on a fine grid.
 ```python
 import numpy as np, dynesty, rxmc as rx
 from rxmc import terms as T, transforms as tf
+import jax.numpy as jnp, tinygp
 from scipy import stats
-from sklearn.gaussian_process.kernels import Matern
 
 data = rx.Dataset(angles_rad, ratio_to_rutherford, np.zeros(n), label="44Ca(a,a) 29 MeV",
                   meta={"reaction": reaction, "Elab": 29.0})
@@ -538,8 +598,9 @@ comp_log = rx.Comparison(data, omp, space=tf.log)
 comp_lin = rx.Comparison(data, omp)
 log_eps = rx.Parameter("log_eps", prior=stats.uniform(np.log(0.05), np.log(40)))
 log_eta = rx.Parameter("log_eta", prior=stats.uniform(np.log(0.05), np.log(40)))
-gp = T.kernel(Matern(0.1, nu=2.5), on=comp_log, coords=lambda x: x / np.pi,
-              amplitude=T.constant_amplitude, amplitude_params=(log_A,), params=[log_ell])
+gp = T.kernel(lambda le: tinygp.kernels.Matern52(scale=jnp.exp(le)), [log_ell],
+              on=comp_log, coords=lambda x: x / np.pi,
+              amplitude=T.constant_amplitude, amplitude_params=(log_A,))
 ladder = {
     "L0":  rx.Constraint([comp_log], terms=[T.noise(log_eps)], statistical=False),
     "E0":  rx.Constraint([comp_lin], terms=[T.proportional_error(log_eps)], statistical=False),
@@ -570,7 +631,53 @@ from `p.sample_prior` and `p.log_posterior`, and under `black-box-bayes`
 from a `dill` pickle and a six-line module that forwards
 `starting_location`, `log_posterior`, `log_likelihood` and
 `prior_transform`.  Reaction problems are driven by dynesty by preference:
-affine-invariant ensembles mix poorly on optical-model posteriors.
+affine-invariant ensembles mix poorly on optical-model posteriors.  With
+gradients available, HMC/NUTS (blackjax, numpyro) on `log_posterior`, or a
+MAP by `scipy.optimize.minimize(jac=p.grad_log_posterior)` followed by a
+Laplace approximation from `p.hessian_log_posterior`, are the alternatives.
+
+### Parallel sampling
+
+JAX is multithreaded, and a process started with `fork` (Python's default
+on Linux) from a process that has JAX loaded can deadlock; JAX warns when it
+happens.  In order of preference:
+
+1. **No pool.**  `Problem.log_posterior_batch` is one `jax.vmap` call over
+   the rows, and XLA already uses the cores: emcee's `vectorize=True`, or a
+   batched likelihood for a nested sampler.
+2. **A spawn pool.**  `multiprocessing.get_context("spawn")` (or
+   `"forkserver"`).  Models and terms hold closures the standard `pickle`
+   cannot serialise, so send the problem once per worker as `dill` bytes
+   through the pool's `initializer` (recipe 16); each worker compiles its
+   own densities on first use.
+3. **MPI.**  `mpirun`/`srun` start every rank as a fresh interpreter, so the
+   fork problem does not arise (do not `MPI.Comm.Spawn` from a JAX-loaded
+   process, and do not mix fork pools into a rank).  Each rank compiles its
+   own densities, and each rank's XLA thread pool defaults to every core:
+   with several ranks on a node, limit threads per rank (e.g.
+   `XLA_FLAGS="--xla_cpu_multi_thread_eigen=false
+   intra_op_parallelism_threads=1"` and `OMP_NUM_THREADS=1`).  On GPUs set
+   `XLA_PYTHON_CLIENT_PREALLOCATE=false` or pin one device per rank.
+
+### Performance
+
+`benchmarks/bench_log_posterior.py` times the densities on six problems and
+`benchmarks/compare.py` tabulates two runs.  Against the numpy rxmc on
+jitr 3.0.1 (same machine, CPU), the JAX rxmc on jitr's `jax-core` branch:
+
+| problem | `log_posterior` | gradient (FD baseline → autodiff) | vmap, 256 rows | emcee 32×500 |
+|---|---|---|---|---|
+| line, reported errors | 0.16 → 0.10 ms | 0.66 → 0.11 ms | 6.2k → 1.06M θ/s | 2.9 → 1.9 s |
+| 6 comparisons, 13 modes | 1.38 → 0.20 ms | 30.4 → 0.39 ms | 0.5k → 41k θ/s | |
+| GP, N = 100 | 0.79 → 0.27 ms | 6.4 → 1.2 ms | 1.3k → 4.4k θ/s | 10.3 → 4.6 s |
+| GP, N = 500 | 10.8 → 5.3 ms | 90 → 32 ms | 87 → 147 θ/s | |
+| elastic, 4 energies | 7.0 → 2.6 ms | 70 → 6.0 ms | 142 → 331 θ/s | 106 → 45 s |
+| (p,n) IAS, 1 energy | 5.2 → 2.1 ms | 43 → 4.1 ms | 191 → 450 θ/s | |
+
+The baseline gradient is a central finite difference (`2 ndim` calls).  The
+first call of a new problem pays compilation, 0.1 to 1 s.  Values agree to
+1e-13 except for the reaction models, where jitr v4 solves every partial
+wave up to `lmax` (elastic agrees to 1e-6).
 
 ## 4. Capability map
 
@@ -710,7 +817,10 @@ examples/           the notebooks and plotstyle.py; data/ (committed measurement
 docs/               this document, recipes.md, examples.rst, api.rst, groundup_design.md (history)
 ```
 
-Runtime dependencies: `numpy`, `scipy`, `jitr>=3.0`, `exfor-tools`.
+Runtime dependencies: `numpy`, `scipy`, `jax`, `tinygp`, `jitr` (its
+`jax-core` branch, the JAX solver of the next release, until that release is
+on PyPI) and `exfor-tools`.  Importing `rxmc` turns on `jax_enable_x64` for
+the process.
 Extras: `examples` (emcee, dynesty, corner, matplotlib, scikit-learn,
 dill, jupyter, ipykernel, tqdm), `validation` (examples plus pytest,
 nbmake, nbqa, ruff, black, isort, build), `docs` (sphinx, the pydata

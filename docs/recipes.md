@@ -10,11 +10,15 @@ asserts its *Expected behaviour* bullets, and the richest recipes are
 tutorial notebooks (design document §7 and §9).  Snippets assume:
 
 ```python
-import numpy as np, rxmc as rx
+import numpy as np, jax.numpy as jnp, tinygp, rxmc as rx
 from rxmc import terms as T, transforms as tf
 from scipy import stats
-from sklearn.gaussian_process.kernels import Matern, RBF
 ```
+
+Models, terms, transforms and custom priors are callables written with
+`jax.numpy` (`jnp.exp`, not `np.exp`): the densities are JAX, so gradients
+flow through every piece of the declaration.  `np` is fine for constants
+built outside those callables.
 
 ---
 
@@ -174,11 +178,14 @@ angle or in momentum transfer, learned from the residuals.*
 
 ```python
 log_A = rx.Parameter("log_A", prior=stats.norm(0, 2))
-gp = T.kernel(Matern(1.0, nu=2.5), on=comp, coords=lambda x: x / np.pi,
+log_ell = T.kernel_params(["length_scale"], [(np.log(1e-5), np.log(1e5))])
+gp = T.kernel(lambda le: tinygp.kernels.Matern52(scale=jnp.exp(le)), log_ell,
+              on=comp, coords=lambda x: x / np.pi,
               amplitude=T.constant_amplitude, amplitude_params=(log_A,))
 # in momentum transfer with amplitude A q^(r/2):
 q = lambda x: rx.reactions.momentum_transfer(x, d.meta["k"])
-gp_q = T.kernel(RBF(1.0), on=comp, coords=q, amplitude=lambda c, lA, r: np.exp(lA) * c.x ** (r / 2),
+gp_q = T.kernel(lambda le: tinygp.kernels.ExpSquared(scale=jnp.exp(le)), log_ell,
+                on=comp, coords=q, amplitude=lambda c, lA, r: jnp.exp(lA) * c.x ** (r / 2),
                 amplitude_params=(log_A, r))
 eps = T.noise(rx.Parameter("log_eps", prior=stats.norm(-3, 1)))
 c = rx.Constraint([comp], terms=[eps, gp])
@@ -193,11 +200,14 @@ fit = rx.predictive.gp_predictive_draws(problem, gp, pred, x_fine, samples, cond
 
 Expected behaviour:
 
-- One parameter per free kernel hyperparameter element, named
-  `discrepancy_<hyperparameter>`, sampled in sklearn's log-theta space and
-  bounded by the log of the kernel's bounds, so it compiles with a uniform
-  prior there (`params=` for any other prior).
-- `kernel()` returns a `KernelTerm`, a `Term` that also carries the kernel,
+- The kernel is a tinygp kernel built from the sampled values by the
+  builder passed to `kernel()`; the builder owns the parameterisation (here
+  a log length scale), so sums, products and anisotropic metrics are one
+  lambda.  The hyperparameters are declared: `kernel_params(names,
+  bounds)` gives `discrepancy_<name>` with a uniform prior on the bounds,
+  or pass any `Parameter` objects.  A tinygp kernel object itself is a
+  fixed kernel.
+- `kernel()` returns a `KernelTerm`, a `Term` that also carries its builder,
   so the predictive band can be built from the term alone.
 - The model parameters relax from their biased values toward the truth
   (`gp_discrepancy`); the inferred envelope contains the true defect.
@@ -435,8 +445,19 @@ Expected behaviour:
 
 - Chains from all three are `(n, ndim)` arrays in `problem.names` order.
   Every analysis function takes `(problem, samples)`.
-- `log_posterior` evaluates the prior first and never calls the forward
-  model when the prior is `-inf`.
+- `log_posterior` evaluates the prior first and never runs the forward
+  model when the prior is `-inf` (a `lax.cond` inside the compiled density).
+- On a concrete `theta` the densities return Python floats; they are
+  compiled with `jax.jit` once per problem, and `grad_log_posterior`,
+  `value_and_grad_log_posterior` and `hessian_log_posterior` serve
+  gradient-based samplers (HMC/NUTS in blackjax or numpyro) and optimisers.
+- Parallelism: `log_posterior_batch` is one vectorised (`jax.vmap`) call,
+  so `emcee.EnsembleSampler(..., problem.log_posterior_batch,
+  vectorize=True)` needs no pool.  JAX is multithreaded and a fork-started
+  pool (Python's default on Linux) can deadlock: use a `"spawn"` context
+  and send the problem once per worker as `dill` bytes through the pool's
+  `initializer`.  MPI ranks are fresh interpreters and are unaffected (see
+  the design document on threads per rank).
 - `dill.loads(dill.dumps(problem)).log_posterior(theta)` equals
   `problem.log_posterior(theta)`, workspaces included.
 - `problem.NDIM`, `problem.parameter_names`, `problem.starting_location`,
@@ -540,7 +561,7 @@ model no helper expresses.*
 ```python
 fixed = rx.Term(C, on=comp)                                       # any symmetric PD matrix
 stat  = rx.Term(sig, kind="diag", on=comp)                        # a fixed std-dev vector
-custom = rx.Term(lambda c, e, l: np.exp(e) * np.exp(l * c.x / np.pi), (log_e, slope), kind="diag")
+custom = rx.Term(lambda c, e, l: jnp.exp(e) * jnp.exp(l * c.x / np.pi), (log_e, slope), kind="diag")
 ```
 
 Expected behaviour:
@@ -621,8 +642,9 @@ log_A0 = rx.Parameter("log_A0", prior=stats.norm(0, 2))
 p      = rx.Parameter("p", prior=stats.norm(0, 1))
 ell    = rx.Parameter("gp_length", prior=stats.norm(0, 1))
 
-amp = lambda c, lA, p: np.exp(lA) * (c.meta("Elab") / 50.0) ** p
-terms = [T.kernel(Matern(1.0, nu=2.5), on=comp, params=[ell],
+amp = lambda c, lA, p: jnp.exp(lA) * (c.meta("Elab") / 50.0) ** p
+matern52 = lambda le: tinygp.kernels.Matern52(scale=jnp.exp(le))
+terms = [T.kernel(matern52, [ell], on=comp,
                   amplitude=amp, amplitude_params=(log_A0, p)) for comp in comps]
 c = rx.Constraint(comps, terms=terms)
 ```
@@ -635,9 +657,10 @@ Expected behaviour:
 - `c.meta("Elab")` is the comparison's energy broadcast to every point of the
   support, so the amplitude function is written once and works on any
   comparison.  On a term spanning comparisons it is the per-point concatenation.
-- Without `params=[ell]`, each `kernel` call would derive its own length
-  scale, one per dataset.  That is also a legitimate model; it is just not
-  this one.
+- With one `kernel_params(["length_scale"], prefix=f"gp{i}")` per call,
+  each dataset has its own length scale.  That is also a legitimate model;
+  it is just not this one.  Two calls declaring the same name with distinct
+  objects fail compile on the duplicate name.
 - The comparisons stay uncorrelated, so the constraint is on the structured
   path.
 
@@ -648,13 +671,14 @@ want one GP over (E, θ) that correlates the datasets at different
 energies.*
 
 ```python
-kE, kθ = RBF(10.0), Matern(0.3, nu=2.5)
 lE, lθ, log_A = (rx.Parameter(n, prior=stats.norm(0, 1)) for n in ("log_lE", "log_ltheta", "log_A"))
 
 def fn(c, lE, lθ, lA):
     E, θ = c.meta("Elab")[:, None], c.x[:, None]
-    K = kE.clone_with_theta([lE])(E) * kθ.clone_with_theta([lθ])(θ)     # separable product
-    return np.exp(2 * lA) * K + 1e-10 * np.eye(len(c))
+    kE = tinygp.kernels.ExpSquared(scale=jnp.exp(lE))
+    kθ = tinygp.kernels.Matern52(scale=jnp.exp(lθ))
+    K = kE(E, E) * kθ(θ, θ)                                         # separable product
+    return jnp.exp(2 * lA) * K + 1e-10 * jnp.eye(len(c))
 
 md = rx.Term(fn, (lE, lθ, log_A), kind="matrix", on=comps)
 c = rx.Constraint(comps, terms=[md])
@@ -683,10 +707,11 @@ rhos = [rx.Parameter(f"log_rho_{i}") for i in range(len(comps))]    # no margina
 log_tau = rx.Parameter("log_tau")
 
 class RhoHierarchy:
-    def logpdf(self, v):                       # v ordered as (rhos..., log_tau)
+    def logpdf(self, v):                       # v ordered as (rhos..., log_tau); jax.numpy
         *r, lt = v
-        return (stats.norm(0, np.exp(lt)).logpdf(r).sum()
-                + stats.halfnorm(scale=0.3).logpdf(np.exp(lt)) + lt)    # hyperprior on tau, with Jacobian
+        tau = jnp.exp(lt)
+        return (jst.norm.logpdf(jnp.stack(r), scale=tau).sum()           # jst = jax.scipy.stats
+                + jnp.log(2.0) + jst.norm.logpdf(tau, scale=0.3) + lt)  # half-normal hyperprior, Jacobian
     def prior_transform(self, u):              # hyperparameter first, children given it
         lt = np.log(stats.halfnorm(scale=0.3).ppf(u[-1]))
         return np.append(stats.norm(0, np.exp(lt)).ppf(u[:-1]), lt)
@@ -1027,8 +1052,8 @@ it is good enough.*
 ```python
 from scipy.optimize import minimize
 res = minimize(lambda t: -problem.log_posterior(t), problem.sample_prior(1)[0], method="L-BFGS-B",
-               bounds=problem.bounds)
-H = numerical_hessian(lambda t: -problem.log_posterior(t), res.x)
+               jac=lambda t: -problem.grad_log_posterior(t), bounds=problem.bounds)
+H = -problem.hessian_log_posterior(res.x)                # exact, by automatic differentiation
 cov = np.linalg.inv(H)                                   # Laplace covariance
 ```
 
@@ -1054,7 +1079,7 @@ component per experimental technique.*
 
 ```python
 log_s = rx.Parameter("log_s", prior=stats.norm(0, 0.5))
-scaled = rx.Term(lambda c, ls: np.exp(ls) * comp.y_err, (log_s,), kind="diag", on=comp)   # closes over the comparison's errors
+scaled = rx.Term(lambda c, ls: jnp.exp(ls) * comp.y_err, (log_s,), kind="diag", on=comp)   # closes over the comparison's errors
 c = rx.Constraint([comp], terms=[scaled], statistical=False)               # s multiplies every stated error
 
 # USU: one unknown, fully correlated component per technique, shared across its datasets
@@ -1227,19 +1252,19 @@ mu      = rx.Parameter("mu", prior=stats.norm(0, 25))
 log_tau = rx.Parameter("log_tau", prior=stats.norm(1, 1))
 
 # 1. marginalised: integrate the theta_j out; y_j ~ N(mu, sigma_j^2 + tau^2)
-c_marg = rx.Constraint([rx.Comparison(d, rx.Model(lambda x, mu: np.full(len(x), mu), [mu]))],
+c_marg = rx.Constraint([rx.Comparison(d, rx.Model(lambda x, mu: jnp.full(len(x), mu), [mu]))],
                        terms=[T.noise(log_tau)])
 # theta_j afterwards, from the conditional normal at each draw (mu, tau):
 #   mean = (y_j / s_j^2 + mu / tau^2) / (1 / s_j^2 + 1 / tau^2), var = 1 / (1 / s_j^2 + 1 / tau^2)
 
 # 2. non-centred: theta_j = mu + tau * eta_j, eta_j ~ N(0, 1); marginal priors only
 etas = [rx.Parameter(f"eta_{j}", prior=stats.norm(0, 1)) for j in range(J)]
-school = rx.Model(lambda x, mu, lt, *eta: mu + np.exp(lt) * np.asarray(eta), [mu, log_tau, *etas])
+school = rx.Model(lambda x, mu, lt, *eta: mu + jnp.exp(lt) * jnp.stack(eta), [mu, log_tau, *etas])
 c_nc = rx.Constraint([rx.Comparison(d, school)])
 
 # 3. centred: theta_j as parameters, hyperprior as a joint block including mu, tau (recipe 24)
 thetas = [rx.Parameter(f"theta_{j}") for j in range(J)]
-c_c = rx.Constraint([rx.Comparison(d, rx.Model(lambda x, *th: np.asarray(th), thetas))])
+c_c = rx.Constraint([rx.Comparison(d, rx.Model(lambda x, *th: jnp.stack(th), thetas))])
 problem_c = rx.Problem([c_c], priors=[(thetas + [mu, log_tau], SchoolHierarchy())])
 ```
 

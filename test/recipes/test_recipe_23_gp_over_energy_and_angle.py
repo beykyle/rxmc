@@ -5,9 +5,13 @@ want one GP over (E, theta) that correlates the datasets at different
 energies.
 """
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
+import tinygp
 from scipy import stats
+
+# sklearn's kernels serve only as the independent dense reference
 from sklearn.gaussian_process.kernels import RBF, Matern
 
 from common import TRUE, line
@@ -25,15 +29,15 @@ def test_one_matrix_term_spanning_the_comparisons():
     ]
     model = line()
     comps = [Comparison(d, model) for d in ds]
-    kE, kt = RBF(10.0), Matern(0.3, nu=2.5)
     lE, lt, log_A = (
         Parameter(n, prior=stats.norm(0, 1)) for n in ("log_lE", "log_ltheta", "log_A")
     )
 
     def fn(c, lE, lt, lA):
         E, t = c.meta("Elab")[:, None], c.x[:, None]
-        K = kE.clone_with_theta([lE])(E) * kt.clone_with_theta([lt])(t)
-        return np.exp(2 * lA) * K + 1e-10 * np.eye(len(c))
+        kE = tinygp.kernels.ExpSquared(scale=jnp.exp(lE))
+        kt = tinygp.kernels.Matern52(scale=jnp.exp(lt))
+        return jnp.exp(2 * lA) * kE(E, E) * kt(t, t) + 1e-10 * jnp.eye(len(c))
 
     md = Term(fn, (lE, lt, log_A), kind="matrix", on=comps)
     p = Problem([Constraint(comps, terms=[md])])

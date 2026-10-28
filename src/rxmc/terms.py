@@ -3,7 +3,7 @@ Covariance terms: the additive pieces of a constraint's covariance.
 
 A constraint owns one multivariate distribution over the stacked residual of
 its comparisons; its covariance is a sum of :class:`Term` s.  There is exactly
-**one** term type.  A ``Term`` is a numpy-style callable ``fn(c, *values) ->
+**one** term type.  A ``Term`` is a ``jax.numpy`` callable ``fn(c, *values) ->
 array`` of a :class:`TermContext` ``c`` (the term's view of ``x``, ``y`` and the
 prediction ``ym`` on its support, with ``x`` passed through an optional
 coordinate :class:`~rxmc.transforms.Transform`) and its parameter values, plus a
@@ -42,10 +42,13 @@ they cannot express is a direct ``Term(fn, params, kind=...)``.
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+import jax.numpy as jnp
 import numpy as np
+from tinygp.kernels import Kernel
 
 from .params import Parameter
 from .transforms import as_transform, identity
@@ -70,14 +73,15 @@ __all__ = [
     "proportional_error",
     "systematic",
     "kernel",
+    "kernel_params",
 ]
 
 KINDS = ("diag", "mode", "matrix")
 
 
-def as_2d(X) -> np.ndarray:
-    """Promote a 1-D input grid to a single-column 2-D array (sklearn kernels)."""
-    X = np.asarray(X, dtype=float)
+def as_2d(X):
+    """Promote a 1-D input grid to a single-column 2-D array."""
+    X = jnp.asarray(X, dtype=float)
     return X[:, None] if X.ndim == 1 else X
 
 
@@ -92,6 +96,10 @@ class TermContext:
     mis-declared constant term fails loudly.  ``len(c)`` is the number of
     points; :meth:`meta` gives per-point dataset metadata (``c.meta("Elab")``).
 
+    ``x`` and ``y`` are numpy (a function of them alone, such as a Legendre
+    basis from scipy, is a constant); ``ym`` and the term's parameter values
+    are traced by JAX, so anything computed from them uses ``jax.numpy``.
+
     A term spanning several comparisons sees their rows *gathered* into one
     stack, in constraint order.  :attr:`segments` are the slices of that stack
     belonging to each comparison, :attr:`labels` their labels, and
@@ -99,13 +107,13 @@ class TermContext:
     differentiates or smooths along the grid can stay within one comparison::
 
         def slope(c):  # angle-calibration mode: the slope of each prediction
-            return np.concatenate([np.gradient(ym, x) for x, ym in
-                                   zip(c.split(c.x), c.split(c.ym))])
+            return jnp.concatenate([jnp.gradient(ym, x) for x, ym in
+                                    zip(c.split(c.x), c.split(c.ym))])
     """
 
-    x: np.ndarray
-    y: np.ndarray
-    ym: np.ndarray | None = None
+    x: Any
+    y: Any
+    ym: Any = None
     _meta: Mapping[str, np.ndarray] | None = None
     _segments: tuple | None = None
     _labels: tuple | None = None
@@ -128,7 +136,6 @@ class TermContext:
 
     def split(self, a) -> list:
         """``a[s] for s in segments``: views of a support-length array per comparison."""
-        a = np.asarray(a)
         if a.shape[0] != len(self):
             raise ValueError(
                 f"split expects an array of length {len(self)}, got shape {a.shape}"
@@ -152,8 +159,9 @@ class Term:
     Parameters
     ----------
     fn : callable or array_like
-        ``fn(c, *values) -> np.ndarray`` with ``c`` a :class:`TermContext` and
-        ``values`` the sampled values of ``params`` (in order).  A plain array is
+        ``fn(c, *values) -> array`` with ``c`` a :class:`TermContext` and
+        ``values`` the sampled values of ``params`` (in order), written with
+        ``jax.numpy`` so gradients flow through it.  A plain array is
         a fixed contribution (``constant=True`` implied): a standard-deviation
         vector for ``kind="diag"``, a mode vector for ``"mode"``, or a symmetric
         block for ``"matrix"``.
@@ -249,21 +257,23 @@ class Term:
         :attr:`TermContext.segments`); omitted, the support is one segment.
         """
         self._check_count(values)
-        x = np.asarray(x)  # opaque: only a coordinate transform needs it numeric
+        # the data stay numpy constants (x is opaque, any dtype, unless a
+        # coordinate transform needs it numeric), so a basis of the data alone
+        # may use numpy or scipy even under jit
         if not self.coords.is_identity:
             x = self.coords(x, *values[self._n_fn_params :])
+        elif np.asarray(x).dtype.kind in "fiu":
+            x = np.asarray(x, dtype=float)
         return TermContext(
             x=x,
             y=np.asarray(y, dtype=float),
-            ym=None if ym is None else np.asarray(ym, dtype=float),
+            ym=None if ym is None else jnp.asarray(ym),
             _meta=meta,
             _segments=None if segments is None else tuple(segments),
             _labels=None if labels is None else tuple(labels),
         )
 
-    def value(
-        self, x, y, ym=None, *values, meta=None, segments=None, labels=None
-    ) -> np.ndarray:
+    def value(self, x, y, ym=None, *values, meta=None, segments=None, labels=None):
         """The raw array ``fn`` returns (std vector, mode vector, or block)."""
         n = len(y)
         if not callable(self.fn):
@@ -272,9 +282,9 @@ class Term:
                     f"{self.kind} term expects shape {self.expected_shape(n)}, "
                     f"got {self.fn.shape}"
                 )
-            return self.fn
+            return jnp.asarray(self.fn)
         c = self.context(x, y, ym, meta, *values, segments=segments, labels=labels)
-        v = np.asarray(self.fn(c, *values[: self._n_fn_params]), dtype=float)
+        v = jnp.asarray(self.fn(c, *values[: self._n_fn_params]), dtype=float)
         if v.shape != self.expected_shape(n):
             raise ValueError(
                 f"{self.kind} term fn returned shape {v.shape}, "
@@ -301,12 +311,13 @@ class KernelTerm(Term):
 
     Parameters
     ----------
-    kernel : sklearn-style kernel
-        The kernel object as passed to :func:`kernel`.
+    build : callable
+        ``build(*kernel_values) -> tinygp kernel``, as passed to :func:`kernel`
+        (a fixed kernel is wrapped as a parameter-free builder).
     n_kernel : int
-        Number of free kernel hyperparameter elements: ``params[:n_kernel]``
-        are the log-theta parameters, ``params[n_kernel:]`` the amplitude's,
-        then any coordinate-transform parameters.
+        Number of kernel parameters: ``params[:n_kernel]`` are ``build``'s,
+        ``params[n_kernel:]`` the amplitude's, then any coordinate-transform
+        parameters.
     amplitude : callable or array or None
         The amplitude as passed to :func:`kernel`.
     jitter : float
@@ -314,28 +325,28 @@ class KernelTerm(Term):
         variance.
     """
 
-    kernel: Any = None
+    build: Any = None
     n_kernel: int = 0
     amplitude: Any = None
     jitter: float = 0.0
 
 
 # ----------------------------------------------------------------------------
-# Standard bases and amplitudes (numpy-style callables over a TermContext)
+# Standard bases and amplitudes (jax.numpy callables over a TermContext)
 # ----------------------------------------------------------------------------
 
 
-def ones(c: TermContext) -> np.ndarray:
+def ones(c: TermContext):
     """Constant unit basis."""
-    return np.ones(len(c))
+    return jnp.ones(len(c))
 
 
-def ym(c: TermContext) -> np.ndarray:
+def ym(c: TermContext):
     """The model prediction — the prediction-scaled basis."""
     return c.ym
 
 
-def averaging(c: TermContext) -> np.ndarray:
+def averaging(c: TermContext):
     """``0.5 * (y + ym)`` — the averaging model-error basis."""
     return 0.5 * (c.y + c.ym)
 
@@ -346,8 +357,8 @@ _AVERAGING = averaging  # factories take an ``averaging`` flag that shadows the 
 def x_basis(scale: float = 1.0):
     """Basis ``x / scale`` (e.g. ``x_basis(np.pi)`` for ``theta/180`` on radians)."""
 
-    def basis(c: TermContext) -> np.ndarray:
-        return np.asarray(c.x, dtype=float) / scale
+    def basis(c: TermContext):
+        return jnp.asarray(c.x, dtype=float) / scale
 
     return basis
 
@@ -359,23 +370,23 @@ def exp_growth(scale: float = 1.0, base=ones):
     ``noise(..., basis=exp_growth(np.pi), basis_params=(slope,))``.
     """
 
-    def basis(c: TermContext, slope: float) -> np.ndarray:
-        return base(c) * np.exp(slope * np.asarray(c.x, dtype=float) / scale)
+    def basis(c: TermContext, slope: float):
+        return base(c) * jnp.exp(slope * jnp.asarray(c.x, dtype=float) / scale)
 
     return basis
 
 
-def constant_amplitude(c: TermContext, log_amplitude: float) -> np.ndarray:
+def constant_amplitude(c: TermContext, log_amplitude: float):
     """Kernel amplitude ``exp(log_amplitude)``, constant over the support."""
-    return np.full(len(c), np.exp(log_amplitude))
+    return jnp.full(len(c), jnp.exp(log_amplitude))
 
 
 def exp_growth_amplitude(scale: float = 1.0):
     """Kernel amplitude ``exp(log_amplitude) * exp(slope * x / scale)`` (two params)."""
 
-    def amplitude(c: TermContext, log_amplitude: float, slope: float) -> np.ndarray:
-        return np.exp(log_amplitude) * np.exp(
-            slope * np.asarray(c.x, dtype=float) / scale
+    def amplitude(c: TermContext, log_amplitude: float, slope: float):
+        return jnp.exp(log_amplitude) * jnp.exp(
+            slope * jnp.asarray(c.x, dtype=float) / scale
         )
 
     return amplitude
@@ -407,13 +418,12 @@ def _full(v, n):
     array is *not* treated as a scalar, so a magnitude or mask of the wrong
     length fails loudly instead of being spread over the support.
     """
-    v = np.asarray(v, dtype=float)
+    v = jnp.asarray(v, dtype=float)
     if v.ndim == 0:
-        return np.full(n, float(v))
+        return jnp.full(n, v)
     if v.shape != (n,):
         raise ValueError(
-            f"magnitude/basis has shape {v.shape} but the term's support has "
-            f"length {n}"
+            f"magnitude/basis has shape {v.shape} but the term's support has length {n}"
         )
     return v
 
@@ -423,7 +433,7 @@ def _coefficient(parameter, log):
     if parameter is None:
         return (), (lambda values: 1.0)
     if log:
-        return (parameter,), (lambda values: np.exp(values[0]))
+        return (parameter,), (lambda values: jnp.exp(values[0]))
     return (parameter,), (lambda values: values[0])
 
 
@@ -537,60 +547,54 @@ def systematic(
     )
 
 
-def _kernel_params(kernel, prefix) -> list:
-    """One :class:`~rxmc.params.Parameter` per free kernel hyperparameter element."""
-    params = []
-    for hp in kernel.hyperparameters:
-        if hp.fixed:
-            continue
-        # sklearn bounds are in linear space; the parameter lives in log-theta,
-        # so finite bounds give the derived parameter a uniform prior there
-        bounds = np.log(np.atleast_2d(np.asarray(hp.bounds, dtype=float)))
-        if hp.n_elements == 1:
-            params.append(
-                Parameter(f"{prefix}_{hp.name}", bounds=tuple(bounds[0]), latex=hp.name)
-            )
-        else:
-            params.extend(
-                Parameter(
-                    f"{prefix}_{hp.name}_{i}",
-                    bounds=tuple(bounds[i]),
-                    latex=f"{hp.name}[{i}]",
-                )
-                for i in range(hp.n_elements)
-            )
-    return params
+def kernel_params(names, bounds=None, prefix="discrepancy") -> list:
+    """One :class:`~rxmc.params.Parameter` per kernel hyperparameter.
 
-
-def _n_free_elements(kernel) -> int:
-    return sum(hp.n_elements for hp in kernel.hyperparameters if not hp.fixed)
+    A convenience for :func:`kernel`: ``kernel_params(["log_var", "log_ell"],
+    [(-12, 2), (-3, 1)])`` gives ``discrepancy_log_var`` and
+    ``discrepancy_log_ell`` with uniform priors on those bounds.  tinygp
+    kernels carry no hyperparameter metadata, so the parameters (and the
+    space they are sampled in) are declared here and the builder passed to
+    :func:`kernel` maps them to the kernel.
+    """
+    names = list(names)
+    bounds = [None] * len(names) if bounds is None else list(bounds)
+    if len(bounds) != len(names):
+        raise ValueError(f"{len(names)} names but {len(bounds)} bounds")
+    return [
+        Parameter(
+            f"{prefix}_{n}" if prefix else n,
+            **({} if b is None else {"bounds": tuple(b)}),
+            latex=n,
+        )
+        for n, b in zip(names, bounds)
+    ]
 
 
 def kernel(
-    kernel,
+    build,
+    params=(),
     coords=None,
     amplitude=None,
     amplitude_params=(),
     jitter=1e-10,
-    prefix="discrepancy",
-    params=None,
     on=None,
 ) -> Term:
     """A Gaussian-process kernel ``a a^T * K(x, x; theta)`` over the support.
 
-    One :class:`~rxmc.params.Parameter` is derived per *free* kernel
-    hyperparameter **element** (sampled in sklearn's log-theta space): an
-    anisotropic hyperparameter (``n_elements > 1``) contributes that many
-    parameters.  A derived parameter takes the log of the kernel's bounds as
-    its bounds, so it compiles with a uniform prior on log-theta over them;
-    pass ``params=`` for any other prior.  ``amplitude_params`` follow the
-    kernel parameters.
-
     Parameters
     ----------
-    kernel : sklearn-style kernel
-        Duck-typed on ``hyperparameters``, ``theta``, ``clone_with_theta`` and
-        ``__call__``.
+    build : callable or tinygp kernel
+        ``build(*values) -> tinygp.kernels.Kernel`` with ``values`` the sampled
+        values of ``params``; e.g. ``lambda log_var, log_ell: jnp.exp(log_var)
+        * tinygp.kernels.Matern52(scale=jnp.exp(log_ell))``.  The builder owns
+        the parameterisation (log space, a sum of kernels, an anisotropic
+        metric), so anything tinygp expresses is a kernel term.  A kernel
+        object itself is a fixed kernel (``params`` must be empty).
+    params : sequence of Parameter
+        The hyperparameters ``build`` consumes, in order; see
+        :func:`kernel_params`.  Pass the same objects to several ``kernel``
+        calls to share hyperparameters between comparisons.
     coords : Transform or callable, optional
         Coordinate transform of ``x`` the kernel is evaluated in (e.g. angle to
         momentum transfer).  Default: ``x`` itself.
@@ -605,57 +609,62 @@ def kernel(
         ``jitter * mean(diag K)`` is added to the diagonal after scaling, for
         numerical stability; relative, so it never dominates a small variance
         (a cross section in b/sr).
-    prefix : str, optional
-        Name prefix of the derived kernel parameters.  Two kernel terms with
-        derived names and the same prefix fail to compile on the duplicate
-        name: pass distinct prefixes, or ``params=`` to share one kernel.
-    params : sequence of Parameter, optional
-        The hyperparameter objects themselves, one per free element in
-        ``kernel.theta`` order.  Pass the same objects to several ``kernel``
-        calls to share hyperparameters between comparisons.
     on : optional
         See :class:`Term`.
     """
-    nk = _n_free_elements(kernel)
-    if params is None:
-        kparams = _kernel_params(kernel, prefix)
-    else:
-        kparams = list(params)
-        if len(kparams) != nk:
+    kparams = tuple(params)
+    if not callable(build) or isinstance(build, Kernel):
+        if kparams:
             raise ValueError(
-                f"kernel has {nk} free hyperparameter element(s) but params= "
-                f"has {len(kparams)}"
+                "a fixed kernel takes no params; pass a builder "
+                "build(*values) -> kernel to sample its hyperparameters"
             )
+        fixed = build
+        build = lambda: fixed  # noqa: E731
+    _check_arity(build, kparams)
+    nk = len(kparams)
     amplitude_params = tuple(amplitude_params)
-    fixed_K = nk == 0 and not as_transform(coords).params
 
     def fn(c, *values):
-        if fixed_K:
-            K = np.asarray(kernel(as_2d(c.x)), dtype=float)
-        else:
-            K = kernel.clone_with_theta(np.asarray(values[:nk], dtype=float))(
-                as_2d(c.x)
-            )
+        X = as_2d(c.x)
+        K = build(*values[:nk])(X, X)
         if amplitude is not None:
             a = amplitude(c, *values[nk:]) if callable(amplitude) else amplitude
-            a = np.broadcast_to(np.asarray(a, dtype=float), (len(c),))
-            K = np.outer(a, a) * K
-        else:
-            K = np.array(K, dtype=float)
-        K[np.diag_indices_from(K)] += jitter * max(
-            float(np.mean(np.diag(K))), np.finfo(float).tiny
-        )
-        return K
+            a = jnp.broadcast_to(jnp.asarray(a, dtype=float), (len(c),))
+            K = jnp.outer(a, a) * K
+        nugget = jitter * jnp.maximum(jnp.mean(jnp.diag(K)), np.finfo(float).tiny)
+        return K + nugget * jnp.eye(len(c))
 
     return KernelTerm(
         fn,
-        tuple(kparams) + amplitude_params,
+        kparams + amplitude_params,
         kind="matrix",
         on=on,
         coords=coords,
-        constant=fixed_K and not amplitude_params and not callable(amplitude),
-        kernel=kernel,
+        constant=(
+            nk == 0
+            and not as_transform(coords).params
+            and not amplitude_params
+            and not callable(amplitude)
+        ),
+        build=build,
         n_kernel=nk,
         amplitude=amplitude,
         jitter=jitter,
     )
+
+
+def _check_arity(build, params) -> None:
+    """Fail at declaration, by name, when the builder cannot take the params
+    (inside jit it would fail on the first density call, naming nothing)."""
+    try:
+        sig = inspect.signature(build)
+    except ValueError:  # a builtin without a signature: nothing to check
+        return
+    try:
+        sig.bind(*params)
+    except TypeError:
+        raise ValueError(
+            f"the kernel builder takes {sig} but {len(params)} kernel param(s) "
+            f"were given {[p.name for p in params]}"
+        ) from None

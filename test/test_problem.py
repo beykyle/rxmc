@@ -6,6 +6,9 @@ from dataclasses import replace
 import dill
 import dynesty
 import emcee
+import jax
+import jax.numpy as jnp
+import jax.scipy.stats as jst
 import numpy as np
 import pytest
 from scipy import stats
@@ -54,8 +57,9 @@ def problem(**kw):
 class TestIndex:
     def test_first_seen_order_predictors_terms_likelihood(self):
         model = line_model()
-        eps, nu = Parameter("log_eps", prior=stats.norm()), Parameter(
-            "nu", bounds=(1, 50)
+        eps, nu = (
+            Parameter("log_eps", prior=stats.norm()),
+            Parameter("nu", bounds=(1, 50)),
         )
         c = Constraint(
             [Comparison(dataset(), model)], terms=[noise(eps)], likelihood=StudentT(nu)
@@ -78,8 +82,9 @@ class TestIndex:
         assert np.array_equal(p.columns([eps, model.params[0]]), [2, 0])
 
     def test_duplicate_names_raise_with_hint(self):
-        a1, a2 = Parameter("log_eps", prior=stats.norm()), Parameter(
-            "log_eps", prior=stats.norm()
+        a1, a2 = (
+            Parameter("log_eps", prior=stats.norm()),
+            Parameter("log_eps", prior=stats.norm()),
         )
         c = Constraint(
             [Comparison(dataset(), line_model())], terms=[noise(a1), noise(a2)]
@@ -219,9 +224,9 @@ class TestPriors:
         class Hier:
             def logpdf(self, v):
                 *r, lt = v
-                return stats.norm(0, np.exp(lt)).logpdf(r).sum() + stats.norm(
-                    0, 1
-                ).logpdf(lt)
+                return jst.norm.logpdf(jnp.stack(r), 0, jnp.exp(lt)).sum() + (
+                    jst.norm.logpdf(lt)
+                )
 
             def prior_transform(self, u):
                 lt = stats.norm(0, 1).ppf(u[-1])
@@ -271,7 +276,7 @@ class TestPriors:
     def test_custom_joint_sampled_through_rvs(self):
         class Box:
             def logpdf(self, v):
-                return 0.0 if np.all((0 <= v) & (v <= 1)) else -np.inf
+                return jnp.where(jnp.all((0 <= v) & (v <= 1)), 0.0, -jnp.inf)
 
             def rvs(self, size, random_state):
                 return random_state.uniform(size=(size, 2))
@@ -282,6 +287,16 @@ class TestPriors:
         s = p.sample_prior(30, rng=0)
         assert s.shape == (30, 2) and np.all((s >= 0) & (s <= 1))
         assert p.starting_location(4).shape == (4, 2)
+
+    def test_scipy_truncnorm_prior_is_translated_to_jax(self):
+        tn = stats.truncnorm(-0.5, 1.5, loc=1.0, scale=2.0)
+        t = Parameter("t", prior=tn)
+        p = Problem(
+            [Constraint([Comparison(dataset(), Model(lambda x, t: t * x, [t]))])]
+        )
+        for v in (0.0, 1.0, 3.9):
+            assert p.log_prior([v]) == pytest.approx(tn.logpdf(v))
+        assert p.log_prior([-0.5]) == -np.inf and p.log_prior([4.5]) == -np.inf
 
     def test_marginal_truncated_far_in_the_upper_tail(self):
         t = Parameter("t", prior=stats.norm(), bounds=(8.3, np.inf))
@@ -334,7 +349,8 @@ class TestCompile:
         b = Parameter("b", bounds=(0.0, 5.0))
 
         def fn(x, m, b):
-            calls.append(1)
+            # counts evaluations at run time (a plain append would count traces)
+            jax.debug.callback(lambda: calls.append(1))
             return m * x + b
 
         p = Problem([Constraint([Comparison(dataset(), Model(fn, [m, b]))])])
@@ -450,19 +466,20 @@ class TestCompile:
     def test_kernel_jitter_scales_with_the_data(self):
         # scaling the data, and the amplitude with it, by s shifts ll by exactly
         # -n log s: the nugget must be relative, not an absolute 1e-10
-        from sklearn.gaussian_process.kernels import RBF
+        from tinygp.kernels import ExpSquared
 
         s, d = 1e-4, dataset()
         lls = []
         for k in (1.0, s):
-            m, b = Parameter("m", prior=stats.norm()), Parameter(
-                "b", prior=stats.norm()
+            m, b = (
+                Parameter("m", prior=stats.norm()),
+                Parameter("b", prior=stats.norm()),
             )
             lA = Parameter("log_A", prior=stats.norm())
             model = Model(lambda x, m, b, k=k: k * (m * x + b), [m, b])
             data = Dataset(d.x, k * d.y, k * d.y_err)
             gp = kernel(
-                RBF(0.5, "fixed"), amplitude=constant_amplitude, amplitude_params=(lA,)
+                ExpSquared(0.5), amplitude=constant_amplitude, amplitude_params=(lA,)
             )
             p = Problem([Constraint([Comparison(data, model)], terms=[gp])])
             lls.append(p.log_likelihood([*TRUE, np.log(0.3 * k)]))
@@ -536,11 +553,13 @@ class TestViews:
 
     def test_parameter_on_fully_masked_comparison_keeps_its_slot(self):
         model = line_model()
-        rho1, rho2 = Parameter("log_rho_1", prior=stats.norm(0, 0.1)), Parameter(
-            "log_rho_2", prior=stats.norm(0, 0.1)
+        rho1, rho2 = (
+            Parameter("log_rho_1", prior=stats.norm(0, 0.1)),
+            Parameter("log_rho_2", prior=stats.norm(0, 0.1)),
         )
-        c1, c2 = Comparison(dataset(0, label="a"), model | scale(rho1)), Comparison(
-            dataset(1, label="b"), model | scale(rho2)
+        c1, c2 = (
+            Comparison(dataset(0, label="a"), model | scale(rho1)),
+            Comparison(dataset(1, label="b"), model | scale(rho2)),
         )
         c = Constraint([c1, c2]).masked([np.ones(6, bool), np.zeros(6, bool)])
         p = Problem([c])
@@ -592,12 +611,15 @@ class TestDrivers:
 
     def test_kernel_and_offset_terms_pickle(self):
         eps = Parameter("log_A", prior=stats.norm())
-        from sklearn.gaussian_process.kernels import RBF
+        from tinygp.kernels import ExpSquared
 
         c = Constraint(
             [Comparison(dataset(), line_model())],
             terms=[
-                kernel(RBF(1.0), params=[Parameter("ell", prior=stats.norm())]),
+                kernel(
+                    lambda le: ExpSquared(jnp.exp(le)),
+                    [Parameter("ell", prior=stats.norm())],
+                ),
                 offset(parameter=eps),
                 statistical(np.ones(6)),
             ],

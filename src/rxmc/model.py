@@ -2,8 +2,8 @@
 Models and predictors.
 
 A :class:`Model` is a spec of "observables from parameters": a callable
-``fn(x, *values)`` in physical space plus the :class:`~rxmc.params.Parameter` s
-it consumes.  A :class:`Predictor` is that model **bound to a grid**: ``bind``
+``fn(x, *values)`` in physical space, written with ``jax.numpy`` so gradients
+flow through it, plus the :class:`~rxmc.params.Parameter` s it consumes.  A :class:`Predictor` is that model **bound to a grid**: ``bind``
 is where anything expensive or grid-dependent is built (a reaction model
 builds its solver workspace there and overrides only ``bind``).
 
@@ -26,8 +26,8 @@ from __future__ import annotations
 import operator
 from typing import Callable, Sequence
 
+import jax.numpy as jnp
 import numpy as np
-from numpy.polynomial import polynomial as P
 
 from .params import Parameter
 from .transforms import as_transform
@@ -53,7 +53,7 @@ class Predictor:
     x : array_like
         The grid the prediction is made on.
     fn : callable
-        ``fn(*values) -> np.ndarray`` on that grid.
+        ``fn(*values) -> array`` on that grid.
     meta : mapping, optional
         The dataset metadata the model was bound with; a term evaluated at the
         predictor's grid (:func:`~rxmc.predictive.grid_draws`) reads
@@ -66,12 +66,12 @@ class Predictor:
         self._fn = fn
         self.meta = meta
 
-    def __call__(self, *values) -> np.ndarray:
+    def __call__(self, *values):
         if len(values) != len(self.params):
             raise ValueError(
                 f"predictor expects {len(self.params)} value(s), got {len(values)}"
             )
-        return np.asarray(self._fn(*values), dtype=float)
+        return jnp.asarray(self._fn(*values))
 
     def __repr__(self):
         names = ", ".join(p.name for p in self.params)
@@ -84,7 +84,7 @@ class Model:
     Parameters
     ----------
     fn : callable, optional
-        ``fn(x, *values) -> np.ndarray`` on a grid ``x``.  Subclasses that
+        ``fn(x, *values) -> array`` on a grid ``x``, in ``jax.numpy``.  Subclasses that
         build their prediction in :meth:`bind` may omit it.
     params : sequence of Parameter, optional
         The parameters ``fn`` consumes, in order.
@@ -154,4 +154,5 @@ def polynomial(order: int) -> Model:
     ``y = a_0 + a_1 x + a_2 x^2 + ...``; the parameters carry no prior.
     """
     params = [Parameter(f"a{i}", latex=f"a_{i}") for i in range(order + 1)]
-    return Model(lambda x, *a: P.polyval(np.asarray(x, dtype=float), a), params)
+    # jnp.polyval takes the highest-order coefficient first
+    return Model(lambda x, *a: jnp.polyval(jnp.stack(a[::-1]), jnp.asarray(x)), params)

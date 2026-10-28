@@ -1,10 +1,19 @@
 """Unit tests for the stateless covariance terms (:mod:`rxmc.terms`)."""
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
-from sklearn.gaussian_process.kernels import RBF, ConstantKernel, Matern, WhiteKernel
+import tinygp
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel, Matern
 
-from helpers import STUDY_LEGEND, assemble_dense, study_form
+from helpers import (
+    LOG_LENGTH_BOUNDS,
+    STUDY_LEGEND,
+    assemble_dense,
+    matern52,
+    rbf,
+    study_form,
+)
 from rxmc import Parameter
 from rxmc.terms import (
     KernelTerm,
@@ -15,6 +24,7 @@ from rxmc.terms import (
     exp_growth,
     exp_growth_amplitude,
     kernel,
+    kernel_params,
     noise,
     normalization,
     offset,
@@ -151,18 +161,17 @@ class TestTermCoords:
         assert np.allclose(v, 6.0 * np.array([1.0, 2.0]))
 
     def test_coords_array_2d_reaches_kernel(self):
-        k = RBF(length_scale=1.0)
         X = np.array([[0.0, 0.0], [1.0, 1.0], [2.0, 0.0]])
-        t = kernel(k, coords=lambda x: X, jitter=0.0)
-        S = t.value(np.zeros(3), np.zeros(3), np.zeros(3), *k.theta)
-        assert np.allclose(S, k(X))
+        t = kernel(*rbf(), coords=lambda x: X, jitter=0.0)
+        S = t.value(np.zeros(3), np.zeros(3), np.zeros(3), 0.0)
+        assert np.allclose(S, RBF(1.0)(X))
 
     def test_fixed_kernel_with_parametric_coords(self):
         s = Parameter("s")
         coords = Transform(lambda a, s: a * s, (s,))
         x = np.array([0.0, 0.5, 1.0])
         for amp in (None, 0.3):
-            t = kernel(RBF(1.0, "fixed"), coords=coords, amplitude=amp)
+            t = kernel(tinygp.kernels.ExpSquared(), coords=coords, amplitude=amp)
             assert t.params == (s,) and not t.is_constant
             K = t.value(x, np.zeros(3), np.zeros(3), 2.0)
             a2 = 1.0 if amp is None else amp**2
@@ -182,7 +191,7 @@ class TestTermCoords:
         assert replace(t, params=(le2,)).params == (le2, s)
         lA = Parameter("log_A")
         k = kernel(
-            RBF(1.0, "fixed"),
+            tinygp.kernels.ExpSquared(),
             amplitude=constant_amplitude,
             amplitude_params=(lA,),
             coords=Transform(lambda a, s: a * s, (s,)),
@@ -332,36 +341,70 @@ class TestFactories:
 
 
 class TestKernel:
-    def test_params_match_theta_length_isotropic(self):
-        k = ConstantKernel(1.0) * RBF(length_scale=1.0) + WhiteKernel(1e-6)
-        t = kernel(k)
-        assert len(t.params) == len(k.theta)
+    def test_builder_arity_mismatch_fails_at_construction(self):
+        params = kernel_params(["v", "l"], [(-3.0, 1.0), (-3.0, 1.0)])
+        build = lambda log_ell: tinygp.kernels.ExpSquared(  # noqa: E731
+            scale=jnp.exp(log_ell)
+        )
+        with pytest.raises(
+            ValueError, match=r"takes \(log_ell\).*\['discrepancy_v', 'discrepancy_l'\]"
+        ):
+            kernel(build, params)
+
+    def test_builder_params_are_the_terms_params(self):
+        build, params = rbf()
+        t = kernel(build, params)
+        assert t.params == tuple(params) and t.n_kernel == 1
+        assert [p.name for p in t.params] == ["discrepancy_length_scale"]
+        np.testing.assert_allclose(t.params[0].bounds, LOG_LENGTH_BOUNDS)
         assert not t.is_constant
 
-    def test_params_anisotropic(self):
-        k = ConstantKernel(1.0) * RBF(length_scale=[1.0, 1.0])
-        t = kernel(k)
-        assert len(t.params) == len(k.theta)
+    def test_a_sum_of_kernels_in_one_builder(self):
+        # sklearn's ConstantKernel * RBF + WhiteKernel, written as one builder
+        lv, le, lw = kernel_params(["log_var", "log_ell", "log_white"])
+        t = kernel(
+            lambda v, e, w: (
+                jnp.exp(v) * tinygp.kernels.ExpSquared(scale=jnp.exp(e))
+                + tinygp.kernels.Constant(jnp.exp(w)) * tinygp.kernels.Cosine(1e9)
+            ),
+            [lv, le, lw],
+            jitter=0.0,
+        )
+        x = np.linspace(0.0, 2.0, 4)
+        S = t.value(x, np.zeros(4), np.zeros(4), np.log(2.0), np.log(0.5), -20.0)
+        ref = ConstantKernel(2.0) * RBF(0.5)
+        np.testing.assert_allclose(S, ref(x[:, None]), atol=1e-8)
+
+    def test_anisotropic_metric_on_2d_inputs(self):
+        l0, l1 = kernel_params(["ell0", "ell1"])
+        t = kernel(
+            # one length scale per input dimension: scale the inputs
+            lambda a, b: tinygp.transforms.Linear(
+                jnp.exp(-jnp.stack([a, b])), tinygp.kernels.ExpSquared()
+            ),
+            [l0, l1],
+            jitter=0.0,
+        )
         x2d = np.array([[0.0, 0.0], [1.0, 0.5], [2.0, 1.0]])
-        S = t.value(x2d, np.zeros(3), np.zeros(3), *k.theta)
-        assert np.all(np.isfinite(S))
+        S = t.value(x2d, np.zeros(3), np.zeros(3), np.log(1.0), np.log(0.5))
+        np.testing.assert_allclose(S, RBF([1.0, 0.5])(x2d))
 
     def test_fixed_kernel_is_constant(self):
-        t = kernel(RBF(length_scale=1.0, length_scale_bounds="fixed"))
+        t = kernel(tinygp.kernels.ExpSquared(scale=1.0))
         assert t.params == () and t.is_constant
+        with pytest.raises(ValueError, match="fixed kernel takes no params"):
+            kernel(tinygp.kernels.ExpSquared(scale=1.0), [Parameter("ell")])
 
     def test_shared_hyperparameters_via_params(self):
-        ell = Parameter("gp_length")
-        t1, t2 = kernel(RBF(1.0), params=[ell]), kernel(RBF(1.0), params=[ell])
-        assert t1.params == (ell,) and t2.params == (ell,)
-        with pytest.raises(ValueError, match="free hyperparameter"):
-            kernel(RBF(1.0), params=[ell, Parameter("extra")])
+        build, params = rbf()
+        t1, t2 = kernel(build, params), kernel(build, params)
+        assert t1.params == t2.params == tuple(params)
 
     def test_constant_amplitude_reproduces_constant_kernel(self):
         x = np.linspace(0.0, 2.0, 5)
         A, la = 0.7, Parameter("log A")
         t = kernel(
-            RBF(1.0), amplitude=constant_amplitude, amplitude_params=(la,), jitter=0.0
+            *rbf(), amplitude=constant_amplitude, amplitude_params=(la,), jitter=0.0
         )
         assert [p.name for p in t.params] == ["discrepancy_length_scale", "log A"]
         S = dense([t], x, np.zeros(5), np.zeros(5), [(0.0, np.log(A))])
@@ -373,24 +416,23 @@ class TestKernel:
         la, sl = Parameter("log A"), Parameter("slope")
 
         def q(x):
-            return 2.0 * np.sin(x / 2)
+            return 2.0 * jnp.sin(x / 2)
 
         t = kernel(
-            Matern(1.0, nu=2.5),
+            *matern52(),
             coords=q,
             amplitude=exp_growth_amplitude(np.pi),
             amplitude_params=(la, sl),
             jitter=0.0,
         )
         S = dense([t], x, np.zeros(4), np.zeros(4), [(np.log(0.5), np.log(0.3), 1.5)])
-        a = 0.3 * np.exp(1.5 * q(x) / np.pi)  # the amplitude sees the transformed x
-        np.testing.assert_allclose(
-            S, np.outer(a, a) * Matern(0.5, nu=2.5)(q(x)[:, None])
-        )
+        qx = np.asarray(q(x))
+        a = 0.3 * np.exp(1.5 * qx / np.pi)  # the amplitude sees the transformed x
+        np.testing.assert_allclose(S, np.outer(a, a) * Matern(0.5, nu=2.5)(qx[:, None]))
 
     def test_duplicate_coords_factorizable_with_jitter(self):
         x = np.array([0.0, 0.0, 1.0])
-        t = kernel(RBF(1.0), jitter=1e-8)
+        t = kernel(*rbf(), jitter=1e-8)
         S = t.value(x, np.zeros(3), np.zeros(3), 0.0)
         assert np.all(np.isfinite(np.linalg.cholesky(S)))
 
@@ -433,7 +475,7 @@ class TestRecipeHalves:
         assert np.allclose(dense([stat], x, np.zeros(4), None), np.diag(sig**2))
         e, sl = Parameter("log_e"), Parameter("slope")
         custom = Term(
-            lambda c, e, l: np.exp(e) * np.exp(l * c.x / np.pi), (e, sl), kind="diag"
+            lambda c, e, l: jnp.exp(e) * jnp.exp(l * c.x / np.pi), (e, sl), kind="diag"
         )
         helper = noise(e, basis=exp_growth(np.pi), basis_params=(sl,))
         v = (np.log(0.3), 1.1)
@@ -498,15 +540,14 @@ class TestKernelTerm:
     """The kernel factory returns a Term that also carries its kernel."""
 
     def test_fields(self):
-        k = RBF(1.0)
+        build, params = rbf()
         lA = Parameter("log_A")
-        t = kernel(k, amplitude=constant_amplitude, amplitude_params=(lA,))
+        t = kernel(build, params, amplitude=constant_amplitude, amplitude_params=(lA,))
         assert isinstance(t, KernelTerm) and isinstance(t, Term)
-        assert t.kernel is k and t.n_kernel == 1 and t.amplitude is constant_amplitude
+        assert t.build is build and t.n_kernel == 1
+        assert t.amplitude is constant_amplitude
         assert [p.name for p in t.params] == ["discrepancy_length_scale", "log_A"]
         assert t.kind == "matrix" and t.jitter == 1e-10
-        # the derived parameter is bounded by the log of sklearn's bounds
-        np.testing.assert_allclose(t.params[0].bounds, np.log([1e-5, 1e5]))
         # a fixed kernel has no kernel parameters and is constant
-        fixed = kernel(RBF(1.0, "fixed"))
+        fixed = kernel(tinygp.kernels.ExpSquared(scale=1.0))
         assert fixed.n_kernel == 0 and fixed.is_constant and fixed.params == ()

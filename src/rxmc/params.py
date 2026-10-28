@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from math import inf
+from typing import Callable
 
 __all__ = ["Parameter"]
 
@@ -40,6 +41,11 @@ class Parameter:
         Physical unit string for display.
     latex : str, optional
         LaTeX label for plots; ``name`` when omitted.
+    logpdf : callable, optional
+        ``logpdf(value)`` of ``prior`` written in ``jax.numpy``, for a prior
+        whose scipy family :class:`~rxmc.problem.Problem` cannot translate to
+        JAX itself (see :data:`~rxmc.problem.JAX_LOGPDFS`).  ``prior`` still
+        provides the unit-cube map, the draws and the truncation mass.
     """
 
     name: str
@@ -47,6 +53,7 @@ class Parameter:
     prior: object | None = field(default=None, repr=False)
     unit: str = ""
     latex: str | None = None
+    logpdf: Callable | None = field(default=None, repr=False)
 
     def __post_init__(self):
         if not isinstance(self.name, str) or not self.name:
@@ -60,6 +67,11 @@ class Parameter:
         if not lo < hi:
             raise ValueError(f"bounds must satisfy lower < upper, got {(lo, hi)!r}")
         object.__setattr__(self, "bounds", (lo, hi))
+        if self.logpdf is not None and self.prior is None:
+            raise ValueError(
+                f"parameter {self.name!r}: logpdf= is the JAX density of prior=, "
+                "so it needs a prior"
+            )
 
     @property
     def label(self) -> str:

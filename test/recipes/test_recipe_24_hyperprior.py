@@ -4,6 +4,8 @@ Each dataset has its own normalisation, and I want to learn how spread out
 those normalisations are, rather than fix the spread.
 """
 
+import jax.numpy as jnp
+import jax.scipy.stats as jst
 import numpy as np
 import pytest
 from scipy import stats
@@ -16,11 +18,11 @@ from rxmc import transforms as tf
 class RhoHierarchy:
     def logpdf(self, v):
         *r, lt = v
-        return (
-            stats.norm(0, np.exp(lt)).logpdf(r).sum()
-            + stats.halfnorm(scale=0.3).logpdf(np.exp(lt))
-            + lt
-        )
+        r = jnp.stack(r)
+        tau = jnp.exp(lt)
+        # halfnorm(scale=0.3).logpdf(tau), tau > 0
+        halfnorm = jnp.log(2.0) + jst.norm.logpdf(tau, scale=0.3)
+        return jst.norm.logpdf(r, scale=tau).sum() + halfnorm + lt
 
     def prior_transform(self, u):
         lt = np.log(stats.halfnorm(scale=0.3).ppf(u[-1]))

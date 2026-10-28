@@ -2,7 +2,14 @@
 
 See ``docs/design.md`` for the design and ``docs/recipes.md`` for the
 supported use cases.
+
+rxmc computes its densities with JAX in double precision: importing it turns
+on ``jax_enable_x64`` for the whole process (as importing ``jitr`` does).
 """
+
+import jax
+
+jax.config.update("jax_enable_x64", True)
 
 from . import constraint as constraint
 from . import covariance as covariance

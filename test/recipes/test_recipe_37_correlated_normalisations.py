@@ -14,6 +14,7 @@ the covariance built from the measured q (Peelle), C_I the one built from
 the weighted means / the prediction.
 """
 
+import jax.numpy as jnp
 import numpy as np
 from scipy import stats
 
@@ -35,7 +36,7 @@ def experiment(q, N, sigma_q, sigma_N, corr, prior=None):
         rho = Parameter(f"rho_{i}", prior=prior or stats.norm(0.0, 1e3))
         rhos.append(rho)
         d = Dataset(np.full(len(qi), i), qi * Ni, Ni * si, label=f"q{i}")
-        comps.append(Comparison(d, Model(lambda x, r: np.full(len(x), r), [rho])))
+        comps.append(Comparison(d, Model(lambda x, r: jnp.full(len(x), r), [rho])))
     return comps, rhos
 
 
@@ -45,11 +46,11 @@ def normalisation_term(comps, frac, corr, from_data=False):
 
     def fn(c):
         pieces = c.split(c.y if from_data else c.ym)
-        u = np.concatenate([f * piece for f, piece in zip(frac, pieces)])
+        u = jnp.concatenate([f * piece for f, piece in zip(frac, pieces)])
         which = np.concatenate(
             [np.full(s.stop - s.start, k) for k, s in enumerate(c.segments)]
         )
-        return np.outer(u, u) * corr[np.ix_(which, which)]
+        return jnp.outer(u, u) * corr[np.ix_(which, which)]
 
     return Term(fn, kind="matrix", on=comps, constant=from_data)
 

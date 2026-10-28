@@ -4,10 +4,14 @@ My model is missing physics.  I want a smooth correlated discrepancy, in
 angle or in momentum transfer, learned from the residuals.
 """
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
+import tinygp
 from scipy import stats
-from sklearn.gaussian_process.kernels import RBF, ConstantKernel, Matern
+
+# sklearn's kernels serve only as the independent dense reference
+from sklearn.gaussian_process.kernels import RBF, Matern
 
 from common import TRUE, line, linear_posterior
 from rxmc import Comparison, Constraint, Dataset, KernelTerm, Parameter, Problem
@@ -16,6 +20,15 @@ from rxmc.predictive import gp_predictive_draws, grid_draws
 from rxmc.reactions import momentum_transfer
 
 X = np.linspace(0.3, 2.5, 12)
+LOG_ELL_BOUNDS = [(np.log(1e-5), np.log(1e5))]
+
+
+def matern52(log_ell):
+    return tinygp.kernels.Matern52(scale=jnp.exp(log_ell))
+
+
+def sq_exp(log_ell):
+    return tinygp.kernels.ExpSquared(scale=jnp.exp(log_ell))
 
 
 def defect_data(seed=0, err=0.05):
@@ -25,12 +38,13 @@ def defect_data(seed=0, err=0.05):
     return Dataset(X, y, err * np.ones(len(X)), label="d", meta={"k": 2.7})
 
 
-def test_one_parameter_per_free_hyperparameter_in_log_theta():
+def test_the_builder_maps_declared_parameters_to_a_tinygp_kernel():
     d = defect_data()
     comp = Comparison(d, line())
     log_A = Parameter("log_A", prior=stats.norm(0, 2))
     gp = T.kernel(
-        Matern(1.0, nu=2.5),
+        matern52,
+        T.kernel_params(["length_scale"], LOG_ELL_BOUNDS),
         on=comp,
         coords=lambda x: x / np.pi,
         amplitude=T.constant_amplitude,
@@ -39,7 +53,7 @@ def test_one_parameter_per_free_hyperparameter_in_log_theta():
     assert isinstance(gp, KernelTerm)
     p = Problem([Constraint([comp], terms=[gp])])
     assert p.names == ["m", "b", "discrepancy_length_scale", "log_A"]
-    # the derived parameter compiles with a uniform prior over sklearn's bounds
+    # the declared parameter compiles with a uniform prior over its bounds
     np.testing.assert_allclose(p.bounds[2], np.log([1e-5, 1e5]))
     theta = np.array([*TRUE, np.log(0.4), np.log(0.2)])
     u = (X / np.pi)[:, None]
@@ -54,10 +68,11 @@ def test_momentum_transfer_coordinates_and_a_running_amplitude():
     r = Parameter("r", prior=stats.norm(0, 1))
     q = lambda x: momentum_transfer(x, d.meta["k"])  # noqa: E731
     gp_q = T.kernel(
-        RBF(1.0),
+        sq_exp,
+        T.kernel_params(["length_scale"], LOG_ELL_BOUNDS),
         on=comp,
         coords=q,
-        amplitude=lambda c, lA, r: np.exp(lA) * c.x ** (r / 2),
+        amplitude=lambda c, lA, r: jnp.exp(lA) * c.x ** (r / 2),
         amplitude_params=(log_A, r),
     )
     p = Problem([Constraint([comp], terms=[gp_q])])
@@ -74,7 +89,7 @@ def test_the_band_finds_the_kernel_columns_itself():
     model = line()
     comp = Comparison(d, model)
     log_eps = Parameter("log_eps", prior=stats.norm(-3, 1))
-    gp = T.kernel(RBF(0.5), on=comp)
+    gp = T.kernel(sq_exp, T.kernel_params(["length_scale"], LOG_ELL_BOUNDS), on=comp)
     eps = T.noise(log_eps)
     p = Problem([Constraint([comp], terms=[eps, gp])])
     # a chain in problem.names order with the nuisance column between the
@@ -118,7 +133,7 @@ def test_conditioning_turns_the_band_into_regression_on_the_residuals():
     model = line()
     comp = Comparison(d, model)
     log_eps = Parameter("log_eps", prior=stats.norm(-3, 1))
-    gp = T.kernel(RBF(0.5), on=comp)
+    gp = T.kernel(sq_exp, T.kernel_params(["length_scale"], LOG_ELL_BOUNDS), on=comp)
     p = Problem([Constraint([comp], terms=[T.noise(log_eps), gp])])
     rng = np.random.default_rng(1)
     chain = np.column_stack(
@@ -144,7 +159,7 @@ def test_conditioning_turns_the_band_into_regression_on_the_residuals():
 def test_the_discrepancy_relaxes_the_model_parameters_toward_the_truth():
     d = defect_data()
     bare = Problem([Constraint([Comparison(d, line())])])
-    gp = T.kernel(ConstantKernel(0.3**2, "fixed") * RBF(0.5, "fixed"))
+    gp = T.kernel(0.3**2 * tinygp.kernels.ExpSquared(scale=0.5))
     with_gp = Problem([Constraint([Comparison(d, line())], terms=[gp])])
     # both posteriors are exact (linear model, fixed covariances)
     mean_bare, cov_bare, _ = linear_posterior(bare)

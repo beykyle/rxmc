@@ -67,9 +67,10 @@ instead conditions the discrepancy on the observed residuals,
 which is data-driven regression on top of the model: it interpolates the
 residuals rather than describing the model's error.
 
-Kernels are duck-typed as in :func:`~rxmc.terms.kernel`: sklearn-style objects
-with ``clone_with_theta``, ``__call__`` and ``diag``, ``theta`` in sklearn's
-log space.
+Kernels are tinygp kernels, built from the sampled hyperparameters by the
+builder passed to :func:`~rxmc.terms.kernel`.  These draws are not
+differentiated, so this module works in numpy on the values the JAX terms
+return.
 """
 
 from __future__ import annotations
@@ -123,7 +124,7 @@ def gp_posterior_predictive(
 ):
     r"""Posterior mean and covariance of a GP discrepancy at ``X_pred``.
 
-    Conditions a zero-mean GP with covariance ``kernel`` (rebuilt at ``theta``)
+    Conditions a zero-mean GP with covariance ``kernel`` (built at ``theta``)
     on the observed ``residuals`` at ``X_train``:
 
     .. math::
@@ -133,9 +134,12 @@ def gp_posterior_predictive(
 
     Parameters
     ----------
-    kernel : sklearn-style kernel
+    kernel : callable
+        ``kernel(*theta) -> tinygp kernel``, the builder passed to
+        :func:`~rxmc.terms.kernel` (``term.build``); a fixed kernel ``k`` is
+        ``lambda: k`` with ``theta`` empty.
     theta : array_like
-        Kernel hyperparameters in sklearn log-theta space.
+        The builder's arguments (the kernel parameters' sampled values).
     X_train, X_pred : array_like
         Training and prediction inputs (1-D promoted to a column).
     residuals : array_like, shape (n_train,)
@@ -150,10 +154,11 @@ def gp_posterior_predictive(
     mean : np.ndarray, shape (n_pred,)
     cov : np.ndarray, shape (n_pred, n_pred)
     """
-    k = kernel.clone_with_theta(np.asarray(theta, dtype=float))
+    theta = () if theta is None else tuple(np.atleast_1d(theta))
+    k = kernel(*theta)
     Xt, Xp = as_2d(X_train), as_2d(X_pred)
     r = np.asarray(residuals, dtype=float)
-    Ktt, Kst, Kss = k(Xt), k(Xp, Xt), k(Xp)
+    Ktt, Kst, Kss = (np.asarray(K) for K in (k(Xt, Xt), k(Xp, Xt), k(Xp, Xp)))
     N = _train_noise_matrix(train_noise_var, len(r))
     mean, v = _condition(Ktt, Kst, r, N, jitter)
     return mean, Kss - v.T @ v
@@ -176,8 +181,7 @@ def _locate(problem: Problem, term: KernelTerm):
     """The compiled constraint holding ``term`` and its covariance entry."""
     if not isinstance(term, KernelTerm):
         raise TypeError(
-            "term must be the KernelTerm returned by rxmc.terms.kernel, got "
-            f"{term!r}"
+            f"term must be the KernelTerm returned by rxmc.terms.kernel, got {term!r}"
         )
     for c in problem.constraints:
         for e in c.covariance.entries:
@@ -592,18 +596,14 @@ def gp_predictive_draws(
             c.x[rows], c.y[rows], ym[rows], *values,
             meta=meta, segments=entry.segments, labels=entry.labels,
         )  # fmt: skip
-        Ktt = K_full[np.ix_(keep, keep)]
+        Ktt = np.asarray(K_full)[np.ix_(keep, keep)]
         r = (c.y - ym)[rows][keep]
         if train_noise_var is None:
-            N = c.covariance.matrix(ym, theta)[np.ix_(pos, pos)] - Ktt
+            N = c.matrix(theta)[np.ix_(pos, pos)] - Ktt
         else:
             N = _train_noise_matrix(train_noise_var, len(r))
         # kernel and amplitude at the training and prediction coordinates
-        k = (
-            term.kernel.clone_with_theta(np.asarray(values[:nk], dtype=float))
-            if nk
-            else term.kernel
-        )
+        k = term.build(*values[:nk])
         ctx_t = term.context(
             c.x[rows], c.y[rows], ym[rows], meta, *values,
             segments=entry.segments, labels=entry.labels,
@@ -612,7 +612,9 @@ def gp_predictive_draws(
             x=term.coords(x_pred, *values[n_fn:]), y=mu, ym=mu, _meta=meta_p
         )
         a_t, a_p = _amplitudes(term, ctx_t, ctx_p, values[nk:n_fn])
-        Kst = np.outer(a_p, a_t[keep]) * k(as_2d(ctx_p.x), as_2d(ctx_t.x)[keep])
+        Kst = np.outer(a_p, a_t[keep]) * np.asarray(
+            k(as_2d(ctx_p.x), as_2d(ctx_t.x)[keep])
+        )
         return _condition(Ktt, Kst, r, N, 0.0)
 
     return _draw_on_grid(

@@ -4,6 +4,7 @@ I have a full covariance matrix from a correlated measurement, or a noise
 model no helper expresses.
 """
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 from scipy import stats
@@ -33,11 +34,12 @@ def test_fixed_matrix_and_fixed_diagonal_inside_a_problem():
 
 def test_custom_callable_term_matches_the_helper():
     d = line_data()
-    e, sl = Parameter("log_e", prior=stats.norm(-2, 1)), Parameter(
-        "slope", prior=stats.norm(0, 1)
+    e, sl = (
+        Parameter("log_e", prior=stats.norm(-2, 1)),
+        Parameter("slope", prior=stats.norm(0, 1)),
     )
     custom = Term(
-        lambda c, e, l: np.exp(e) * np.exp(l * c.x / np.pi), (e, sl), kind="diag"
+        lambda c, e, l: jnp.exp(e) * jnp.exp(l * c.x / np.pi), (e, sl), kind="diag"
     )
     helper = T.noise(e, basis=T.exp_growth(np.pi), basis_params=(sl,))
     pc = Problem(

@@ -5,9 +5,12 @@
 ``bind``: given a grid of angles and a dataset's kinematics
 (``meta["reaction"]``, ``meta["Elab"]``, ``meta["ExIAS"]``) it builds the
 ``jitr`` quasielastic (p,n) workspace on that grid and returns a
-:class:`~rxmc.model.Predictor` for the cross section in b/sr.  The (p,n)
+:class:`~rxmc.model.Predictor` for the DWBA cross section in b/sr.  The (p,n)
 transition is driven by the difference between the proton and neutron
-potentials (the Lane term), so the five potentials are declared separately.
+potentials (the Lane term, ``jitr``'s default isovector ``U1``), so the five
+potentials are declared separately.  As for :mod:`rxmc.reactions.elastic`, the
+potentials are written with ``jax.numpy`` and the prediction is
+differentiable.
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ from typing import Callable
 
 import jitr
 import numpy as np
+from jitr.xs.coupled import Potential
 
 from ..model import Model, Predictor
 from ..units import DEFAULT_LMAX, MB_PER_B, check_angle_grid
@@ -63,11 +67,10 @@ def set_up_solver(
         reaction,
         kinematics_entrance,
         kinematics_exit,
-        jitr.rmatrix.Solver(N),
-        np.asarray(angles_rad, dtype=float),
-        lmax,
         channel_radius_fm,
-        tmatrix_abs_tol=1e-8,
+        lmax,
+        N,
+        angles=np.asarray(angles_rad, dtype=float),
     )
     return ws, kinematics_entrance, kinematics_exit
 
@@ -78,7 +81,8 @@ class IsobaricAnalogPN(Model):
     Parameters
     ----------
     U_p_coulomb, U_p_central, U_p_spin_orbit, U_n_central, U_n_spin_orbit : callable
-        ``f(r, *args) -> np.ndarray`` on the radial grid ``r`` (fm), in MeV.
+        ``f(r, *args) -> array`` on the radial mesh ``r`` (fm), in MeV, written
+        with ``jax.numpy``.
     args_from_params : callable
         ``f(workspace, *values) -> (args_p_coulomb, args_p_central,
         args_p_spin_orbit, args_n_central, args_n_spin_orbit)``.
@@ -144,7 +148,7 @@ class IsobaricAnalogPN(Model):
     def bind(self, x, meta=None) -> Predictor:
         ws = self.workspace(x, meta)
         potentials, args_from_params = self.potentials, self.args_from_params
-        r = ws.radial_grid()
+        r = ws.r
 
         def predict(*values):
             args = args_from_params(ws, *values)
@@ -152,6 +156,12 @@ class IsobaricAnalogPN(Model):
                 raise ValueError(
                     f"args_from_params must return 5 argument tuples, got {len(args)}"
                 )
-            return ws.xs(*(U(r, *a) for U, a in zip(potentials, args))) / MB_PER_B
+            p_cou, p_cen, p_so, n_cen, n_so = (
+                U(r, *a) for U, a in zip(potentials, args)
+            )
+            Up = Potential(central=p_cen, spin_orbit=p_so, coulomb=p_cou)
+            Un = Potential(central=n_cen, spin_orbit=n_so)
+            # one energy: drop the leading energy axis
+            return ws.dwba(Up, Un).dsdo[0] / MB_PER_B
 
         return Predictor(self.params, x, predict, meta)

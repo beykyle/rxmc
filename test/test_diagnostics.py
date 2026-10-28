@@ -2,6 +2,7 @@
 
 from unittest.mock import patch
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 from scipy import stats
@@ -237,7 +238,7 @@ class TestHeldout:
         # the coefficients have only a joint prior, and a y = 0 point (not
         # finite in log space) is masked out of both the fit and the held-out view
         a0, a1 = Parameter("a0"), Parameter("a1")
-        model = Model(lambda x, a0, a1: np.exp(a0 + a1 * x), [a0, a1])
+        model = Model(lambda x, a0, a1: jnp.exp(a0 + a1 * x), [a0, a1])
         d = Dataset(np.arange(5.0), [0.0, 2.0, 3.0, 5.0, 8.0], np.full(5, 0.2))
         K = 0.05 * np.exp(-0.5 * np.subtract.outer(d.x, d.x) ** 2)
         c = Constraint([Comparison(d, model, space=log)], terms=[Term(K)])

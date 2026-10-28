@@ -27,6 +27,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable
 
+import jax.numpy as jnp
 import numpy as np
 
 from .data import Dataset
@@ -90,10 +91,13 @@ class Comparison:
             set_(self, "y_err", self.data.y_err)
             set_(self, "log_jac", np.zeros(self.data.n))
             return
+        # constants of the data, held as numpy; a derivative may come back as a
+        # scalar, the Jacobian is per point
+        jac = np.broadcast_to(
+            np.abs(np.asarray(space.derivative(self.data.y))), (self.data.n,)
+        )
         with np.errstate(all="ignore"):
-            # a derivative may come back as a scalar; the Jacobian is per point
-            jac = np.broadcast_to(np.abs(space.derivative(self.data.y)), (self.data.n,))
-            set_(self, "y", space(self.data.y))
+            set_(self, "y", np.asarray(space(self.data.y)))
             set_(self, "y_err", jac * self.data.y_err)
             set_(self, "log_jac", np.log(jac))
 
@@ -135,7 +139,7 @@ class Comparison:
         omega = _reported(d.offset_err, d.n)
         if omega is not None:
             if not t.is_identity:
-                omega = np.abs(t.derivative(d.y)) * omega
+                omega = np.abs(np.asarray(t.derivative(d.y))) * omega
             terms.append(Term(omega, kind="mode", on=self))
         eta = _reported(d.norm_err, d.n)
         if eta is not None and np.ndim(d.norm_err) == 0:
@@ -156,7 +160,7 @@ class Comparison:
 
                 def basis(c, eta=eta, t=t, inv=inv):
                     ym_raw = inv(c.ym)
-                    return eta * ym_raw * np.abs(t.derivative(ym_raw))
+                    return eta * ym_raw * jnp.abs(t.derivative(ym_raw))
 
                 terms.append(Term(basis, kind="mode", on=self))
         return terms

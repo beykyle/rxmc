@@ -1,4 +1,6 @@
 numpy>=2.2.6
 scipy>=1.15
-jitr>=3.0
+jax>=0.4.35
+tinygp>=0.3
+jitr @ git+https://github.com/beykyle/jitr@jax-core
 exfor-tools>=0.4

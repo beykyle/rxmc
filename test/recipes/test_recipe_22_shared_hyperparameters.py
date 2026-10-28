@@ -6,14 +6,23 @@ dataset with a common length scale and an amplitude that runs with energy,
 so that two shared parameters describe every dataset.
 """
 
+import jax.numpy as jnp
+import jax.scipy.stats as jst
 import numpy as np
 import pytest
+import tinygp
 from scipy import stats
+
+# sklearn's Matern serves only as the independent dense reference
 from sklearn.gaussian_process.kernels import Matern
 
 from common import TRUE, line
 from rxmc import Comparison, Constraint, Dataset, Parameter, Problem
 from rxmc import terms as T
+
+
+def matern52(log_ell):
+    return tinygp.kernels.Matern52(scale=jnp.exp(log_ell))
 
 
 def datasets():
@@ -33,18 +42,19 @@ def datasets():
 
 
 def test_two_shared_parameters_describe_every_dataset():
-    log_A0, p_ = Parameter("log_A0", prior=stats.norm(0, 2)), Parameter(
-        "p", prior=stats.norm(0, 1)
+    log_A0, p_ = (
+        Parameter("log_A0", prior=stats.norm(0, 2)),
+        Parameter("p", prior=stats.norm(0, 1)),
     )
     ell = Parameter("gp_length", prior=stats.norm(0, 1))
-    amp = lambda c, lA, p: np.exp(lA) * (c.meta("Elab") / 50.0) ** p  # noqa: E731
+    amp = lambda c, lA, p: jnp.exp(lA) * (c.meta("Elab") / 50.0) ** p  # noqa: E731
     model = line()
     comps = [Comparison(d, model) for d in datasets()]
     terms = [
         T.kernel(
-            Matern(1.0, nu=2.5),
+            matern52,
+            [ell],
             on=c,
-            params=[ell],
             amplitude=amp,
             amplitude_params=(log_A0, p_),
             jitter=0.0,
@@ -68,14 +78,14 @@ class Standard:
     """A joint block giving every covered parameter an independent N(0, 1)."""
 
     def logpdf(self, v):
-        return stats.norm(0, 1).logpdf(v).sum()
+        return jst.norm.logpdf(v).sum()
 
 
-def test_without_params_each_kernel_derives_its_own_length_scale():
+def test_distinct_prefixes_give_each_kernel_its_own_length_scale():
     model = line()
     comps = [Comparison(d, model) for d in datasets()[:2]]
     terms = [
-        T.kernel(Matern(1.0, nu=2.5), on=c, prefix=f"gp{i}")
+        T.kernel(matern52, T.kernel_params(["length_scale"], prefix=f"gp{i}"), on=c)
         for i, c in enumerate(comps)
     ]
     derived = [p for t in terms for p in t.params]
@@ -85,8 +95,8 @@ def test_without_params_each_kernel_derives_its_own_length_scale():
         "gp1_length_scale",
     ]
     same = [
-        T.kernel(Matern(1.0, nu=2.5), on=c) for c in comps
-    ]  # both derive "discrepancy_length_scale"
+        T.kernel(matern52, T.kernel_params(["length_scale"]), on=c) for c in comps
+    ]  # both declare "discrepancy_length_scale"
     with pytest.raises(ValueError, match="duplicate"):
         Problem(
             [Constraint(comps, terms=same)],

@@ -153,7 +153,7 @@ class _Conditional:
     def __call__(self, theta):
         """``(mean, cov)`` of the held-out rows given the fitted data."""
         ym = self.full.ym(theta)
-        S = self.full.covariance.matrix(ym, theta)
+        S = self.full.matrix(theta)
         SHH = S[np.ix_(self.iH, self.iH)]
         SHF = S[np.ix_(self.iH, self.iF)]
         SFF = S[np.ix_(self.iF, self.iF)]

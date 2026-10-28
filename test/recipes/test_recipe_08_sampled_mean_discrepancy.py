@@ -4,6 +4,7 @@ Instead of marginalising the discrepancy, I want to sample an additive
 correction with a parametric shape.
 """
 
+import jax.numpy as jnp
 import numpy as np
 from scipy import stats
 
@@ -46,7 +47,7 @@ def test_composition_precedence():
 
 def test_multiplicative_correction():
     g = Parameter("g", prior=stats.norm(0, 1))
-    factor = Model(lambda x, g: np.exp(g * x), [g])
+    factor = Model(lambda x, g: jnp.exp(g * x), [g])
     d = line_data()
     p = Problem([Constraint([Comparison(d, line() * factor)])])
     np.testing.assert_allclose(

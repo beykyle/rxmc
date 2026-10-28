@@ -5,6 +5,7 @@ scale on the reported errors, or a fully correlated unknown component per
 experimental technique.
 """
 
+import jax.numpy as jnp
 import numpy as np
 from scipy import stats
 
@@ -17,7 +18,9 @@ def test_global_scale_multiplies_every_stated_error():
     d = line_data()
     comp = Comparison(d, line())
     log_s = Parameter("log_s", prior=stats.norm(0, 0.5))
-    scaled = Term(lambda c, ls: np.exp(ls) * comp.y_err, (log_s,), kind="diag", on=comp)
+    scaled = Term(
+        lambda c, ls: jnp.exp(ls) * comp.y_err, (log_s,), kind="diag", on=comp
+    )
     p = Problem([Constraint([comp], terms=[scaled], statistical=False)])
     theta = np.array([*TRUE, np.log(1.5)])
     np.testing.assert_allclose(

@@ -16,10 +16,11 @@ stated:
 """
 
 import dynesty
+import jax.numpy as jnp
 import numpy as np
 import pytest
+import tinygp
 from scipy import stats
-from sklearn.gaussian_process.kernels import Matern
 
 from common import TRUE, line, line_data
 from rxmc import Comparison, Constraint, Model, Parameter, Problem
@@ -36,7 +37,8 @@ def error_models(d, model):
     log_sys = Parameter("log_sys", prior=stats.norm(-3, 1))
     log_A = Parameter("log_A", prior=stats.norm(-2, 1))
     gp = T.kernel(
-        Matern(0.3, nu=2.5),
+        lambda log_ell: tinygp.kernels.Matern52(scale=jnp.exp(log_ell)),
+        T.kernel_params(["length_scale"], [(np.log(1e-5), np.log(1e5))]),
         on=comp_log,
         coords=lambda x: x / np.pi,
         amplitude=T.constant_amplitude,

@@ -10,7 +10,11 @@ drift.
 
 from dataclasses import dataclass
 
+import jax.numpy as jnp
 import numpy as np
+import tinygp
+
+# sklearn's kernels are the independent dense reference for the tinygp terms
 from sklearn.gaussian_process.kernels import RBF, Matern
 
 from rxmc import Parameter
@@ -20,6 +24,7 @@ from rxmc.terms import (
     exp_growth,
     exp_growth_amplitude,
     kernel,
+    kernel_params,
     noise,
     normalization,
     offset,
@@ -27,6 +32,31 @@ from rxmc.terms import (
     systematic,
     x_basis,
 )
+
+# ----------------------------------------------------------------------------
+# tinygp kernel builders parameterised as sklearn derives them
+# ----------------------------------------------------------------------------
+
+#: sklearn's default length-scale bounds, in the log space the parameter lives in
+LOG_LENGTH_BOUNDS = (np.log(1e-5), np.log(1e5))
+
+
+def matern52(prefix="discrepancy"):
+    """``(build, params)``: a Matern-5/2 kernel in a log length scale.
+
+    The parameter is named and bounded as sklearn's ``Matern(nu=2.5)`` derives
+    it (``<prefix>_length_scale``), so the problems these tests compile keep
+    their columns.
+    """
+    params = kernel_params(["length_scale"], [LOG_LENGTH_BOUNDS], prefix=prefix)
+    return (lambda log_ell: tinygp.kernels.Matern52(scale=jnp.exp(log_ell))), params
+
+
+def rbf(prefix="discrepancy"):
+    """``(build, params)``: a squared-exponential kernel in a log length scale."""
+    params = kernel_params(["length_scale"], [LOG_LENGTH_BOUNDS], prefix=prefix)
+    return (lambda log_ell: tinygp.kernels.ExpSquared(scale=jnp.exp(log_ell))), params
+
 
 # ----------------------------------------------------------------------------
 # Dense references
@@ -181,12 +211,11 @@ def study_form(label, x, y, ym, X=np.pi, k=2.7) -> StudyForm:
         )
     if label == "Lgp":
         gp = kernel(
-            Matern(1.0, nu=2.5),
+            *matern52("gp"),
             coords=lambda x: x / X,
             amplitude=constant_amplitude,
             amplitude_params=(log_amp,),
             jitter=0.0,
-            prefix="gp",
         )
         dense = err**2 * eye + amp**2 * Matern(ell, nu=2.5)(u[:, None])
         return StudyForm(
@@ -198,7 +227,7 @@ def study_form(label, x, y, ym, X=np.pi, k=2.7) -> StudyForm:
         )
     if label == "Lgpn":
         gp = kernel(
-            Matern(1.0, nu=2.5),
+            *matern52(),
             coords=lambda x: x / X,
             amplitude=exp_growth_amplitude(1.0),
             amplitude_params=(log_amp, log_slope),
@@ -218,12 +247,11 @@ def study_form(label, x, y, ym, X=np.pi, k=2.7) -> StudyForm:
         b, s, lq, r = 0.05, 0.05, 1.2, 0.8
         q = 2.0 * k * np.sin(x / 2)
         gp = kernel(
-            RBF(1.0),
-            coords=lambda x: 2.0 * k * np.sin(x / 2),
-            amplitude=lambda c, lA, r: np.exp(lA) * c.x ** (r / 2),
+            *rbf("gpq"),
+            coords=lambda x: 2.0 * k * jnp.sin(x / 2),
+            amplitude=lambda c, lA, r: jnp.exp(lA) * c.x ** (r / 2),
             amplitude_params=(log_amp, r_pow),
             jitter=0.0,
-            prefix="gpq",
         )
         a = amp * q ** (r / 2)
         dense = (
@@ -239,7 +267,7 @@ def study_form(label, x, y, ym, X=np.pi, k=2.7) -> StudyForm:
     if label == "custom":
         e, sl = Parameter("e"), Parameter("l")
         t = Term(
-            lambda c, e, l: np.exp(e) * np.exp(l * c.x / np.pi), (e, sl), kind="diag"
+            lambda c, e, l: jnp.exp(e) * jnp.exp(l * c.x / np.pi), (e, sl), kind="diag"
         )
         sigma = err * np.exp(slope * u)
         return StudyForm(

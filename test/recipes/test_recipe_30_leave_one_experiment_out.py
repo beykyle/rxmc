@@ -6,7 +6,7 @@ an experiment it was not fit to, and with what tolerance.
 
 import numpy as np
 import pytest
-from sklearn.gaussian_process.kernels import RBF, ConstantKernel
+import tinygp
 
 from common import TRUE, line, line_data, oracle_samples
 from rxmc import Comparison, Constraint, Problem
@@ -42,7 +42,7 @@ def test_held_out_draws_coverage_and_tolerance():
 
 
 def spanning_gp(comps):
-    return T.kernel(ConstantKernel(0.1**2, "fixed") * RBF(1.0, "fixed"), on=comps)
+    return T.kernel(0.1**2 * tinygp.kernels.ExpSquared(scale=1.0), on=comps)
 
 
 def test_a_discrepancy_fit_to_the_other_experiments_carries_into_the_prediction():

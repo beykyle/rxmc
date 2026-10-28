@@ -6,6 +6,8 @@ distribution N(mu, tau^2) and want to learn mu, tau, and the shrunken
 theta_j.
 """
 
+import jax.numpy as jnp
+import jax.scipy.stats as jst
 import numpy as np
 import pytest
 from scipy import stats
@@ -20,10 +22,11 @@ SCHOOLS = Dataset(np.arange(J), Y, S, label="schools")
 
 
 def marginalised():
-    mu, log_tau = Parameter("mu", prior=stats.norm(0, 25)), Parameter(
-        "log_tau", prior=stats.norm(1, 1)
+    mu, log_tau = (
+        Parameter("mu", prior=stats.norm(0, 25)),
+        Parameter("log_tau", prior=stats.norm(1, 1)),
     )
-    model = Model(lambda x, mu: np.full(len(x), mu), [mu])
+    model = Model(lambda x, mu: jnp.full(len(x), mu), [mu])
     return (
         Problem([Constraint([Comparison(SCHOOLS, model)], terms=[T.noise(log_tau)])]),
         mu,
@@ -70,14 +73,14 @@ def test_centred_form_is_a_joint_block_including_the_hyperparameters():
         def logpdf(self, v):
             *th, mu, lt = v
             return (
-                stats.norm(mu, np.exp(lt)).logpdf(th).sum()
-                + stats.norm(0, 25).logpdf(mu)
-                + stats.norm(1, 1).logpdf(lt)
+                jst.norm.logpdf(jnp.stack(th), mu, jnp.exp(lt)).sum()
+                + jst.norm.logpdf(mu, 0, 25)
+                + jst.norm.logpdf(lt, 1, 1)
             )
 
     thetas = [Parameter(f"theta_{j}") for j in range(J)]
     mu, log_tau = Parameter("mu"), Parameter("log_tau")
-    model = Model(lambda x, *th: np.asarray(th), thetas)
+    model = Model(lambda x, *th: jnp.stack(th), thetas)
     p = Problem(
         [Constraint([Comparison(SCHOOLS, model)])],
         priors=[(thetas + [mu, log_tau], SchoolHierarchy())],

@@ -1,6 +1,6 @@
 """The jitr-backed reaction models: real solves with small settings.
 
-The first solve in a process pays numba's compilation (several seconds);
+The first solve on a workspace pays JAX's compilation (about a second);
 every later solve is milliseconds and a second angular grid on the same
 basis is free.
 """
@@ -14,6 +14,7 @@ from jitr.optical_potentials.potential_forms import (
     thomas_safe,
     woods_saxon_safe,
 )
+from jitr.xs.coupled import Potential
 from scipy import stats
 
 import rxmc.reactions.elastic as elastic_module
@@ -65,8 +66,9 @@ class TestElasticXS:
         assert y.shape == (6,) and np.all(np.isfinite(y)) and np.all(y > 0)
         # b/sr: jitr's mb/sr divided by 1000
         ws = omp().workspace(ANGLES, meta())
-        r = ws.radial_grid()
-        direct = ws.xs(central(r, *THETA), spin_orbit(r, 6.0, R, 0.45), None).dsdo
+        r = ws.r
+        pot = Potential(central(r, *THETA), spin_orbit(r, 6.0, R, 0.45))
+        direct = ws.xs(pot).dsdo[0]
         np.testing.assert_allclose(y, direct / 1000.0)
 
     def test_ratio_to_rutherford_and_analysing_power(self):

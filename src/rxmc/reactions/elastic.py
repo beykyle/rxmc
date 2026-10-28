@@ -1,27 +1,36 @@
 """
-Elastic differential cross sections from a ``jitr`` optical-model solver.
+Elastic differential cross sections from the ``jitr`` optical-model solver.
 
 :class:`ElasticXS` is a :class:`~rxmc.model.Model` that overrides only
 ``bind``: given a grid of angles and a dataset's kinematics
 (``meta["reaction"]``, ``meta["Elab"]``) it builds the ``jitr`` R-matrix
 workspace on that grid and returns a :class:`~rxmc.model.Predictor` that
-evaluates the potentials on the radial grid, solves, and extracts one of
+evaluates the potentials on the radial mesh, solves, and extracts one of
 ``"dXS/dA"`` (b/sr), ``"dXS/dRuth"`` or ``"Ay"``.  The model owns the
 solver; the data does not.
 
-The expensive basis (an ``IntegralWorkspace``) depends only on the
-kinematics and the solver settings, so it is cached per model instance and
-shared by every grid at one energy: the data grid, a plotting grid, a
-held-out view.  The cache is dropped on pickling; a bound predictor carries
-its own workspace and pickles with ``dill``.
+``jitr``'s solver is written in JAX, so the prediction is differentiable in
+the potential parameters: the potentials and ``args_from_params`` must be
+written with ``jax.numpy`` (``jitr``'s potential forms are).  The spin-orbit
+potential multiplies ``l.sigma`` (``2 l.s``) for a spin-1/2 projectile, as in
+``jitr``.
+
+The expensive part of a workspace (the mesh, the asymptotics and the
+compiled solve) depends only on the kinematics and the solver settings, so it
+is cached per model instance and shared by every grid at one energy: the data
+grid, a plotting grid, a held-out view (``Workspace.at_angles``).  The cache is
+dropped on pickling; a bound predictor carries its own workspace and pickles
+with ``dill``.
 """
 
 from __future__ import annotations
 
 from typing import Callable
 
+import jax.numpy as jnp
 import jitr
 import numpy as np
+from jitr.xs.coupled import Potential
 
 from ..model import Model, Predictor
 from ..units import DEFAULT_LMAX, MB_PER_B, check_angle_grid
@@ -51,31 +60,25 @@ def rutherford(kinematics, angles_rad) -> np.ndarray:
     return 10.0 * kinematics.eta**2 / (4.0 * kinematics.k**2 * sin2**2)
 
 
-def momentum_transfer(angles_rad, k) -> np.ndarray:
+def momentum_transfer(angles_rad, k):
     r"""Momentum transfer :math:`q = 2k\sin(\theta/2)` (fm⁻¹) on the angles.
 
     For a :func:`~rxmc.terms.kernel` term in :math:`q`-space pass it as the
     term's coordinate transform: ``coords=lambda x: momentum_transfer(x, k)``.
     """
-    return 2.0 * float(k) * np.sin(np.asarray(angles_rad, dtype=float) / 2.0)
+    return 2.0 * float(k) * jnp.sin(jnp.asarray(angles_rad, dtype=float) / 2.0)
 
 
 def _basis(reaction, Elab, lmax, wavelengths_beyond_range, zeros_per_node):
-    """The ``IntegralWorkspace`` and kinematics for one reaction at one energy."""
+    """The angle-free workspace and kinematics for one reaction at one energy."""
     kinematics = reaction.kinematics(Elab)
     k = kinematics.k
     interaction_range_fm = jitr.utils.interaction_range(reaction.target.A) + 2
     a = k * interaction_range_fm + wavelengths_beyond_range * 2 * np.pi
     channel_radius_fm = a / k
     N = jitr.utils.suggested_basis_size(a, zeros_per_node)
-    integral_ws = jitr.xs.elastic.IntegralWorkspace(
-        reaction=reaction,
-        kinematics=kinematics,
-        channel_radius_fm=channel_radius_fm,
-        solver=jitr.rmatrix.Solver(N),
-        lmax=lmax,
-    )
-    return integral_ws, kinematics
+    ws = jitr.xs.elastic.Workspace(reaction, kinematics, channel_radius_fm, lmax, N)
+    return ws, kinematics
 
 
 def set_up_solver(
@@ -105,30 +108,30 @@ def set_up_solver(
 
     Returns
     -------
-    (jitr.xs.elastic.DifferentialWorkspace, jitr.reactions.Kinematics)
+    (jitr.xs.elastic.Workspace, jitr.utils.kinematics.ChannelKinematics)
     """
-    integral_ws, kinematics = _basis(
+    ws, kinematics = _basis(
         reaction, Elab, lmax, wavelengths_beyond_range, zeros_per_node
     )
-    ws = jitr.xs.elastic.DifferentialWorkspace(
-        integral_workspace=integral_ws, angles=np.asarray(angles_rad, dtype=float)
-    )
-    return ws, kinematics
+    return ws.at_angles(np.asarray(angles_rad, dtype=float)), kinematics
 
 
-def extract_dXS_dA(xs, ws) -> np.ndarray:
+# jitr results carry a leading energy axis; a workspace here has one energy
+
+
+def extract_dXS_dA(xs, ws):
     """dXS/dA in b/sr (``jitr`` reports mb/sr)."""
-    return xs.dsdo / MB_PER_B
+    return xs.dsdo[0] / MB_PER_B
 
 
-def extract_dXS_dRuth(xs, ws) -> np.ndarray:
+def extract_dXS_dRuth(xs, ws):
     """dXS/dRuth (dimensionless)."""
-    return xs.dsdo / ws.rutherford
+    return xs.dsdo[0] / ws.rutherford[0]
 
 
-def extract_Ay(xs, ws) -> np.ndarray:
+def extract_Ay(xs, ws):
     """The analysing power (dimensionless)."""
-    return xs.Ay
+    return xs.Ay[0]
 
 
 _EXTRACT = {"dXS/dA": extract_dXS_dA, "dXS/dRuth": extract_dXS_dRuth, "Ay": extract_Ay}
@@ -141,18 +144,19 @@ class ElasticXS(Model):
     ----------
     quantity : {"dXS/dA", "dXS/dRuth", "Ay"}
     central : callable
-        ``f(r, *args) -> np.ndarray``, the central potential on the radial grid
-        ``r`` (fm), in MeV.
+        ``f(r, *args) -> array``, the central potential on the radial mesh
+        ``r`` (fm), in MeV, written with ``jax.numpy``.
     spin_orbit : callable or None
-        ``f(r, *args) -> np.ndarray``, the spin-orbit potential; ``None`` for a
-        spin-orbit-free model.
+        ``f(r, *args) -> array``, the spin-orbit potential (it multiplies
+        ``l.sigma`` for a spin-1/2 projectile); ``None`` for a spin-orbit-free
+        model, and for a spin-0 projectile.
     args_from_params : callable
         ``f(workspace, *values) -> (central_args, spin_orbit_args)`` or
         ``-> (central_args, spin_orbit_args, coulomb_args)``: the argument
         tuples for the potential callables at the sampled values.
     params : sequence of Parameter
     coulomb : callable, optional
-        ``f(r, *args) -> np.ndarray``, the Coulomb potential.  When ``None``
+        ``f(r, *args) -> array``, the Coulomb potential.  When ``None``
         the Coulomb interaction inside the channel radius must be folded into
         ``central``.
     lmax, wavelengths_beyond_range, zeros_per_node
@@ -202,7 +206,7 @@ class ElasticXS(Model):
             ) from None
 
     def workspace(self, x, meta):
-        """The ``jitr`` differential workspace on ``x`` for this dataset's kinematics."""
+        """The ``jitr`` workspace on the angles ``x`` for this dataset's kinematics."""
         reaction, Elab = self._kinematics_of(meta)
         key = (
             id(reaction),
@@ -219,12 +223,10 @@ class ElasticXS(Model):
                 self.wavelengths_beyond_range,
                 self.zeros_per_node,
             )
-        integral_ws, _ = self._cache[key]
+        basis, _ = self._cache[key]
         x = np.asarray(x, dtype=float)
         check_angle_grid(x, "x")
-        return jitr.xs.elastic.DifferentialWorkspace(
-            integral_workspace=integral_ws, angles=x
-        )
+        return basis.at_angles(x)
 
     def bind(self, x, meta=None) -> Predictor:
         ws = self.workspace(x, meta)
@@ -236,7 +238,7 @@ class ElasticXS(Model):
         extract = _EXTRACT[self.quantity]
         central, spin_orbit, coulomb = self.central, self.spin_orbit, self.coulomb
         args_from_params = self.args_from_params
-        r = ws.radial_grid()
+        r = ws.r
 
         def predict(*values):
             args = args_from_params(ws, *values)
@@ -250,9 +252,11 @@ class ElasticXS(Model):
                     f"got {len(args)}"
                 )
             xs = ws.xs(
-                central(r, *c_args),
-                None if spin_orbit is None else spin_orbit(r, *so_args),
-                None if coulomb is None else coulomb(r, *cou_args),
+                Potential(
+                    central=central(r, *c_args),
+                    spin_orbit=None if spin_orbit is None else spin_orbit(r, *so_args),
+                    coulomb=None if coulomb is None else coulomb(r, *cou_args),
+                )
             )
             return extract(xs, ws)
 
