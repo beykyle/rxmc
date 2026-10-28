@@ -52,6 +52,7 @@ Covariance terms
    rxmc.terms.proportional_error
    rxmc.terms.systematic
    rxmc.terms.kernel
+   rxmc.terms.kernel_param_names
    rxmc.terms.ones
    rxmc.terms.ym
    rxmc.terms.averaging

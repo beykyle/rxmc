@@ -592,3 +592,78 @@ class TestGridDraws:
             grid_draws(p, pred, X_GRID, theta, terms=[normalization(magnitude=0.1)])
         with pytest.raises(ValueError, match=r"\(n, 3\)"):
             grid_draws(p, pred, X_GRID, np.zeros((4, 2)))
+
+
+class TestInvalidRows:
+    """A sample row with no density: predictives raise, scoring gives -inf."""
+
+    def setup_method(self):
+        from rxmc import Constraint, Problem
+        from rxmc.terms import constant_amplitude
+
+        x = np.linspace(0.0, 2.0, 8)
+        self.m = Parameter("m", prior=stats.norm(0, 5))
+        self.la = Parameter("log_A", prior=stats.norm(0, 1))
+        self.model = Model(lambda x, m: m * x, [self.m])
+        self.data = Dataset(x, 2.0 * x, 0.1 * np.ones(8), label="d")
+        self.comp = Comparison(self.data, self.model)
+        self.gp = kernel(
+            RBF(0.5, "fixed"),
+            amplitude=constant_amplitude,
+            amplitude_params=(self.la,),
+            on=self.comp,
+        )
+        self.c = Constraint([self.comp], terms=[self.gp])
+        self.p = Problem([self.c])
+        self.good = np.array([2.0, np.log(0.1)])
+        self.bad = np.array([2.0, 400.0])  # the amplitude overflows
+
+    def test_matrix_raises_a_plain_value_error_naming_the_term(self):
+        with pytest.raises(ValueError, match="kind=.matrix.*log_A.*non-finite") as err:
+            self.p.constraints[0].matrix(self.bad)
+        assert type(err.value) is ValueError
+        assert len(str(err.value)) < 300  # KernelTerm uses Term's short repr
+
+    @pytest.mark.parametrize("model_only", [False, True])
+    def test_predictive_draws_name_the_row_and_values(self, model_only):
+        samples = np.vstack([self.good, self.bad])
+        if model_only:  # a model that is not finite at the second row
+            samples[1] = [np.inf, 0.0]
+        with pytest.raises(ValueError, match=r"sample row 1 \(m=.*log_A="):
+            predictive_draws(self.p, samples, model_only=model_only, rng=0)
+        assert np.all(np.isfinite(predictive_draws(self.p, samples[:1], rng=0)))
+
+    def test_grid_draws_raise_on_the_row(self):
+        x_new = np.linspace(0.0, 3.0, 5)
+        pred = self.model.bind(x_new, self.data.meta)
+        with pytest.raises(ValueError, match="sample row 1"):
+            grid_draws(
+                self.p, pred, x_new, np.vstack([self.good, self.bad]), terms=[self.gp]
+            )
+
+    def test_heldout_scoring_is_minus_inf_with_or_without_given(self):
+        from rxmc import Problem
+        from rxmc.diagnostics import heldout_log_predictive
+
+        mask = np.arange(8) < 5
+        fit = self.c.masked([mask])
+        held = Problem([fit.complement()])
+        samples = np.vstack([self.good, self.bad])
+        for given in (None, Problem([fit])):
+            lp = heldout_log_predictive(held, samples, given=given)
+            assert np.isfinite(lp[0]) and lp[1] == -np.inf
+
+    def test_matrix_raises_when_only_a_product_overflows(self):
+        from rxmc import Constraint, Problem
+        from rxmc.terms import offset
+
+        log_w = Parameter("log_w", prior=stats.norm(0, 1))
+        p = Problem([Constraint([self.comp], terms=[offset(log_w)])])
+        # the mode exp(360) ~ 1e156 is finite; its outer product is not
+        with pytest.raises(ValueError, match="low-rank product overflows"):
+            p.constraints[0].matrix(np.array([2.0, 360.0]))
+
+    def test_predictive_draws_raise_on_a_bad_prediction_with_a_finite_covariance(self):
+        samples = np.vstack([self.good, [np.inf, np.log(0.1)]])
+        with pytest.raises(ValueError, match="sample row 1.*not finite"):
+            predictive_draws(self.p, samples, rng=0)

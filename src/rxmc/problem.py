@@ -402,6 +402,7 @@ class CompiledConstraint:
 
     def __init__(self, constraint: Constraint, index: ParameterIndex):
         self.source = constraint
+        self._warned_nan = False
         comps = constraint.comparisons
         self.comparisons = comps
         self.labels = [c.data.label or f"comparison {i}" for i, c in enumerate(comps)]
@@ -473,13 +474,38 @@ class CompiledConstraint:
         return [c.predictor(*theta[g]) for _, g, c in self.predictors]
 
     def _stats(self, theta):
+        """``(d2, logdet)``, or ``None`` where the error model has no density."""
         ym = self.ym(theta)
         if not np.all(np.isfinite(ym[self.active])):
             return None
         try:
-            return self.covariance.distance(ym, theta)
-        except _SingularCovariance:
-            return None  # a parametric covariance singular at this theta: no density
+            d2, logdet = self.covariance.distance(ym, theta)
+        except _SingularCovariance:  # singular at this theta
+            self._warn_if_nan(ym, theta)
+            return None
+        if not (np.isfinite(d2) and np.isfinite(logdet)):  # overflow or NaN
+            self._warn_if_nan(ym, theta)
+            return None
+        return d2, logdet
+
+    def _warn_if_nan(self, ym, theta):
+        """Warn once per constraint when a rejected covariance contains NaN.
+
+        Runs only after a rejection, so accepted points pay nothing.  NaN can be
+        a term bug or ``inf * 0`` from an overflowing amplitude; either way the
+        point is zero density, and :meth:`matrix` names the term.
+        """
+        if self._warned_nan or not self.covariance.has_nan(ym, theta):
+            return
+        self._warned_nan = True
+        warnings.warn(
+            f"constraint {self.labels}: the covariance is NaN at theta="
+            f"{np.array2string(np.asarray(theta), precision=4)} (a term bug, or "
+            "inf*0 from an overflowing amplitude); such points get zero density. "
+            "constraint.matrix(theta) names the term.  Warned once per constraint.",
+            RuntimeWarning,
+            stacklevel=4,
+        )
 
     def log_likelihood(self, theta) -> float:
         s = self._stats(theta)

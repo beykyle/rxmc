@@ -29,6 +29,19 @@ evaluated once; a covariance with no parametric part is factored once.
 ``B`` must be positive definite.  A block covered only by modes is singular in
 ``B`` even when ``Sigma`` is not; when every term is constant this is caught at
 construction and reported with the block's label.
+
+A covariance that is not finite at a ``theta`` (a term returning inf or NaN,
+or values whose squares, sums or low-rank products overflow) is zero density
+there: :meth:`distance` returns a non-finite ``d2`` or ``logdet`` and the
+compiled constraint reads it as ``log_likelihood == -inf``.  The likelihood
+path never scans terms for this: the factorisations run unchecked and a
+non-finite input always yields a non-finite ``logdet``.  A constant term is
+checked once, at construction, and a non-finite contribution raises
+``ValueError`` naming it.  :meth:`matrix` checks too and raises, because a
+predictive has no "zero density" to return.  One gap remains: constant terms
+whose contributions are each finite but whose sum overflows, in a block a
+parametric term also touches, are zero density everywhere rather than an
+error at construction.
 """
 
 from __future__ import annotations
@@ -49,9 +62,16 @@ class _SingularCovariance(ValueError):
     """
 
 
-def chol_logdet(Sigma):
-    """Lower Cholesky factor and log-determinant of a positive-definite matrix."""
-    L = sla.cholesky(np.asarray(Sigma, dtype=float), lower=True)
+def chol_logdet(Sigma, check_finite=True):
+    """Lower Cholesky factor and log-determinant of a positive-definite matrix.
+
+    ``check_finite=False`` skips scipy's scan: a non-finite ``Sigma`` then gives
+    a non-finite factor and log-determinant (or ``LinAlgError``) instead of
+    ``ValueError``.
+    """
+    L = sla.cholesky(
+        np.asarray(Sigma, dtype=float), lower=True, check_finite=check_finite
+    )
     return L, 2.0 * float(np.sum(np.log(np.diag(L))))
 
 
@@ -156,12 +176,14 @@ class StructuredCovariance:
         self.constant_entries = [e for e in self.entries if e.term.is_constant]
         self.parametric_entries = [e for e in self.entries if not e.term.is_constant]
         self.is_constant = not self.parametric_entries
-        self._D0, self._U0, self._M0, self._X0 = self._pieces(
-            self.constant_entries, None, None
-        )
+        with np.errstate(over="ignore", invalid="ignore"):
+            self._D0, self._U0, self._M0, self._X0 = self._pieces(
+                self.constant_entries, None, None, check=True
+            )
         self._cache = None
         if self.is_constant:
-            self._factor(self._D0, self._U0, self._M0, self._X0)
+            with np.errstate(over="ignore", invalid="ignore"):
+                self._factor(self._D0, self._U0, self._M0, self._X0)
         elif not self.dense:
             # modes never enter B, so a block no parametric diag or matrix term
             # touches has a constant B: a singular one fails now, by label, rather
@@ -170,8 +192,12 @@ class StructuredCovariance:
 
     # -- assembly -------------------------------------------------------------
 
-    def _pieces(self, entries, ym, theta):
-        """``(D, U_columns, M_blocks, cross_blocks)`` from a set of entries."""
+    def _pieces(self, entries, ym, theta, check=False):
+        """``(D, U_columns, M_blocks, cross_blocks)`` from a set of entries.
+
+        ``check`` raises ``ValueError`` naming the first term whose contribution
+        is not finite on its active rows; the likelihood path leaves it off.
+        """
         n = self.n_active
         D = np.zeros(n)
         U = []
@@ -190,14 +216,20 @@ class StructuredCovariance:
                 labels=e.labels,
             )
             pos, keep = e.pos[e.keep], e.keep
+            if t.kind == "matrix":
+                part = v[np.ix_(keep, keep)]
+            else:
+                part = v[keep] ** 2 if t.kind == "diag" else v[keep]
+            if check and not np.all(np.isfinite(part)):
+                self._nonfinite(t, theta is None)
             if t.kind == "diag":
-                D[pos] += v[keep] ** 2
+                D[pos] += part
             elif t.kind == "mode":
                 col = np.zeros(n)
-                col[pos] = v[keep]
+                col[pos] = part
                 U.append(col)
             else:
-                sub = v[np.ix_(keep, keep)]
+                sub = part
                 if e.block is None:
                     X.append((pos, sub))
                 else:
@@ -211,11 +243,11 @@ class StructuredCovariance:
                     M[b][np.ix_(local, local)] += sub
         return D, U, M, X
 
-    def _assemble(self, ym, theta):
+    def _assemble(self, ym, theta, check=False):
         """Constant pieces plus the parametric ones at ``theta``."""
         if self.is_constant:
             return self._D0, self._U0, self._M0, self._X0
-        D, U, M, X = self._pieces(self.parametric_entries, ym, theta)
+        D, U, M, X = self._pieces(self.parametric_entries, ym, theta, check)
         D = D + self._D0
         U = list(self._U0) + U
         M = [
@@ -237,12 +269,17 @@ class StructuredCovariance:
     # -- factorisation ---------------------------------------------------------
 
     def _factor(self, D, U, M, X):
-        """Factor the covariance; cached when constant."""
+        """Factor the covariance; cached when constant.
+
+        Unchecked: a non-finite input gives a non-finite ``logdet`` (or a
+        ``LinAlgError``, depending on where LAPACK meets it), both of which the
+        compiled constraint reads as zero density.
+        """
         if self.is_constant and self._cache is not None:
             return self._cache
         try:
             if self.dense:
-                L, logdet = chol_logdet(self._dense_matrix(D, U, M, X))
+                L, logdet = chol_logdet(self._dense_matrix(D, U, M, X), False)
                 factors = ("dense", L, logdet)
             else:
                 blocks = []
@@ -255,11 +292,14 @@ class StructuredCovariance:
                     B = np.diag(D[pos])
                     if M[b] is not None:
                         B = B + M[b]
-                    L, ld = chol_logdet(B)
+                    L, ld = chol_logdet(B, False)
                     logdet += ld
                     W = (
                         sla.solve_triangular(
-                            L, np.column_stack([c[pos] for c in U]), lower=True
+                            L,
+                            np.column_stack([c[pos] for c in U]),
+                            lower=True,
+                            check_finite=False,
                         )
                         if U
                         else np.zeros((pos.size, 0))
@@ -268,7 +308,7 @@ class StructuredCovariance:
                     Ws.append(W)
                 if U:
                     W = np.vstack(Ws) if Ws else np.zeros((0, len(U)))
-                    Ls, lds = chol_logdet(np.eye(len(U)) + W.T @ W)
+                    Ls, lds = chol_logdet(np.eye(len(U)) + W.T @ W, False)
                     logdet += lds
                 else:
                     Ls = None
@@ -277,8 +317,32 @@ class StructuredCovariance:
             error = ValueError if self.is_constant else _SingularCovariance
             raise error(self._singular_message(D)) from err
         if self.is_constant:
+            if not np.isfinite(logdet):
+                raise ValueError(
+                    "the constraint's constant covariance is not finite: its "
+                    "terms are finite one by one but overflow when combined "
+                    "(e.g. a mode of magnitude ~1e200)"
+                )
             self._cache = factors
         return factors
+
+    def _nonfinite(self, term, constant: bool):
+        """Raise ``ValueError``: ``term`` contributed inf or NaN on its active rows."""
+        msg = f"{term!r} contributes a non-finite value on its active rows"
+        if constant:
+            raise ValueError(
+                msg + "; a constant term is evaluated once, so this is an error "
+                "in its declaration (an array with NaN, values whose squares "
+                "overflow, or a fn that divides by zero on the data)"
+            )
+        raise ValueError(msg + " at this theta")
+
+    def has_nan(self, ym, theta) -> bool:
+        """Whether the assembled covariance at ``theta`` contains NaN (diagnostic)."""
+        with np.errstate(over="ignore", invalid="ignore"):
+            D, U, M, X = self._assemble(ym, np.asarray(theta, dtype=float))
+        arrays = [D, *U, *(m for m in M if m is not None), *(x for _, x in X)]
+        return any(np.isnan(a).any() for a in arrays)
 
     def _constant_blocks(self) -> list[int]:
         """The blocks whose ``B`` no parametric diag or matrix entry touches."""
@@ -328,40 +392,55 @@ class StructuredCovariance:
         r"""``(d2, logdet)`` of the residual ``y - ym`` on the active rows.
 
         ``ym`` is the full-length stacked prediction; ``theta`` the flat
-        parameter vector the entries' gathers index into.
+        parameter vector the entries' gathers index into.  Either value is
+        non-finite where the covariance (or the residual) overflows: zero
+        density, read as such by the compiled constraint.
         """
         theta = np.asarray(theta, dtype=float)
         r = (self.y - np.asarray(ym, dtype=float))[self.active]
-        kind, *rest = self._factor(*self._assemble(ym, theta))
-        if kind == "dense":
-            L, logdet = rest
-            z = sla.solve_triangular(L, r, lower=True)
-            return float(z @ z), float(logdet)
-        blocks, Ls, logdet = rest
-        d2 = 0.0
-        w = None
-        for blk in blocks:
-            if blk is None:
-                continue
-            pos, L, W = blk
-            z = sla.solve_triangular(L, r[pos], lower=True)
-            d2 += float(z @ z)
-            w = W.T @ z if w is None else w + W.T @ z
-        if Ls is not None and w is not None:
-            s = sla.solve_triangular(Ls, w, lower=True)
-            d2 -= float(s @ s)
-        return d2, float(logdet)
+        with np.errstate(over="ignore", invalid="ignore"):
+            kind, *rest = self._factor(*self._assemble(ym, theta))
+            if kind == "dense":
+                L, logdet = rest
+                z = sla.solve_triangular(L, r, lower=True, check_finite=False)
+                return float(z @ z), float(logdet)
+            blocks, Ls, logdet = rest
+            d2 = 0.0
+            w = None
+            for blk in blocks:
+                if blk is None:
+                    continue
+                pos, L, W = blk
+                z = sla.solve_triangular(L, r[pos], lower=True, check_finite=False)
+                d2 += float(z @ z)
+                w = W.T @ z if w is None else w + W.T @ z
+            if Ls is not None and w is not None:
+                s = sla.solve_triangular(Ls, w, lower=True, check_finite=False)
+                d2 -= float(s @ s)
+            return d2, float(logdet)
 
-    def matrix(self, ym, theta=(), entries=None):
-        """The dense covariance on the active rows, for display and tests.
+    def matrix(self, ym, theta=(), entries=None, check=True):
+        """The dense covariance on the active rows, for display and predictives.
 
         ``entries`` restricts the sum to a subset of :attr:`entries` (the
         objects themselves, compared by identity): the covariance of *part* of
         the error model, as a predictive draw of the model plus its discrepancy
         but not the experimental errors needs.  Default: every entry.  A subset
         is assembled directly, without the constant-piece cache.
+
+        Raises ``ValueError`` if the matrix is not finite, naming the term when
+        one term alone is responsible; ``check=False`` returns it as is.
         """
         theta = np.asarray(theta, dtype=float)
-        if entries is None:
-            return self._dense_matrix(*self._assemble(ym, theta))
-        return self._dense_matrix(*self._pieces(entries, ym, theta))
+        with np.errstate(over="ignore", invalid="ignore"):
+            if entries is None:
+                pieces = self._assemble(ym, theta, check=check)
+            else:
+                pieces = self._pieces(entries, ym, theta, check=check)
+            Sigma = self._dense_matrix(*pieces)
+        if check and not np.all(np.isfinite(Sigma)):
+            raise ValueError(
+                "the covariance is not finite at this theta: every term is "
+                "finite on its own, but their sum or a low-rank product overflows"
+            )
+        return Sigma

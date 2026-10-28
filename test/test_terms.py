@@ -2,7 +2,13 @@
 
 import numpy as np
 import pytest
-from sklearn.gaussian_process.kernels import RBF, ConstantKernel, Matern, WhiteKernel
+from sklearn.gaussian_process.kernels import (
+    RBF,
+    ConstantKernel,
+    ExpSineSquared,
+    Matern,
+    WhiteKernel,
+)
 
 from helpers import STUDY_LEGEND, assemble_dense, study_form
 from rxmc import Parameter
@@ -15,6 +21,7 @@ from rxmc.terms import (
     exp_growth,
     exp_growth_amplitude,
     kernel,
+    kernel_param_names,
     noise,
     normalization,
     offset,
@@ -356,6 +363,90 @@ class TestKernel:
         assert t1.params == (ell,) and t2.params == (ell,)
         with pytest.raises(ValueError, match="free hyperparameter"):
             kernel(RBF(1.0), params=[ell, Parameter("extra")])
+
+    def test_param_names_are_sklearn_theta_order(self):
+        # sklearn sorts by attribute name, not by __init__ order
+        k = ConstantKernel(1.0) * ExpSineSquared(1.0, 2.0)
+        assert kernel_param_names(k) == [
+            "k1__constant_value",
+            "k2__length_scale",
+            "k2__periodicity",
+        ]
+        assert kernel_param_names(RBF(1.0, length_scale_bounds="fixed")) == []
+
+    def test_mapping_params_follow_theta_order_whatever_the_key_order(self):
+        k = ExpSineSquared(1.0, 2.0)
+        ell, per = Parameter("ell"), Parameter("per")
+        t1 = kernel(k, params={"length_scale": ell, "periodicity": per})
+        t2 = kernel(k, params={"periodicity": per, "length_scale": ell})
+        assert t1.params == t2.params == (ell, per)
+        x = np.linspace(0.0, 3.0, 6)
+        vals = (np.log(0.7), np.log(1.3))
+        S1 = t1.value(x, np.zeros(6), np.zeros(6), *vals)
+        S2 = t2.value(x, np.zeros(6), np.zeros(6), *vals)
+        ref = ExpSineSquared(0.7, 1.3)(x[:, None])
+        np.testing.assert_allclose(S1, S2)
+        np.testing.assert_allclose(S1, ref + 1e-10 * np.eye(6) * np.mean(np.diag(ref)))
+
+    def test_positional_params_refused_for_several_hyperparameters(self):
+        # the hazard: ExpSineSquared's theta is (length_scale, periodicity);
+        # a reader expecting (periodicity, length_scale) would swap the priors
+        with pytest.raises(TypeError, match="mapping"):
+            kernel(ExpSineSquared(1.0, 2.0), params=[Parameter("a"), Parameter("b")])
+
+    def test_mapping_keys_are_validated(self):
+        k = ExpSineSquared(1.0, 2.0)
+        with pytest.raises(ValueError, match=r"missing \['periodicity'\]"):
+            kernel(k, params={"length_scale": Parameter("a")})
+        with pytest.raises(ValueError, match=r"unknown \['period'\]"):
+            kernel(
+                k,
+                params={
+                    "length_scale": Parameter("a"),
+                    "periodicity": Parameter("b"),
+                    "period": Parameter("c"),
+                },
+            )
+        with pytest.raises(TypeError, match="must be a Parameter"):
+            kernel(k, params={"length_scale": 1.0, "periodicity": Parameter("b")})
+
+    def test_mapping_with_a_multi_element_hyperparameter(self):
+        k = ConstantKernel(1.0) * RBF(length_scale=[1.0, 1.0])
+        A, l1, l2 = Parameter("A"), Parameter("l1"), Parameter("l2")
+        t = kernel(k, params={"k1__constant_value": A, "k2__length_scale": [l1, l2]})
+        assert t.params == (A, l1, l2)
+        with pytest.raises(ValueError, match="needs 2 Parameters"):
+            kernel(k, params={"k1__constant_value": A, "k2__length_scale": [l1]})
+
+    def test_unordered_containers_are_refused(self):
+        ps = [Parameter(f"l{i}") for i in range(4)]
+        with pytest.raises(TypeError, match="ordered.*set"):
+            kernel(RBF([1.0] * 4), params=set(ps))
+        with pytest.raises(TypeError, match="ordered.*set"):
+            kernel(RBF([1.0] * 4), params={"length_scale": set(ps)})
+        with pytest.raises(TypeError, match="ordered.*dict"):
+            kernel(RBF([1.0] * 2), params={"length_scale": {ps[0]: 1, ps[1]: 2}})
+        with pytest.raises(TypeError, match="ordered.*generator"):
+            kernel(RBF(1.0), params=(p for p in ps[:1]))
+        with pytest.raises(TypeError, match="ordered.*float"):
+            kernel(RBF(1.0), params=1.0)
+
+    def test_a_fixed_hyperparameter_key_is_named_as_fixed(self):
+        k = ConstantKernel(1.0, "fixed") * RBF(1.0)
+        with pytest.raises(ValueError, match=r"fixed \(not sampled\) \['k1__"):
+            kernel(
+                k,
+                params={
+                    "k1__constant_value": Parameter("a"),
+                    "k2__length_scale": Parameter("b"),
+                },
+            )
+
+    def test_positional_is_fine_for_one_hyperparameter_even_anisotropic(self):
+        l1, l2 = Parameter("l1"), Parameter("l2")
+        t = kernel(RBF(length_scale=[1.0, 1.0]), params=[l1, l2])
+        assert t.params == (l1, l2)
+        assert kernel(RBF(1.0), params=l1).params == (l1,)
 
     def test_constant_amplitude_reproduces_constant_kernel(self):
         x = np.linspace(0.0, 2.0, 5)

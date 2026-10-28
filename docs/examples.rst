@@ -27,6 +27,7 @@ Beyond the Gaussian
    :maxdepth: 1
 
    examples/gp_discrepancy.ipynb
+   examples/spectral_mixture_discrepancy.ipynb
    examples/robust_likelihoods.ipynb
    examples/error_scale_and_usu.ipynb
 

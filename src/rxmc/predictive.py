@@ -77,7 +77,7 @@ from __future__ import annotations
 import numpy as np
 import scipy.linalg as sla
 
-from .diagnostics import _psd_factor, _rows
+from .diagnostics import _psd_factor, _require_finite, _row_error, _rows
 from .problem import Problem, _per_point
 from .terms import KernelTerm, TermContext, as_2d
 
@@ -331,6 +331,7 @@ def _draw_on_grid(
         out = np.empty((n, n_pred))
         for i, theta in enumerate(samples):
             out[i] = back(space(predictor(*theta[cols_pred])))
+            _require_finite(problem, i, theta, out[i])
         return out if return_draws else predictive_band(out, levels)
 
     out = np.empty((n * n_rep, n_pred))
@@ -341,9 +342,13 @@ def _draw_on_grid(
             C += _grid_piece(t, x_pred, mu, meta_p, tuple(theta[g]))
         f_mean = 0.0
         if condition is not None:
-            f_mean, v = condition(theta, mu)
+            try:
+                f_mean, v = condition(theta, mu)
+            except ValueError as err:  # the training covariance names the term
+                raise _row_error(problem, i, theta, str(err)) from err
             C -= v.T @ v
         C[np.diag_indices(n_pred)] += float(noise_std) ** 2
+        _require_finite(problem, i, theta, mu, f_mean, C)
         z = rng.standard_normal((n_rep, n_pred))
         if joint:
             z = z @ _psd_factor(0.5 * (C + C.T)).T

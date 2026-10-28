@@ -107,6 +107,24 @@ def _masks(constraint) -> list[np.ndarray]:
     return list(constraint.source.masks)
 
 
+def _row_error(problem, i, theta, reason) -> ValueError:
+    """The error a predictive raises at a sample row with no density."""
+    at = ", ".join(f"{n}={v:.6g}" for n, v in zip(problem.names, theta))
+    return ValueError(
+        f"sample row {i} ({at}): {reason}.  This point has zero likelihood, so a "
+        "posterior chain cannot contain it: check burn-in and column order.  In "
+        "a prior predictive, bound the prior where the error model is undefined."
+    )
+
+
+def _require_finite(problem, i, theta, *arrays) -> None:
+    """Raise :func:`_row_error` unless every array is finite."""
+    if not all(np.all(np.isfinite(a)) for a in arrays):
+        raise _row_error(
+            problem, i, theta, "the prediction or covariance is not finite"
+        )
+
+
 class _Conditional:
     """``p(y_H | y_F, theta)`` for one held-out constraint given its fit."""
 
@@ -151,9 +169,16 @@ class _Conditional:
         self.yF = self.full.y[f.active]
 
     def __call__(self, theta):
-        """``(mean, cov)`` of the held-out rows given the fitted data."""
+        """``(mean, cov)`` of the held-out rows given the fitted data.
+
+        All NaN where the prediction or covariance is not finite (zero density):
+        the scorer returns ``-inf`` there and a predictive raises.
+        """
         ym = self.full.ym(theta)
-        S = self.full.covariance.matrix(ym, theta)
+        S = self.full.covariance.matrix(ym, theta, check=False)
+        if not (np.all(np.isfinite(ym[self.full.active])) and np.all(np.isfinite(S))):
+            n = len(self.iH)
+            return np.full(n, np.nan), np.full((n, n), np.nan)
         SHH = S[np.ix_(self.iH, self.iH)]
         SHF = S[np.ix_(self.iH, self.iF)]
         SFF = S[np.ix_(self.iF, self.iF)]
@@ -264,6 +289,7 @@ def predictive_draws(
         out = np.empty((n, N))
         for i in range(n):
             out[i] = cond(samples[i])[0] if cond else c.ym(samples[i])[c.active]
+            _require_finite(problem, i, samples[i], out[i])
         return out if return_draws else np.percentile(out, levels, axis=0)
 
     out = np.empty((n * n_rep, N))
@@ -273,7 +299,11 @@ def predictive_draws(
             mu, Sigma = cond(theta)
         else:
             mu = c.ym(theta)[c.active]
-            Sigma = c.matrix(theta, terms=terms, statistical=statistical)
+            try:
+                Sigma = c.matrix(theta, terms=terms, statistical=statistical)
+            except ValueError as err:  # names the term
+                raise _row_error(problem, i, theta, str(err)) from err
+        _require_finite(problem, i, theta, mu, Sigma)
         L = _psd_factor(Sigma)
         z = rng.standard_normal((n_rep, N))
         z *= c.likelihood.predictive_scale(rng, n_rep, *theta[c.like_gather])[:, None]
@@ -371,6 +401,9 @@ def heldout_log_predictive(
             if c.weight == 0.0:
                 continue
             mean, cov = cond(theta)
+            if not np.all(np.isfinite(mean)):  # no density at this theta
+                total = -np.inf
+                break
             total += c.weight * _gaussian_logpdf(c.y[c.active] - mean, cov)
         out[k] = total
     return out
