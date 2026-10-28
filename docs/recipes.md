@@ -458,6 +458,8 @@ Expected behaviour:
   compiled with `jax.jit` once per problem, and `grad_log_posterior`,
   `value_and_grad_log_posterior` and `hessian_log_posterior` serve
   gradient-based samplers (HMC/NUTS in blackjax or numpyro) and optimisers.
+- Gradient samplers (HMC/NUTS in blackjax or numpyro) take
+  `log_posterior_unconstrained`: recipe 41.
 - Parallelism: `log_posterior_batch` with emcee's `vectorize=True` needs no
   pool; for pools and MPI see the design document, "Parallel sampling"
   (fork-started pools can deadlock under JAX).
@@ -1396,6 +1398,53 @@ Expected behaviour:
 - The band is the default return, `(len(levels), len(x_pred))`, as for
   `predictive_draws` and `gp_predictive_draws`; `return_draws=True` gives the
   draws, whole correlated curves, so a functional summary is well posed.
+
+## 41. Sample with gradients (HMC/NUTS)
+
+*My problem has many parameters, or a sampler that walks without gradients
+mixes slowly on it.  I want the No-U-Turn sampler, driven by the exact
+gradient of the posterior.*
+
+```python
+import blackjax, jax
+
+logdensity = problem.log_posterior_unconstrained       # the posterior on R^ndim
+z0 = problem.to_unconstrained(problem.sample_prior(1, rng=0)[0])
+warmup = blackjax.window_adaptation(blackjax.nuts, logdensity)
+(state, tuned), _ = warmup.run(jax.random.key(0), z0, num_steps=1000)
+step = jax.jit(blackjax.nuts(logdensity, **tuned).step)
+
+def one_step(state, key):
+    state, info = step(key, state)
+    return state, (state.position, info.is_divergent)
+
+_, (zs, divergent) = jax.lax.scan(one_step, state, jax.random.split(jax.random.key(1), 1000))
+samples = jax.vmap(problem.to_theta)(zs)                # rows in problem.names order
+```
+
+Expected behaviour:
+
+- `log_posterior_unconstrained(z)` is `log_posterior(to_theta(z))` plus the
+  log-Jacobian of the map: a parameter with one finite bound is sampled as
+  the log of its distance from it, one with two as the logit of its
+  position between them, an unbounded one as itself.  It is finite, with a
+  finite gradient, on all of `R^ndim`, so a trajectory never meets the
+  `-inf` wall `log_posterior` has at a bound, and `to_theta` maps every
+  draw back inside the bounds.
+- The density is compiled once per problem; blackjax traces it once more
+  inside its own `jit`, and the gradient is the exact one through the
+  models, the covariance and the reaction solver.
+- The chain is read back by name, like any other: `samples[:,
+  problem.columns(V)]`.  Divergences are blackjax's `info.is_divergent`;
+  a few are a warning that the step size is too large for the geometry, many
+  are a funnel (a scale parameter near zero) the parametrisation should
+  remove.
+- rxmc owns no sampler: this is blackjax's API, and numpyro's NUTS takes the
+  same density as `potential_fn=lambda z: -logdensity(z)`.  Which sampler to
+  use is a question of the problem: NUTS for many parameters and a smooth,
+  unimodal posterior (a hierarchy, recipe 38); emcee for a few; dynesty for
+  the evidence and several modes (recipes 16, 18).  The notebook
+  `gradient_based_sampling` measures the three on the same problems.
 
 ## What this API does not express
 

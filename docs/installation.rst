@@ -20,8 +20,8 @@ Install from GitHub:
 Extras:
 
 ===============  =============================================================
-``examples``     emcee, dynesty, corner, matplotlib, dill, jupyter:
-                 everything the notebooks use
+``examples``     emcee, dynesty, blackjax, corner, matplotlib, dill,
+                 jupyter: everything the notebooks use
 ``validation``   ``examples`` plus pytest, nbmake, nbqa, ruff, black, isort,
                  and scikit-learn (a reference for the kernel tests)
 ``docs``         sphinx, the pydata theme, myst-nb

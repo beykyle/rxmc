@@ -35,6 +35,7 @@ docs = [
   "sphinx-copybutton>=0.5",
 ]
 examples = [
+  "blackjax>=1.2",
   "corner>=2.2",
   "dill>=0.3",
   "dynesty>=2.1",
@@ -46,6 +47,7 @@ examples = [
 ]
 validation = [
   "black>=24.0",
+  "blackjax>=1.2",
   "build>=1.2",
   "corner>=2.2",
   "dill>=0.3",

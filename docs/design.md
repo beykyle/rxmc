@@ -725,7 +725,8 @@ test that pins it.  Recipe numbers refer to `recipes.md`.
 | SafeBayes | `replace(c, weight=η)` and prefix masks | recipe 25 |
 | joint MVN prior; truncated marginals; `prior_transform` | `Problem(priors=[(omp.params, mvn)])`; `Parameter(prior=, bounds=)` | test_problem, recipe 13 |
 | prior family without a JAX translation | `Parameter(prior=dist, logpdf=f)`, `f` in `jax.numpy`; `JAX_LOGPDFS` | test_problem, recipe 13 |
-| gradients: HMC/NUTS, MAP, Laplace | `grad_log_posterior`, `value_and_grad_log_posterior`, `hessian_log_posterior`; `jax.grad(problem.log_posterior)` | test_autodiff, recipe 33 |
+| gradients: MAP, Laplace | `grad_log_posterior`, `value_and_grad_log_posterior`, `hessian_log_posterior`; `jax.grad(problem.log_posterior)` | test_autodiff, recipe 33 |
+| HMC/NUTS on bounded parameters | `log_posterior_unconstrained`, `to_theta`, `to_unconstrained`; blackjax `window_adaptation` + `nuts` | test_autodiff, recipe 41 |
 | parallel sampling | `log_posterior_batch` (emcee `vectorize=True`); spawn pool with a `dill` initializer; MPI | recipe 16 |
 | emcee, dynesty, black-box-bayes drivers | the flat interface; `dill` round trip | test_problem, recipe 16 |
 | EXFOR to dataset with unit conversion | `from_measurement(m, reaction=, quantity=)` | test_measurement, recipe 14 |
@@ -819,7 +820,7 @@ docs/               this document, recipes.md, examples.rst, api.rst, groundup_d
 Runtime dependencies: `numpy`, `scipy`, `jax`, `tinygp`, `jitr` (jax-core
 branch) and `exfor-tools`.  Importing `rxmc` turns on `jax_enable_x64` for
 the process.
-Extras: `examples` (emcee, dynesty, corner, matplotlib, dill, jupyter,
+Extras: `examples` (emcee, dynesty, blackjax, corner, matplotlib, dill, jupyter,
 ipykernel, tqdm), `validation` (examples plus pytest, nbmake, nbqa, ruff,
 black, isort, build, and scikit-learn, which the tests use as an
 independent reference for the kernels), `docs` (sphinx, the pydata theme,
