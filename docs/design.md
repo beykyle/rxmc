@@ -675,6 +675,39 @@ first call of a new problem pays compilation, 0.1 to 1 s.  Values agree to
 1e-13 except for the reaction models, where jitr v4 solves every partial
 wave up to `lmax` (elastic agrees to 1e-6).
 
+**Samplers.**  `benchmarks/bench_samplers.py` runs emcee, dynesty and NUTS
+(blackjax, on `log_posterior_unconstrained`) from the prior on four of the
+problems, each to a fixed budget, and scores them by the smallest bulk
+effective sample size over the parameters per second of wall time,
+compilation included.  A chain with split R-hat above 1.01 has not
+converged, and its ESS is not reported (✗).
+
+| problem | sampler | wall time | evaluations | min ESS | ESS/s | R-hat |
+|---|---|---|---|---|---|---|
+| linear (2) | emcee | 2 s | 96000 | — | — | 1.011 ✗ |
+| linear (2) | dynesty | 13 s | 36235 | 613 | 46.22 | — |
+| linear (2) | NUTS | 6 s | 61527 | 798 | 143.01 | 1.004 |
+| gp (4) | emcee | 19 s | 96000 | — | — | 1.048 ✗ |
+| gp (4) | dynesty | 35 s | 58979 | 1242 | 35.34 | — |
+| gp (4) | NUTS | 180 s | 195402 | — | — | 1.066 ✗ |
+| elastic (5) | emcee | 154 s | 48000 | — | — | 4.604 ✗ |
+| elastic (5) | dynesty | 255 s | 91558 | 957 | 3.75 | — |
+| elastic (5) | NUTS | 316 s | 49989 | 753 | 2.39 | 1.001 |
+| hierarchy (33) | emcee | 12 s | 408000 | — | — | 1.130 ✗ |
+| hierarchy (33) | dynesty | 1757 s | 783617 | 2442 | 1.39 | — |
+| hierarchy (33) | NUTS | 28 s | 215227 | 231 | 8.20 | 1.004 |
+
+Every converged run agrees with the others to 2.3 Monte Carlo standard
+errors or better.  NUTS converged wherever it was started near the
+posterior's bulk, and its advantage grows with the dimension: on the
+33-parameter hierarchy it is six times dynesty's rate in a sixtieth of the
+time.  On the GP problem, started from the prior, it meets the funnel
+between a log variance pressed against its bound and the length scale that
+then goes unconstrained, and does not mix; from the MAP it does
+(`gradient_based_sampling`).  emcee converged on none of these budgets: in
+five or more dimensions its stretch moves need far longer chains.  dynesty
+is the robust default and the only one of the three to give the evidence.
+
 ## 4. Capability map
 
 Every statistical capability the library supports, its spelling, and the

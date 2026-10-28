@@ -12,6 +12,9 @@ regimes of the performance comparison in the JAX rewrite plan:
 * ``elastic``     -- recipes 15/26: ElasticXS at several energies with a
                      proportional model error (solver-bound)
 * ``ias``         -- an IsobaricAnalogPN prediction at one energy
+* ``hierarchy``   -- recipe 38 at scale: 30 lines sharing a slope, their
+                     intercepts non-centred about a common mean (33
+                     parameters; the sampler benchmark's high-dimensional case)
 
 The only API difference the builders branch on is the GP kernel (sklearn in
 the numpy rxmc, tinygp in the JAX one).
@@ -191,6 +194,25 @@ def ias(n=20):
     return p, _thetas(p)
 
 
+def hierarchy(n_groups=30, n=5):
+    """``y_j = m x + mu + tau eta_j``, ``eta_j ~ N(0, 1)``, ``tau`` half-normal."""
+    rng = np.random.default_rng(5)
+    m = Parameter("m", prior=stats.norm(0, 5))
+    mu = Parameter("mu", prior=stats.norm(0, 5))
+    tau = Parameter("tau", prior=stats.halfnorm(scale=1.0), bounds=(0.0, np.inf))
+    x = np.linspace(0.0, 1.0, n)
+    comps = []
+    for j in range(n_groups):
+        eta = Parameter(f"eta_{j}", prior=stats.norm(0, 1))
+        y = 0.8 * x + 1.0 + 0.3 * rng.normal() + rng.normal(0, 0.1, n)
+        model = Model(
+            lambda x, m, mu, tau, eta: m * x + mu + tau * eta, [m, mu, tau, eta]
+        )
+        comps.append(Comparison(Dataset(x, y, 0.1 * np.ones(n), label=f"g{j}"), model))
+    p = Problem([Constraint(comps)])
+    return p, _thetas(p)
+
+
 PROBLEMS = {
     "linear": linear,
     "modes": modes,
@@ -198,6 +220,7 @@ PROBLEMS = {
     "gp500": lambda: gp(500),
     "elastic": elastic,
     "ias": ias,
+    "hierarchy": hierarchy,
 }
 
 __all__ = ["PROBLEMS", "JAX", "rxmc"]
