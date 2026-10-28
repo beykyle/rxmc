@@ -749,9 +749,17 @@ class Problem:
         self.index.check_names_unique()
         self._prior = _Prior(self.index, self.priors)
         self._weighted = [(c.weight, c) for c in self.constraints if c.weight != 0.0]
-        # which slots the unconstrained map sends through exp (one finite bound)
-        # or a scaled sigmoid (two); static, so the map traces to fixed ops
-        lo, hi = self.bounds.T
+        # the support of each slot: its bounds, narrowed by its marginal prior's
+        # (a uniform or half-normal prior bounds a parameter on its own); the
+        # unconstrained map sends a slot with one finite end through exp and
+        # one with two through a scaled sigmoid, static so the map traces to
+        # fixed ops
+        self._support = self.bounds.copy()
+        for m in self._prior.marginals:
+            if m.dist is not None:
+                a, b = m.dist.support()
+                self._support[m.slot] = max(m.lo, a), min(m.hi, b)
+        lo, hi = self._support.T
         self._lo_only = np.flatnonzero(np.isfinite(lo) & ~np.isfinite(hi))
         self._hi_only = np.flatnonzero(~np.isfinite(lo) & np.isfinite(hi))
         self._both = np.flatnonzero(np.isfinite(lo) & np.isfinite(hi))
@@ -880,7 +888,7 @@ class Problem:
     def _to_theta_impl(self, z):
         """``(theta, log|d theta / d z|)``: ``exp`` away from one finite bound,
         a scaled sigmoid between two, the identity otherwise."""
-        lo, hi = self.bounds.T
+        lo, hi = self._support.T
         a, b, c = self._lo_only, self._hi_only, self._both
         z = jnp.asarray(z, dtype=float)
         theta = z.at[a].set(lo[a] + jnp.exp(z[a]))
@@ -897,7 +905,7 @@ class Problem:
         return theta, log_jac
 
     def _to_unconstrained_impl(self, theta):
-        lo, hi = self.bounds.T
+        lo, hi = self._support.T
         a, b, c = self._lo_only, self._hi_only, self._both
         theta = jnp.asarray(theta, dtype=float)
         z = theta.at[a].set(jnp.log(theta[a] - lo[a]))
@@ -911,21 +919,24 @@ class Problem:
         return self._log_posterior_impl(theta) + log_jac
 
     def to_theta(self, z):
-        """Map a point of ``R^ndim`` into the bounds (see
+        """Map a point of ``R^ndim`` into the support (see
         :meth:`log_posterior_unconstrained`)."""
         return _host(self._to_theta_j(self._theta(z)))
 
     def to_unconstrained(self, theta):
-        """The inverse of :meth:`to_theta`, for ``theta`` strictly inside the bounds."""
+        """The inverse of :meth:`to_theta`, for ``theta`` strictly inside the support."""
         return _host(self._to_z_j(self._theta(theta)))
 
     def log_posterior_unconstrained(self, z) -> float:
         """:meth:`log_posterior` at ``to_theta(z)`` plus its log-Jacobian.
 
         The density of ``z = to_unconstrained(theta)``, finite on all of
-        ``R^ndim`` where the posterior is: a parameter with one finite bound
-        is sampled as the log of its distance from it, one with two as the
-        logit of its position between them.  Gradient samplers (HMC/NUTS,
+        ``R^ndim`` where the posterior is.  A parameter's support is its
+        bounds narrowed by its marginal prior's (``stats.uniform(a, w)`` or
+        ``stats.halfnorm()`` bound a parameter on their own; a custom joint
+        block's support must be stated as bounds).  A parameter with one
+        finite end is sampled as the log of its distance from it, one with
+        two as the logit of its position between them.  Gradient samplers (HMC/NUTS,
         recipe 41) need this, because their trajectories cannot cross the
         ``-inf`` wall at a bound.  A float on a concrete ``z``, the traced
         value under JAX.

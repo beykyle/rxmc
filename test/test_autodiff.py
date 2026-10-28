@@ -374,3 +374,17 @@ def test_the_unconstrained_density_has_the_bounded_densitys_mass(bounds):
     bounded = mass(problem.log_posterior, *bounds)
     free = mass(problem.log_posterior_unconstrained, -np.inf, np.inf)
     assert free == pytest.approx(bounded, rel=1e-6)
+
+
+def test_a_prior_with_finite_support_bounds_the_unconstrained_map():
+    """A uniform or half-normal prior bounds its parameter without bounds=."""
+    log_s = Parameter("log_s", prior=stats.uniform(np.log(0.05), np.log(40.0)))
+    scale = Parameter("scale", prior=stats.halfnorm(scale=2.0))
+    model = Model(lambda x, a, b: a * x + b, [log_s, scale])
+    problem = Problem([Constraint([Comparison(data(n=5), model)])])
+    far = np.array([-50.0, -50.0])
+    theta = problem.to_theta(far)
+    assert np.log(0.05) <= theta[0] < np.log(2.0) and theta[1] >= 0.0
+    assert np.isfinite(problem.log_posterior_unconstrained(far))
+    for z in np.random.default_rng(0).normal(0, 5, (20, 2)):
+        assert np.isfinite(problem.log_posterior_unconstrained(z))

@@ -1425,9 +1425,10 @@ samples = jax.vmap(problem.to_theta)(zs)                # rows in problem.names 
 Expected behaviour:
 
 - `log_posterior_unconstrained(z)` is `log_posterior(to_theta(z))` plus the
-  log-Jacobian of the map: a parameter with one finite bound is sampled as
-  the log of its distance from it, one with two as the logit of its
-  position between them, an unbounded one as itself.  It is finite, with a
+  log-Jacobian of the map.  A parameter's support is its bounds narrowed by
+  its prior's (a uniform or half-normal prior bounds it without `bounds=`);
+  with one finite end it is sampled as the log of its distance from it, with
+  two as the logit of its position between them, unbounded as itself.  It is finite, with a
   finite gradient, on all of `R^ndim`, so a trajectory never meets the
   `-inf` wall `log_posterior` has at a bound, and `to_theta` maps every
   draw back inside the bounds.
