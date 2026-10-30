@@ -3,7 +3,9 @@ Examples
 
 The notebooks below are the tutorials for the recipes in :doc:`recipes`;
 each names the recipes it teaches in its first cell.  They are rendered with
-their committed outputs and re-executed by the converged-tier CI workflow.
+their committed outputs, which are full runs (``python examples/run.py``);
+the converged-tier CI workflow only checks that they still run, with every
+sampler budget cut tenfold.
 To run them yourself, install the example dependencies first::
 
    pip install -e '.[examples]'

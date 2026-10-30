@@ -1,6 +1,7 @@
 name: Converged tier
 
-# The numeric claims that need a converged sampler, and the example notebooks.
+# The numeric claims that need a converged sampler, and a quick run of the
+# example notebooks.
 # Required for pushes and pull requests into main; run by hand on any branch
 # with workflow_dispatch.  There is deliberately no schedule.
 
@@ -35,9 +36,14 @@ jobs:
       - name: Run the converged tier
         run: python -m pytest -m slow --durations=10
       - name: Run the notebooks
+        # quick: every sampler budget cut tenfold, to check that each cell
+        # runs; the committed outputs are full runs (examples/run.py), and
+        # nbmake does not write over them
+        env:
+          RXMC_EXAMPLES_QUICK: "1"
         run: |
           if [ -d examples ] && ls examples/*.ipynb >/dev/null 2>&1; then
-            python -m pytest -n 4 --nbmake --nbmake-timeout=3600 examples
+            python -m pytest -n 4 --nbmake --nbmake-timeout=900 examples
           else
             echo "no notebooks yet"
           fi

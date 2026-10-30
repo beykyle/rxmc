@@ -2,7 +2,9 @@
 
 Design document section 9 item 8: a notebook must cite at least one recipe;
 its first cell carries ``Recipes: N, M, ...`` and every number is a heading
-of ``docs/recipes.md``.  Nothing here executes a notebook.
+of ``docs/recipes.md``.  The committed notebooks are full runs (the
+documentation shows them as committed), executed top to bottom.  Nothing
+here executes a notebook.
 """
 
 import ast
@@ -15,6 +17,9 @@ import pytest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 EXAMPLES = ROOT / "examples"
 RECIPES = ROOT / "docs" / "recipes.md"
+# examples/budget.py's quick-run banner, read from its source so importing it
+# here cannot print it
+BANNER = re.search(r'^BANNER = "(.+)"$', (EXAMPLES / "budget.py").read_text(), re.M)[1]
 
 # design document section 9, item 8: the eleven notebooks and their recipes
 NOTEBOOKS = {
@@ -100,6 +105,26 @@ def test_no_latex_escape_lands_in_a_plain_string(name):
                     if ch in node.value:
                         bad.append(f"cell {i}: {shown} in {node.value[:40]!r}")
     assert not bad, f"{name}: a LaTeX escape outside a raw string: {bad}"
+
+
+@pytest.mark.parametrize("name", sorted(NOTEBOOKS))
+def test_committed_outputs_are_one_full_run(name):
+    """Every code cell ran, in order, in one kernel, without an error, and not
+    in CI's quick mode: ``python examples/run.py <name>`` makes such a run."""
+    nb = json.loads((EXAMPLES / f"{name}.ipynb").read_text())
+    code = [c for c in nb["cells"] if c["cell_type"] == "code"]
+    counts = [c["execution_count"] for c in code]
+    assert counts == list(range(1, len(code) + 1)), (
+        f"{name}: execution counts {counts} are not one top-to-bottom run; "
+        f"rerun it with examples/run.py"
+    )
+    for i, cell in enumerate(code):
+        for out in cell["outputs"]:
+            assert out["output_type"] != "error", f"{name}: code cell {i} failed"
+            text = "".join(out.get("text", [])) + "".join(
+                out.get("data", {}).get("text/plain", [])
+            )
+            assert BANNER not in text, f"{name}: committed from a quick run"
 
 
 def test_no_stray_notebooks():

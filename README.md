@@ -162,7 +162,8 @@ tag [`v0.1.0`](https://github.com/beykyle/rxmc/tree/v0.1.0) and on branch
 python -m isort --check-only src test && python -m black --check src test && python -m ruff check src test
 python -m pytest            # fast tier
 python -m pytest -m slow    # converged tier: required on pushes and PRs to main
-python -m pytest -n 4 --nbmake --nbmake-timeout=3600 examples   # the notebooks, same workflow
+RXMC_EXAMPLES_QUICK=1 python -m pytest -n 4 --nbmake examples  # the notebooks, quick, same workflow
+python examples/run.py      # the notebooks at full budget, outputs written: what is committed
 sphinx-build -W docs docs/_build/html
 ```
 
