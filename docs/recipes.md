@@ -40,7 +40,7 @@ Expected behaviour:
   equals `sum(((y - ym) / y_err)**2)` exactly.
 - `problem.ndim == 2`, `problem.names == ["m", "b"]`, in declaration order.
 - `problem.log_posterior`, `problem.sample_prior(n)`, `problem.prior_transform`
-  are all that emcee or dynesty need (recipe 16).
+  are all that emcee, dynesty or pocomc need (recipe 16).
 
 ## 2. Infer an unknown noise level
 
@@ -430,10 +430,20 @@ Expected behaviour:
 
 ## 16. Drive the calibration with an external sampler
 
-*I want to use emcee, dynesty, or the `black-box-bayes` CLI, and read the
-chain back without positional arithmetic.*
+*I want to use pocomc, emcee, dynesty, or the `black-box-bayes` CLI, and
+read the chain back without positional arithmetic.*
 
 ```python
+# pocomc: sample the unit cube, so the evidence is the problem's own
+def log_likelihood(u):                               # rows of the unit cube
+    return problem.log_likelihood_batch(problem.prior_transform_batch(u))
+smc = pocomc.Sampler(pocomc.Prior([stats.uniform(0, 1)] * problem.ndim),
+                     log_likelihood, vectorize=True,
+                     n_effective=1024, n_active=512)  # twice the defaults
+smc.run(); u, _, _ = smc.posterior(resample=True)
+samples = problem.prior_transform_batch(u)
+logz = rx.diagnostics.logz_summary(*smc.evidence())
+
 # emcee
 p0 = problem.sample_prior(32)
 sampler = emcee.EnsembleSampler(32, problem.ndim, problem.log_posterior)
@@ -450,7 +460,7 @@ dill.dump(problem, open("problem.pkl", "wb"))        # posterior.py delegates si
 
 Expected behaviour:
 
-- Chains from all three are `(n, ndim)` arrays in `problem.names` order.
+- Chains from all of them are `(n, ndim)` arrays in `problem.names` order.
   Every analysis function takes `(problem, samples)`.
 - `log_posterior` evaluates the prior first and never runs the forward
   model when the prior is `-inf` (a `lax.cond` inside the compiled density).
@@ -460,9 +470,20 @@ Expected behaviour:
   gradient-based samplers (HMC/NUTS in blackjax or numpyro) and optimisers.
 - Gradient samplers (HMC/NUTS in blackjax or numpyro) take
   `log_posterior_unconstrained`: recipe 41.
+- pocomc samples a prior of its own; given the unit cube and the likelihood
+  of `prior_transform(u)` it samples the problem's prior exactly, whatever
+  its marginals, and its evidence is the problem's.  It is the sampler the
+  reaction notebooks use: on the p + ⁴⁰Ca optical model it reaches the
+  reference posterior fastest of those benchmarked, at twice its default
+  `n_effective` and `n_active`; at its defaults it is biased there
+  ([benchmarks](benchmarks.md)).
 - Parallelism: `log_posterior_batch` with emcee's `vectorize=True` needs no
-  pool; for pools and MPI see the design document, "Parallel sampling"
-  (fork-started pools can deadlock under JAX).
+  pool, and `log_prior_batch`, `log_likelihood_batch` and
+  `prior_transform_batch` serve other vectorised samplers (pocomc above;
+  ptemcee through its `mapper`), the densities each one `jax.vmap` call
+  over the rows.  dynesty cannot batch its calls (each live point's walk
+  is sequential); for process pools and MPI see the design document,
+  "Parallel sampling" (fork-started pools can deadlock under JAX).
 - `dill.loads(dill.dumps(problem)).log_posterior(theta)` equals
   `problem.log_posterior(theta)`, workspaces included.
 - `problem.NDIM`, `problem.parameter_names`, `problem.starting_location`,
@@ -1447,9 +1468,11 @@ Expected behaviour:
 - rxmc owns no sampler: this is blackjax's API, and numpyro's NUTS takes the
   same density as `potential_fn=lambda z: -logdensity(z)`.  Which sampler to
   use is a question of the problem: NUTS for many parameters and a smooth,
-  unimodal posterior (a hierarchy, recipe 38); emcee for a few; dynesty for
-  the evidence and several modes (recipes 16, 18).  The notebook
-  `gradient_based_sampling` measures the three on the same problems.
+  unimodal posterior (a hierarchy, recipe 38); emcee for a few; pocomc for
+  an optical model, whose posterior is correlated and may have several
+  modes; dynesty or pocomc for the evidence (recipes 16, 18).
+  The notebook `gradient_based_sampling` compares NUTS and emcee, and the
+  [benchmarks](benchmarks.md) page every sampler on the same problems.
 
 ## What this API does not express
 

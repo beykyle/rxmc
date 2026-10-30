@@ -7,8 +7,8 @@ are correlated, whether a normalisation is inferred or marginalised,
 whether the model is allowed a discrepancy, which points are held out,
 appears in the declaration, so that a reviewer can read the declaration and
 write down the likelihood.  The library owns no sampler: a compiled
-`Problem` exposes the densities and the prior transform that emcee, dynesty
-or `black-box-bayes` need, and their gradients and Hessians for
+`Problem` exposes the densities and the prior transform that pocomc, emcee,
+dynesty or `black-box-bayes` need, and their gradients and Hessians for
 gradient-based samplers and optimisers.
 
 The numerical backend is JAX.  Everything a density evaluation runs, the
@@ -579,7 +579,7 @@ a shorter cut of it, two Gaussian-process amplitudes on top of the `jitr`
 error model, with its predictives on a fine grid.
 
 ```python
-import numpy as np, dynesty, rxmc as rx
+import numpy as np, rxmc as rx
 from rxmc import terms as T, transforms as tf
 import jax.numpy as jnp, tinygp
 from scipy import stats
@@ -604,10 +604,8 @@ ladder = {
 logz = {}
 for name, c in ladder.items():
     p = rx.Problem([c])
-    ns = dynesty.NestedSampler(p.log_likelihood, p.prior_transform, p.ndim, nlive=80, sample="rwalk")
-    ns.run_nested(dlogz=1.5, print_progress=False)
-    res = ns.results
-    logz[name] = rx.diagnostics.logz_summary(res.logz[-1] + p.log_jacobian(), res.logzerr[-1])
+    res = smc(p)                                      # pocomc on the unit cube, recipe 16
+    logz[name] = rx.diagnostics.logz_summary(res.logz + p.log_jacobian(), res.logz_err)
 verdict = rx.diagnostics.compare_logz(logz["Lgp"], logz["L2y"])
 
 fit = ladder["Lgp"].masked_where(lambda x: x < np.deg2rad(90))
@@ -624,11 +622,15 @@ The labels `L0`, `E0`, `L2y`, `Lgp` are the error-model ladder of recipe
 from `p.sample_prior` and `p.log_posterior`, and under `black-box-bayes`
 from a `dill` pickle and a six-line module that forwards
 `starting_location`, `log_posterior`, `log_likelihood` and
-`prior_transform`.  Reaction problems are driven by dynesty by preference:
-affine-invariant ensembles mix poorly on optical-model posteriors.  With
-gradients available, HMC/NUTS (blackjax, numpyro) on `log_posterior`, or a
-MAP by `scipy.optimize.minimize(jac=p.grad_log_posterior)` followed by a
-Laplace approximation from `p.hessian_log_posterior`, are the alternatives.
+`prior_transform`.  Reaction problems are driven by pocomc by preference:
+affine-invariant ensembles mix poorly on optical-model posteriors, and on
+the p + ⁴⁰Ca benchmark pocomc, at twice its default resolution, reaches the
+reference posterior fastest; at their defaults both pocomc and dynesty are
+biased there, and dynesty needs 500 live points and about twice pocomc's
+time ([benchmarks](benchmarks.md)).
+With gradients available, HMC/NUTS (blackjax, numpyro) on `log_posterior_unconstrained`,
+or a MAP by `rx.optimize.find_map` followed by a Laplace approximation from
+`p.hessian_log_posterior`, are the alternatives.
 
 ### Parallel sampling
 
@@ -657,64 +659,20 @@ happens.  In order of preference:
 
 ### Performance
 
-`benchmarks/bench_log_posterior.py` times the densities on six problems and
-`benchmarks/compare.py` tabulates two runs.  Against the numpy rxmc on
-jitr 3.0.1 (same machine, CPU), the JAX rxmc on jitr's `jax-core` branch:
+[Benchmarks](benchmarks.md) has the set-up, the commands and the full tables.
+In short, against the numpy rxmc on jitr 3.0.1 (same machine, CPU), a call
+of `log_posterior` is 1.5 to 7 times faster, the gradient (autodiff against
+a finite difference) 3 to 80 times faster, and `jax.vmap` raises the
+throughput of the cheap densities a hundredfold.
 
-| problem | `log_posterior` | gradient (FD baseline → autodiff) | vmap, 256 rows | emcee 32×500 |
-|---|---|---|---|---|
-| line, reported errors | 0.16 → 0.10 ms | 0.66 → 0.11 ms | 6.2k → 1.06M θ/s | 2.9 → 1.9 s |
-| 6 comparisons, 13 modes | 1.38 → 0.20 ms | 30.4 → 0.39 ms | 0.5k → 41k θ/s | |
-| GP, N = 100 | 0.79 → 0.27 ms | 6.4 → 1.2 ms | 1.3k → 4.4k θ/s | 10.3 → 4.6 s |
-| GP, N = 500 | 10.8 → 5.3 ms | 90 → 32 ms | 87 → 147 θ/s | |
-| elastic, 4 energies | 7.0 → 2.6 ms | 70 → 6.0 ms | 142 → 331 θ/s | 106 → 45 s |
-| (p,n) IAS, 1 energy | 5.2 → 2.1 ms | 43 → 4.1 ms | 191 → 450 θ/s | |
-
-The baseline gradient is a central finite difference (`2 ndim` calls).  The
-first call of a new problem pays compilation, 0.1 to 1 s.  Values agree to
-1e-13 except for the reaction models, where jitr v4 solves every partial
-wave up to `lmax` (elastic agrees to 1e-6).
-
-**Samplers.**  `benchmarks/bench_samplers.py` runs emcee, dynesty and NUTS
-(blackjax, on `log_posterior_unconstrained`) from the prior on four of the
-problems, each to a fixed budget, and scores them by the smallest bulk
-effective sample size over the parameters per second of wall time,
-compilation included.  A chain with split
-[R-hat](https://en.wikipedia.org/wiki/Gelman-Rubin_statistic) above 1.01 has
-not converged, and its ESS is not reported (✗).  emcee's walkers are taken
-as chains, which overstates its ESS (each move uses the other walkers), so
-emcee's own integrated autocorrelation time τ is shown too, flagged where the
-kept chain is shorter than the 50 τ emcee asks for.
-
-| problem | sampler | wall time | evaluations | min ESS | ESS/s | R-hat | emcee τ (steps) |
-|---|---|---|---|---|---|---|---|
-| linear (2) | emcee | 2 s | 96000 | — | — | 1.011 ✗ | 30 |
-| linear (2) | dynesty | 13 s | 36235 | 613 | 46.22 | — |  |
-| linear (2) | NUTS | 6 s | 61527 | 798 | 143.01 | 1.004 |  |
-| gp (4) | emcee | 20 s | 96000 | — | — | 1.048 ✗ | 84 (< 50 τ) |
-| gp (4) | dynesty | 35 s | 58979 | 1242 | 35.34 | — |  |
-| gp (4) | NUTS | 180 s | 195402 | — | — | 1.066 ✗ |  |
-| elastic (5) | emcee | 158 s | 48000 | — | — | 4.604 ✗ | 80 (< 50 τ) |
-| elastic (5) | dynesty | 255 s | 91558 | 957 | 3.75 | — |  |
-| elastic (5) | NUTS | 316 s | 49989 | 753 | 2.39 | 1.001 |  |
-| hierarchy (33) | emcee | 12 s | 408000 | — | — | 1.130 ✗ | 518 (< 50 τ) |
-| hierarchy (33) | dynesty | 1757 s | 783617 | 2442 | 1.39 | — |  |
-| hierarchy (33) | NUTS | 28 s | 215227 | 231 | 8.20 | 1.004 |  |
-
-Every converged run agrees with the others to 2.3 Monte Carlo standard
-errors or better.  NUTS, started from the prior like the others, converged
-everywhere but the GP problem, and its advantage grows with the dimension:
-on the 33-parameter hierarchy it is six times dynesty's rate in a sixtieth
-of the time.  On the GP problem it meets a
-[funnel](https://mc-stan.org/docs/stan-users-guide/reparameterization.html):
-a log variance pressed against its bound leaves the length scale
-unconstrained, and the chains do not mix.  Started near the mode, NUTS
-mixes on the related GP of `gradient_based_sampling`, and on the optical
-model there, whose local modes defeat chains started from the prior.  emcee
-converged on none of these budgets (the line only marginally misses, R-hat
-1.011 with τ = 30 steps); its own τ says the same, from 84 steps on the GP to
-518 on the hierarchy, where 50 τ would be 26 000 steps.  dynesty is the
-robust default and the only one of the three to give the evidence.
+Scored against exact or long-run reference posteriors, no sampler is best
+everywhere.  NUTS is the only one correct on the funnel-shaped `modes` and
+`hierarchy` problems, in about a minute; pocomc (at twice its default
+resolution) is correct and fastest on the optical models, and gives the
+evidence; dynesty is correct there too, at about twice pocomc's time; emcee
+is fastest on the line but short of 50 autocorrelation times on everything
+harder.  Each example notebook uses the sampler that is correct and fastest
+on its benchmark analogue.
 
 ## 4. Capability map
 
@@ -769,7 +727,8 @@ test that pins it.  Recipe numbers refer to `recipes.md`.
 | gradients: MAP, Laplace | `grad_log_posterior`, `value_and_grad_log_posterior`, `hessian_log_posterior`; `jax.grad(problem.log_posterior)` | test_autodiff, recipe 33 |
 | HMC/NUTS on bounded parameters | `log_posterior_unconstrained`, `to_theta`, `to_unconstrained`; blackjax `window_adaptation` + `nuts` | test_autodiff, recipe 41 |
 | parallel sampling | `log_posterior_batch` (emcee `vectorize=True`); spawn pool with a `dill` initializer; MPI | recipe 16 |
-| emcee, dynesty, black-box-bayes drivers | the flat interface; `dill` round trip | test_problem, recipe 16 |
+| pocomc, emcee, dynesty, black-box-bayes drivers | the flat interface; `dill` round trip | test_problem, recipe 16 |
+| batched densities and prior transform | `log_posterior_batch`, `log_prior_batch`, `log_likelihood_batch`, `prior_transform_batch` (one `jax.vmap` call; emcee `vectorize=True`, pocomc, ptemcee's `mapper`) | test_problem, recipe 16 |
 | EXFOR to dataset with unit conversion | `from_measurement(m, reaction=, quantity=)` | test_measurement, recipe 14 |
 | elastic `dXS/dA`, `dXS/dRuth`, `Ay`; (p,n) IAS | `ElasticXS`, `IsobaricAnalogPN` | test_reactions, recipe 15 |
 | singular-covariance guard naming the dataset | compile-time in `Problem` | test_covariance, recipe 21 |
@@ -815,15 +774,15 @@ a time unless noted (`pytest --nbmake`, JAX rxmc on jitr's jax-core branch).
 |---|---|---|---|---|
 | `linear_calibration` | 1, 2, 17, 40 | emcee | the whole workflow on a line with an inferred constant noise; prior and posterior predictive on a new grid with `grid_draws`, the model's band against a measurement's, and why reported per-point errors cannot go there; coverage of both | 10 s |
 | `error_models` | 2, 4, 19 | emcee | the covariance ladder on one comparison, the Peelle matrix as a fixed term, offsets known, free and ignored | 13 s |
-| `sharing_error_models` | 5 | dynesty | two experiments with opposite normalisation defects: sharing a parameter, a mode per dataset, one mode spanning both, and the assembled covariance seen directly; one panel per error model | 80 s |
-| `normalization_and_covariance_structure` | 3, 4, 6, 27 | dynesty | six treatments of four experiments' normalisations on a cubic with a free, non-zero constant term, one of them badly mis-quoted and alone in its range; Peelle's puzzle in the two-point case it was found in; a gallery of covariance structures from `matrix(theta)` | 445 s |
-| `gp_discrepancy` | 7 | emcee, dynesty | mean-zero discrepancies with amplitudes growing in x: four rungs on a toy line, three on n+⁴⁰Ca missing its surface absorption; the three predictive objects (model plus discrepancy, plus experimental, and the conditioned regression it does not use), with the equations | 255 s |
+| `sharing_error_models` | 5 | NUTS | two experiments with opposite normalisation defects: sharing a parameter, a mode per dataset, one mode spanning both, and the assembled covariance seen directly; one panel per error model | 62 s |
+| `normalization_and_covariance_structure` | 3, 4, 6, 27 | NUTS | six treatments of four experiments' normalisations on a cubic with a free, non-zero constant term, one of them badly mis-quoted and alone in its range; Peelle's puzzle in the two-point case it was found in; a gallery of covariance structures from `matrix(theta)` | 325 s |
+| `gp_discrepancy` | 7 | emcee, pocomc | mean-zero discrepancies with amplitudes growing in x: four rungs on a toy line, three on n+⁴⁰Ca missing its surface absorption; the three predictive objects (model plus discrepancy, plus experimental, and the conditioned regression it does not use), with the equations | 398 s |
 | `robust_likelihoods` | 9, 12, 39 | emcee | Student-t versus Gaussian on three gross outliers; the iterative rejection loop, including the round that over-rejects and recovers; tempering a correctly specified 200-point line, with the prior on the corner plot and the predictive coverage | 23 s |
 | `error_scale_and_usu` | 34 | emcee | a global scale on the reported errors under both likelihoods; a USU offset on the technique we suspect | 16 s |
-| `local_optical_model_calibration` | 10, 14, 15, 16, 17, 18, 19, 21, 40 | dynesty | EXFOR O1199007, p + ⁴⁰Ca at 35 MeV, which quotes no systematics, read from a plain dict: the unit contract; log-space residuals with the jitr α+Ca error model (reported statistics plus inferred point-to-point and common relative errors, as custom terms) against linear residuals with the reported errors alone, compared by evidence with the Jacobian, by predictives for the potential alone (on a grid) and with every error term (at the measured angles), and by three coverage curves each; the singular guard | 421 s |
-| `alpha_ca_error_model_comparison` | 7, 10, 13, 17, 18, 19, 40 | dynesty | real ⁴⁴Ca(α,α) data without reported errors, in log space with the jitr error model (inferred point-to-point and common relative errors as custom terms); a Matérn GP in angle, its length-scale prior spanning one point spacing to the full range, with a constant amplitude against one growing as an inferred power of q, by evidence; the potential alone and the full predictive on a fine grid, their coverage, and the mean-zero envelope that says *where* the potential fails | 160 s |
-| `hierarchical_calibration` | 22, 24, 30, 35, 38 | dynesty | eight schools, with the shrinkage explained rather than assumed; a hierarchy on the physics parameters recovering the evidence a misspecified energy dependence threw away, scored in sample and at a held-out energy | 767 s |
-| `gradient_based_sampling` | 16, 33, 41 | NUTS, emcee, dynesty | the same problems under three samplers, scored by effective draws per second once R-hat and emcee's autocorrelation time say the run converged: a 33-parameter hierarchy NUTS samples in half a minute and emcee has not mixed after six times as long; a 5-parameter GP discrepancy where the two are comparable, with a MAP and a Laplace approximation from the exact gradient and Hessian, and what Laplace misses; the p + ⁴⁰Ca optical model, NUTS started from the best of the local modes, agreeing with dynesty at a tenth of its rate | 1154 s |
+| `local_optical_model_calibration` | 10, 14, 15, 16, 17, 18, 19, 21, 40 | pocomc, NUTS | EXFOR O1199007, p + ⁴⁰Ca at 35 MeV, which quotes no systematics, read from a plain dict: the unit contract; log-space residuals with the jitr α+Ca error model (reported statistics plus inferred point-to-point and common relative errors, as custom terms) against linear residuals with the reported errors alone, compared by evidence with the Jacobian, by predictives for the potential alone (on a grid) and with every error term (at the measured angles), and by three coverage curves each; pocomc checked against a short NUTS run from the MAP; the singular guard | 1238 s |
+| `alpha_ca_error_model_comparison` | 7, 10, 13, 17, 18, 19, 40 | pocomc | real ⁴⁴Ca(α,α) data without reported errors, in log space with the jitr error model (inferred point-to-point and common relative errors as custom terms); a Matérn GP in angle, its length-scale prior spanning one point spacing to the full range, with a constant amplitude against one growing as an inferred power of q, by evidence; the potential alone and the full predictive on a fine grid, their coverage, and the mean-zero envelope that says *where* the potential fails | 720 s |
+| `hierarchical_calibration` | 22, 24, 30, 35, 38 | NUTS | eight schools, with the shrinkage explained rather than assumed; a hierarchy on the physics parameters recovering the predictive power a misspecified energy dependence threw away, scored in sample and at a held-out energy | 280 s |
+| `gradient_based_sampling` | 16, 33, 41 | NUTS, emcee | the same problems under two samplers, scored by effective draws per second once R-hat and emcee's autocorrelation time say the run converged: a 33-parameter hierarchy NUTS samples in half a minute and emcee has not mixed after twice as long; a 5-parameter GP discrepancy where emcee is six times faster, with a MAP and a Laplace approximation from the exact gradient and Hessian, and what Laplace misses | 188 s |
 
 **`hierarchical_calibration` in detail.**  The truth is
 `y = a0(E) + a1(E) x + a2(E) x²`, measured by seven synthetic datasets at
@@ -832,7 +791,7 @@ them; the true `a_k(E)` are a smooth trend plus non-monotonic bumps.  Three
 fits of the same data: the correct mapping with global `φ`; a misspecified
 linear mapping with global `φ`; the linear mapping plus a per-dataset
 deviation vector `δ_j = τ ⊙ η_j`, non-centred, `η_jk ~ N(0, 1)`, `τ_k`
-half-normal, as marginal priors.  One `Model` per comparison closes over
+half-normal, as marginal priors, sampled with NUTS from prior draws.  One `Model` per comparison closes over
 `E_j`; the held-out comparison is fully masked, so its `η_new` is sampled
 from the prior, driven by `τ`, and `complement()`, `predictive_draws` and
 `heldout_log_predictive` score the new energy with no extra code.  The
@@ -862,12 +821,12 @@ docs/               this document, recipes.md, examples.rst, api.rst, groundup_d
 Runtime dependencies: `numpy`, `scipy`, `jax`, `tinygp`, `jitr` (jax-core
 branch) and `exfor-tools`.  Importing `rxmc` turns on `jax_enable_x64` for
 the process.
-Extras: `examples` (emcee, dynesty, blackjax, corner, matplotlib, dill, jupyter,
-ipykernel, tqdm), `validation` (examples plus pytest, nbmake, nbqa, ruff,
+Extras: `examples` (emcee, dynesty, pocomc with a CPU torch, blackjax, corner,
+matplotlib, dill, jupyter, ipykernel, tqdm), `validation` (examples plus pytest, nbmake, nbqa, ruff,
 black, isort, build, and scikit-learn, which the tests use as an
 independent reference for the kernels), `docs` (sphinx, the pydata theme,
-myst-nb), `samplers` (ptemcee, pocomc, PyMC and a CPU torch: the sampler
-benchmark's extra samplers).  Python 3.12 or later.
+myst-nb), `samplers` (ptemcee and PyMC: the sampler benchmark's extra
+samplers).  Python 3.12 or later.
 
 ## 8. Open questions and non-goals
 
