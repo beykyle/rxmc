@@ -1,7 +1,7 @@
 """Recipe 16: drive the calibration with an external sampler.
 
-I want to use emcee, dynesty, or the black-box-bayes CLI, and read the chain
-back without positional arithmetic.
+I want to use pocomc, emcee, dynesty, or the black-box-bayes CLI, and read the
+chain back without positional arithmetic.
 """
 
 import dill
@@ -9,7 +9,9 @@ import dynesty
 import emcee
 import jax
 import numpy as np
+import pocomc
 import pytest
+from scipy import stats
 
 from common import TRUE, line_data, line_problem
 from rxmc import Comparison, Constraint, Model, Parameter, Problem
@@ -40,6 +42,29 @@ def test_dynesty_uses_log_likelihood_and_prior_transform():
     ns.run_nested(dlogz=1.0, print_progress=False)
     res = ns.results
     assert np.isfinite(res.logz[-1]) and res.samples_equal().shape[1] == p.ndim
+
+
+def test_pocomc_samples_the_unit_cube_through_prior_transform():
+    p, _ = line_problem()
+
+    def log_likelihood(u):
+        return p.log_likelihood_batch(p.prior_transform_batch(u))
+
+    smc = pocomc.Sampler(
+        pocomc.Prior([stats.uniform(0, 1)] * p.ndim),
+        log_likelihood,
+        vectorize=True,
+        n_effective=128,
+        n_active=64,
+        random_state=0,
+    )
+    smc.run(n_total=256, n_evidence=512, progress=False)
+    u, _, _ = smc.posterior(resample=True)
+    samples = p.prior_transform_batch(u)
+    logz, logz_err = smc.evidence()
+    assert samples.shape[1] == p.ndim and np.isfinite(logz) and logz_err > 0
+    m = p.columns(p.params[0])
+    assert abs(samples[:, m].mean() - TRUE[0]) < 3 * samples[:, m].std() + 0.05
 
 
 def test_black_box_bayes_contract_and_dill():

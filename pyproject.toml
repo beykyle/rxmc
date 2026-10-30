@@ -43,6 +43,8 @@ examples = [
   "ipykernel>=6.0",
   "jupyter>=1.0",
   "matplotlib>=3.8",
+  "pocomc>=1.2",
+  "torch",  # for pocomc; listed so tool.uv.sources can point it at the CPU wheels
   "tqdm>=4.66",
 ]
 validation = [
@@ -59,18 +61,18 @@ validation = [
   "matplotlib>=3.8",
   "nbmake>=1.5",
   "nbqa>=1.9",
+  "pocomc>=1.2",
   "pytest>=8.0",
   "ruff>=0.6",
   "scikit-learn>=1.0",
+  "torch",
   "tqdm>=4.66",
 ]
-# the sampler benchmark's extra samplers (benchmarks/bench_samplers.py); pocomc
-# brings torch, which uv takes from PyTorch's CPU index (see tool.uv below)
+# the sampler benchmark's extra samplers (benchmarks/bench_samplers.py, which
+# also needs the examples extra)
 samplers = [
-  "pocomc>=1.2",
   "ptemcee @ git+https://github.com/NuclearTalent/ptemcee_2025@modernize",
   "pymc>=5.0",
-  "torch",  # for pocomc; listed so tool.uv.sources can point it at the CPU wheels
 ]
 
 [tool.setuptools.packages.find]

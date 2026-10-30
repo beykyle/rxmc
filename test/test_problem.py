@@ -159,6 +159,10 @@ class TestPriors:
         np.testing.assert_allclose(draws.mean(0), mu, atol=0.05)
         np.testing.assert_allclose(np.cov(draws.T), cov, rtol=0.1, atol=0.03)
         assert np.all(np.isfinite(p.prior_transform([0.0, 1.0])))
+        us = rng.uniform(size=(5, 2))
+        np.testing.assert_allclose(
+            p.prior_transform_batch(us), [p.prior_transform(u) for u in us]
+        )
         s = p.sample_prior(500, rng=1)
         assert s.shape == (500, 2) and np.allclose(s.mean(0), mu, atol=0.15)
 
@@ -242,6 +246,10 @@ class TestPriors:
         theta = p.prior_transform([0.5, 0.5, 0.5])
         np.testing.assert_allclose(theta, [0.0, 0.0, 0.0], atol=1e-12)
         assert np.isfinite(p.log_prior(theta))
+        us = np.random.default_rng(0).uniform(size=(4, 3))  # one row at a time
+        np.testing.assert_allclose(
+            p.prior_transform_batch(us), [p.prior_transform(u) for u in us]
+        )
 
     def test_joint_dimension_must_match_its_parameters(self):
         model = line_model(prior=False)
@@ -631,6 +639,40 @@ class TestDrivers:
         np.testing.assert_allclose(
             p.log_posterior_batch([theta, theta]), [p.log_posterior(theta)] * 2
         )
+        np.testing.assert_allclose(
+            q.log_likelihood_batch([theta]), [p.log_likelihood(theta)]
+        )
+
+    def test_batch_siblings_match_their_single_point_versions(self):
+        m = Parameter("m", prior=stats.norm(0, 2), bounds=(-1.0, 3.0))
+        b = Parameter("b", bounds=(0.0, 4.0))
+        model = Model(lambda x, m, b: m * x + b, [m, b])
+        p = Problem([Constraint([Comparison(dataset(), model)])])
+        us = np.random.default_rng(0).uniform(size=(6, 2))
+        thetas = p.prior_transform_batch(us)
+        np.testing.assert_allclose(thetas, [p.prior_transform(u) for u in us])
+        outside = np.vstack([thetas, [[5.0, 1.0]]])  # m beyond its bound
+        np.testing.assert_allclose(
+            p.log_prior_batch(outside), [p.log_prior(t) for t in outside]
+        )
+        # the likelihood is evaluated on every row, the prior notwithstanding
+        np.testing.assert_allclose(
+            p.log_likelihood_batch(outside), [p.log_likelihood(t) for t in outside]
+        )
+        for fn in (p.log_prior_batch, p.log_likelihood_batch, p.prior_transform_batch):
+            with pytest.raises(ValueError, match=r"shape \(n, 2\)"):
+                fn([0.5, 0.5])
+
+    def test_batch_densities_evaluate_in_chunks(self, monkeypatch):
+        import rxmc.problem
+
+        monkeypatch.setattr(rxmc.problem, "BATCH_CHUNK", 4)  # 10 rows: 4 + 4 + 2
+        p = problem()
+        thetas = p.sample_prior(10, rng=0)
+        np.testing.assert_allclose(
+            p.log_posterior_batch(thetas), [p.log_posterior(t) for t in thetas]
+        )
+        assert p.log_likelihood_batch(np.empty((0, 2))).shape == (0,)
 
     def test_kernel_and_offset_terms_pickle(self):
         eps = Parameter("log_A", prior=stats.norm())

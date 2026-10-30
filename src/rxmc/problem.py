@@ -200,6 +200,11 @@ def _std_invgamma(z, a):
     return jnp.where(pos, out, -jnp.inf)
 
 
+#: rows per vmapped call of the batch densities: a reaction model holds every
+#: row's partial-wave solutions at once (a few MB a row), so a large batch is
+#: evaluated in chunks of this size
+BATCH_CHUNK = 256
+
 #: scipy family name -> standardised JAX log density ``f(z, *shapes)`` with
 #: ``z = (x - loc) / scale``.
 JAX_LOGPDFS = {
@@ -376,10 +381,12 @@ class _Joint:
                 "unit-cube map; drop the bounds or use a sampler that needs only "
                 "log_posterior"
             )
-        if self._L is not None:
-            return self._mean + self._L @ stats.norm.ppf(u)
-        if hasattr(self.joint, "prior_transform"):
-            return np.asarray(self.joint.prior_transform(u), dtype=float)
+        if self._L is not None:  # rows of u: (..., k) @ (k, k)
+            return self._mean + stats.norm.ppf(u) @ self._L.T
+        if hasattr(self.joint, "prior_transform"):  # one point at a time
+            if u.ndim == 1:
+                return np.asarray(self.joint.prior_transform(u), dtype=float)
+            return np.array([self.joint.prior_transform(row) for row in u], dtype=float)
         raise NotImplementedError(
             f"the joint prior over {self.names} has no prior_transform(u); give it "
             "one, or use a sampler that needs only log_posterior"
@@ -470,12 +477,13 @@ class _Prior:
         return jnp.asarray(total)
 
     def transform(self, u) -> np.ndarray:
+        """``u`` of shape ``(ndim,)`` or ``(n, ndim)`` to ``theta`` alike."""
         u = clip_unit_cube(u)
-        theta = np.empty(self.ndim)
+        theta = np.empty(u.shape)
         for m in self.marginals:
-            theta[m.slot] = m.transform(u[m.slot])
+            theta[..., m.slot] = m.transform(u[..., m.slot])
         for j in self.joints:
-            theta[j.slots] = j.transform(u[j.slots])
+            theta[..., j.slots] = j.transform(u[..., j.slots])
         return theta
 
     def sample(self, n, rng) -> np.ndarray:
@@ -774,6 +782,8 @@ class Problem:
         self._vg_j = jax.jit(jax.value_and_grad(self._log_posterior_impl))
         self._hess_j = jax.jit(jax.hessian(self._log_posterior_impl))
         self._batch_j = jax.jit(jax.vmap(self._log_posterior_impl))
+        self._prior_batch_j = jax.jit(jax.vmap(self._log_prior_impl))
+        self._likelihood_batch_j = jax.jit(jax.vmap(self._log_likelihood_impl))
         self._to_theta_j = jax.jit(lambda z: self._to_theta_impl(z)[0])
         self._to_z_j = jax.jit(self._to_unconstrained_impl)
         self._lpu_j = jax.jit(self._log_posterior_unconstrained_impl)
@@ -969,6 +979,14 @@ class Problem:
             raise ValueError(f"u must have shape ({self.ndim},), got {u.shape}")
         return self._prior.transform(u)
 
+    def prior_transform_batch(self, us) -> np.ndarray:
+        """:meth:`prior_transform` over the rows of ``us``, ``(n, ndim)``.
+
+        With :meth:`log_likelihood_batch` it serves a vectorised sampler on
+        the unit cube, such as pocomc with ``vectorize=True``.
+        """
+        return self._prior.transform(self._rows(us, "us"))
+
     def sample_prior(self, n: int, rng=None) -> np.ndarray:
         """``(n, ndim)`` draws from the prior."""
         rng = np.random.default_rng(rng)
@@ -1003,18 +1021,49 @@ class Problem:
         """``(n, ndim)`` draws from the prior (:meth:`sample_prior`)."""
         return self.sample_prior(n)
 
+    def _rows(self, rows, name="thetas") -> np.ndarray:
+        rows = np.asarray(rows, dtype=float)
+        if rows.ndim != 2 or rows.shape[1] != self.ndim:
+            raise ValueError(
+                f"{name} must have shape (n, {self.ndim}), got {rows.shape}"
+            )
+        return rows
+
+    def _chunked(self, fn, thetas) -> np.ndarray:
+        """``fn`` (a vmapped density) over the rows, ``BATCH_CHUNK`` at a time."""
+        rows = self._rows(thetas)
+        return np.concatenate(
+            [
+                np.asarray(fn(rows[i : i + BATCH_CHUNK]))
+                for i in range(0, len(rows), BATCH_CHUNK)
+            ]
+            or [np.empty(0)]
+        )
+
     def log_posterior_batch(self, thetas) -> np.ndarray:
         """:meth:`log_posterior` over the rows of ``thetas``.
 
-        One ``jax.vmap`` call; with emcee, pass it with ``vectorize=True``
-        instead of a process pool.
+        ``jax.vmap`` calls of at most ``BATCH_CHUNK`` rows; with emcee, pass
+        it with ``vectorize=True`` instead of a process pool.
         """
-        thetas = jnp.asarray(thetas, dtype=float)
-        if thetas.ndim != 2 or thetas.shape[1] != self.ndim:
-            raise ValueError(
-                f"thetas must have shape (n, {self.ndim}), got {thetas.shape}"
-            )
-        return np.asarray(self._batch_j(thetas))
+        return self._chunked(self._batch_j, thetas)
+
+    def log_prior_batch(self, thetas) -> np.ndarray:
+        """:meth:`log_prior` over the rows of ``thetas``, as :meth:`log_posterior_batch`."""
+        return self._chunked(self._prior_batch_j, thetas)
+
+    def log_likelihood_batch(self, thetas) -> np.ndarray:
+        """:meth:`log_likelihood` over the rows of ``thetas``, as
+        :meth:`log_posterior_batch`.
+
+        For vectorised samplers: pocomc with ``vectorize=True`` (on
+        :meth:`prior_transform_batch` of its unit-cube points), or ptemcee
+        through its ``mapper``.  Unlike :meth:`log_posterior_batch` it
+        evaluates every row, inside the prior's support or not, where the
+        models may give non-finite values; a caller that combines it with a
+        prior masks those rows.
+        """
+        return self._chunked(self._likelihood_batch_j, thetas)
 
     def __repr__(self):
         return f"Problem(ndim={self.ndim}, constraints={len(self.constraints)})"

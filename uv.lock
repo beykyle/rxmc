@@ -3101,14 +3101,14 @@ examples = [
     { name = "ipykernel" },
     { name = "jupyter" },
     { name = "matplotlib" },
+    { name = "pocomc" },
+    { name = "torch", version = "2.15.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'darwin'" },
+    { name = "torch", version = "2.15.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin'" },
     { name = "tqdm" },
 ]
 samplers = [
-    { name = "pocomc" },
     { name = "ptemcee" },
     { name = "pymc" },
-    { name = "torch", version = "2.15.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'darwin'" },
-    { name = "torch", version = "2.15.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin'" },
 ]
 validation = [
     { name = "black" },
@@ -3124,9 +3124,12 @@ validation = [
     { name = "matplotlib" },
     { name = "nbmake" },
     { name = "nbqa" },
+    { name = "pocomc" },
     { name = "pytest" },
     { name = "ruff" },
     { name = "scikit-learn" },
+    { name = "torch", version = "2.15.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'darwin'" },
+    { name = "torch", version = "2.15.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin'" },
     { name = "tqdm" },
 ]
 
@@ -3158,7 +3161,8 @@ requires-dist = [
     { name = "nbmake", marker = "extra == 'validation'", specifier = ">=1.5" },
     { name = "nbqa", marker = "extra == 'validation'", specifier = ">=1.9" },
     { name = "numpy", specifier = ">=2.2.6" },
-    { name = "pocomc", marker = "extra == 'samplers'", specifier = ">=1.2" },
+    { name = "pocomc", marker = "extra == 'examples'", specifier = ">=1.2" },
+    { name = "pocomc", marker = "extra == 'validation'", specifier = ">=1.2" },
     { name = "ptemcee", marker = "extra == 'samplers'", git = "https://github.com/NuclearTalent/ptemcee_2025?rev=modernize" },
     { name = "pydata-sphinx-theme", marker = "extra == 'docs'", specifier = ">=0.15" },
     { name = "pymc", marker = "extra == 'samplers'", specifier = ">=5.0" },
@@ -3169,7 +3173,8 @@ requires-dist = [
     { name = "sphinx", marker = "extra == 'docs'", specifier = ">=7.0" },
     { name = "sphinx-copybutton", marker = "extra == 'docs'", specifier = ">=0.5" },
     { name = "tinygp", specifier = ">=0.3" },
-    { name = "torch", marker = "extra == 'samplers'", index = "https://download.pytorch.org/whl/cpu" },
+    { name = "torch", marker = "extra == 'examples'", index = "https://download.pytorch.org/whl/cpu" },
+    { name = "torch", marker = "extra == 'validation'", index = "https://download.pytorch.org/whl/cpu" },
     { name = "tqdm", marker = "extra == 'examples'", specifier = ">=4.66" },
     { name = "tqdm", marker = "extra == 'validation'", specifier = ">=4.66" },
 ]
