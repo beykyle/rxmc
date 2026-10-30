@@ -2,7 +2,7 @@
 
 Each builder returns ``(problem, thetas)``: a compiled :class:`rxmc.Problem`
 and a fixed ``(k, ndim)`` array of parameter points (seeded prior draws) at
-which values are recorded and timings taken.  The five problems span the cost
+which values are recorded and timings taken.  The problems span the cost
 regimes of the performance comparison in the JAX rewrite plan:
 
 * ``linear``      -- recipe 01: a line with reported errors (overhead-bound)

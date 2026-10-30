@@ -4,13 +4,14 @@ rxmc
 ``rxmc`` calibrates reaction models to experimental data by Bayesian
 inference, with the error model, statistical and systematic, experimental
 and theoretical, declared explicitly as part of the problem, and the
-calibration driven by external samplers (emcee, dynesty, black-box-bayes)
+calibration driven by external samplers (pocomc, emcee, dynesty, black-box-bayes)
 and, with JAX gradients, by HMC or optimisers.
 
 - :doc:`recipes` states every supported use case with its spelling and the
   behaviour to expect; each recipe is a test.
 - :doc:`examples` are the tutorials for the recipes.
-- :doc:`design` is the maintainer's description of the library.
+- :doc:`design` is the maintainer's description of the library, and
+  :doc:`benchmarks` says how fast it is and how the samplers compare.
 - :doc:`api` is the reference.
 
 This is ``rxmc`` 1.0, a rewrite that does not run 0.x code.  The 0.x package
@@ -26,4 +27,5 @@ and on branch `legacy/0.x <https://github.com/beykyle/rxmc/tree/legacy/0.x>`_;
    recipes
    examples
    design
+   benchmarks
    api

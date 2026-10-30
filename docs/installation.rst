@@ -20,16 +20,16 @@ Install from GitHub:
 Extras:
 
 ===============  =============================================================
-``examples``     emcee, dynesty, blackjax, corner, matplotlib, dill,
-                 jupyter: everything the notebooks use
+``examples``     emcee, dynesty, pocomc, blackjax, corner, matplotlib, dill,
+                 jupyter: everything the notebooks use (pocomc brings torch;
+                 with ``uv`` it comes from PyTorch's CPU wheels, with ``pip``
+                 install ``torch`` from ``--index-url
+                 https://download.pytorch.org/whl/cpu`` first)
 ``validation``   ``examples`` plus pytest, nbmake, nbqa, ruff, black, isort,
                  and scikit-learn (a reference for the kernel tests)
 ``docs``         sphinx, the pydata theme, myst-nb
-``samplers``     ptemcee, pocomc, PyMC: the extra samplers of
-                 ``benchmarks/bench_samplers.py`` (pocomc brings torch; with
-                 ``uv`` it comes from PyTorch's CPU wheels, with ``pip``
-                 install ``torch`` from ``--index-url
-                 https://download.pytorch.org/whl/cpu`` first)
+``samplers``     ptemcee and PyMC: the extra samplers of
+                 ``benchmarks/bench_samplers.py`` (:doc:`benchmarks`)
 ===============  =============================================================
 
 The 0.x package, which 1.0 replaces without backwards compatibility, is
