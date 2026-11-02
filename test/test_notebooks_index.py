@@ -25,7 +25,7 @@ BANNER = re.search(r'^BANNER = "(.+)"$', (EXAMPLES / "budget.py").read_text(), r
 NOTEBOOKS = {
     "linear_calibration": {1, 2, 17, 33, 40},
     "normalization_and_covariance_structure": {2, 3, 4, 5, 6, 19, 27},
-    "gp_discrepancy": {7},
+    "gp_discrepancy": {2, 7, 10, 16, 17, 18},
     "robust_likelihoods": {9, 12, 39},
     "local_optical_model_calibration": {10, 14, 15, 16, 17, 18, 19, 21, 40},
     "alpha_ca_error_model_comparison": {7, 10, 13, 17, 18, 19, 40},
