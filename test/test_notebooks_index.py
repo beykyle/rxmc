@@ -29,7 +29,7 @@ NOTEBOOKS = {
     "robust_likelihoods": {9, 12, 39},
     "local_optical_model_calibration": {10, 14, 15, 16, 17, 18, 19, 21, 40},
     "alpha_ca_error_model_comparison": {7, 10, 13, 17, 18, 19, 40},
-    "hierarchical_calibration": {22, 24, 30, 35, 38},
+    "hierarchical_calibration": {22, 24, 30, 35, 38, 41},
     "gradient_based_sampling": {16, 33, 41},
 }
 
