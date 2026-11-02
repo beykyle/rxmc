@@ -23,7 +23,7 @@ BANNER = re.search(r'^BANNER = "(.+)"$', (EXAMPLES / "budget.py").read_text(), r
 
 # design document section 9, item 8: the eleven notebooks and their recipes
 NOTEBOOKS = {
-    "linear_calibration": {1, 2, 17, 40},
+    "linear_calibration": {1, 2, 17, 33, 40},
     "error_models": {2, 4, 19},
     "sharing_error_models": {5},
     "normalization_and_covariance_structure": {3, 4, 6, 27},

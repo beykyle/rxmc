@@ -781,7 +781,7 @@ at a time (`examples/run.py`, JAX rxmc on jitr's jax-core branch).
 
 | notebook | recipes | driver | content | runtime |
 |---|---|---|---|---|
-| `linear_calibration` | 1, 2, 17, 40 | emcee | the whole workflow on a line with an inferred constant noise; prior and posterior predictive on a new grid with `grid_draws`, the model's band against a measurement's, and why reported per-point errors cannot go there; coverage of both | 10 s |
+| `linear_calibration` | 1, 2, 17, 33, 40 | emcee | the whole workflow on a line with an inferred constant noise; prior and posterior predictive on a new grid with `grid_draws`, the model's band against a measurement's, and why reported per-point errors cannot go there; coverage of both | 10 s |
 | `error_models` | 2, 4, 19 | emcee | the covariance ladder on one comparison, the Peelle matrix as a fixed term, offsets known, free and ignored | 11 s |
 | `sharing_error_models` | 5 | NUTS | two experiments with opposite normalisation defects: sharing a parameter, a mode per dataset, one mode spanning both, and the assembled covariance seen directly; one panel per error model | 60 s |
 | `normalization_and_covariance_structure` | 3, 4, 6, 27 | NUTS | six treatments of four experiments' normalisations on a cubic with a free, non-zero constant term, one of them badly mis-quoted and alone in its range; Peelle's puzzle in the two-point case it was found in; a gallery of covariance structures from `matrix(theta)` | 319 s |
