@@ -59,8 +59,8 @@ Expected behaviour:
 
 - With `statistical=False` the inferred noise *replaces* the reported
   errors; with the default `statistical=True` it is *added* to them.
-- The posterior of `log_eps` reflects the residual scatter.  In the
-  `sampling_algos` scenario its truth is recovered.
+- The posterior of `log_eps` reflects the residual scatter; in
+  `linear_calibration` it recovers the truth.
 - `proportional_error` scales with the prediction, so the
   covariance changes with the model parameters.  That is allowed and costs
   nothing extra.
@@ -166,10 +166,12 @@ Expected behaviour:
   parameters follow the model's in `problem.names`.
 - A masked or held-out view of the comparison keeps the same `rho_i` because
   the comparison, not the data, carries the model.
-- Fitting the ρᵢ recovers the true normalisations by MAP
-  (`normalization_inference`); folding the reported σ_sys in as fixed
-  normalisation modes (recipe 3) gives statistically the same model
-  posterior.
+- Fitting the $\rho_i$ recovers normalisations that are consistent with
+  their quoted widths; one tightly mis-quoted dataset sets the overall scale
+  through its prior and biases them all
+  (`normalization_and_covariance_structure`).  Folding the reported
+  $\sigma_\text{sys}$ in as fixed normalisation modes (recipe 3) gives nearly
+  the same model posterior.
 
 ## 7. Absorb model deficiency with a Gaussian process
 
@@ -601,7 +603,7 @@ Expected behaviour:
   `diag`/`mode` or a matrix.
 - Fitting correlated data with the correct `Term(C)` instead of its
   diagonal is the difference between an honest and an overconfident
-  posterior (`normalization_inference` gallery).
+  posterior (`normalization_and_covariance_structure` gallery).
 
 ## 20. Preprocess instead of asking for a feature
 

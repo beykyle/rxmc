@@ -21,15 +21,12 @@ RECIPES = ROOT / "docs" / "recipes.md"
 # here cannot print it
 BANNER = re.search(r'^BANNER = "(.+)"$', (EXAMPLES / "budget.py").read_text(), re.M)[1]
 
-# design document section 9, item 8: the eleven notebooks and their recipes
+# design document section 9, item 8: the eight notebooks and their recipes
 NOTEBOOKS = {
     "linear_calibration": {1, 2, 17, 33, 40},
-    "error_models": {2, 4, 19},
-    "sharing_error_models": {5},
     "normalization_and_covariance_structure": {2, 3, 4, 5, 6, 19, 27},
     "gp_discrepancy": {7},
     "robust_likelihoods": {9, 12, 39},
-    "error_scale_and_usu": {34},
     "local_optical_model_calibration": {10, 14, 15, 16, 17, 18, 19, 21, 40},
     "alpha_ca_error_model_comparison": {7, 10, 13, 17, 18, 19, 40},
     "hierarchical_calibration": {22, 24, 30, 35, 38},

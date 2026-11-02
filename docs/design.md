@@ -689,7 +689,7 @@ test that pins it.  Recipe numbers refer to `recipes.md`.
 | reported normalisation / offset as modes | `comparison.reported_terms()`; `normalization(magnitude=)`, `offset(magnitude=)` | test_constraint, test_regression, recipe 3 |
 | free normalisation / offset nuisance | `normalization(log_eta)`, `offset(log_omega)` | test_terms, recipe 4 |
 | fixed dense covariance; fixed diagonal | `Term(C, on=comp)`, `Term(sig, kind="diag", on=comp)` | test_terms, recipe 19 |
-| case B: one parameter, two block-local terms | `noise(log_eps, on=c1), noise(log_eps, on=c2)`; or two constraints sharing `log_eps` | test_problem, recipe 5 |
+| case B: one parameter, two block-local terms | `normalization(log_eta, on=c1), normalization(log_eta, on=c2)` (or any term, e.g. `noise(log_eps, on=...)`); or two constraints sharing the parameter | test_problem, recipe 5 |
 | case A: one mode across comparisons | `normalization(log_eta, on=[c1, c2])` | test_covariance, test_regression, recipe 5 |
 | per-dataset Kennedy and O'Hagan scale | `Comparison(d_i, omp \| scale(rho_i))` | test_model, recipe 6 |
 | sampled mean discrepancy | `omp + Model(delta_fn, phi)`; alone or with `kernel` | test_model, recipe 8 |
@@ -760,7 +760,7 @@ Two tiers, chosen per assertion.
 Three index tests keep the documents honest: `test_recipes_index.py`
 (one file per `## NN.` heading, each quoting its recipe; the recipe-18
 legend equal to the tests' legend), `test_notebooks_index.py` (each
-notebook cites the recipes of the design's table, all eleven exist), and
+notebook cites the recipes of the design's table, all eight exist), and
 `test_regression.py` (the 0.x pins).  `test/helpers.py` holds the dense
 references and `STUDY_LEGEND`, the labelled error-model forms of recipe
 18 built against hand-written matrices.
@@ -782,12 +782,9 @@ at a time (`examples/run.py`, JAX rxmc on jitr's jax-core branch).
 | notebook | recipes | driver | content | runtime |
 |---|---|---|---|---|
 | `linear_calibration` | 1, 2, 17, 33, 40 | emcee | the whole workflow on a line with an inferred constant noise; prior and posterior predictive on a new grid with `grid_draws`, the model's band against a measurement's, and why reported per-point errors cannot go there; coverage of both | 10 s |
-| `error_models` | 2, 4, 19 | emcee | the covariance ladder on one comparison, the Peelle matrix as a fixed term, offsets known, free and ignored | 11 s |
-| `sharing_error_models` | 5 | NUTS | two experiments with opposite normalisation defects: sharing a parameter, a mode per dataset, one mode spanning both, and the assembled covariance seen directly; one panel per error model | 60 s |
 | `normalization_and_covariance_structure` | 2, 3, 4, 5, 6, 19, 27 | NUTS | where a $\chi^2$ comes from; six treatments of four experiments' normalisations on the 0.x quartic with a free, non-zero constant term, one experiment tightly mis-quoted, scored by how much of the range each band covers; the prediction-built mode's sign-flipped basin and why the chains start about the MAP; Peelle's puzzle in the two-point case against recipe 27's closed form; a gallery of covariance structures from `matrix(theta)`, including recipe 5's shared magnitude against one shared mode | 281 s |
 | `gp_discrepancy` | 7 | emcee, pocomc | mean-zero discrepancies with amplitudes growing in x: four rungs on a toy line, three on n+⁴⁰Ca missing its surface absorption; the three predictive objects (model plus discrepancy, plus experimental, and the conditioned regression it does not use), with the equations | 395 s |
 | `robust_likelihoods` | 9, 12, 39 | emcee | four treatments of the same three gross outliers in shared figures: Gaussian, the Student-t (one global scale on the covariance, so its centre stays the Gaussian's), tempering at KDUQ's $k/N$ (the same inflation for a fixed covariance) and the iterative rejection loop (the only one that moves the line, including the round that over-rejects and recovers); tempering a correctly specified 200-point line, with the prior on the corner plot and the predictive coverage | 35 s |
-| `error_scale_and_usu` | 34 | emcee | a global scale on the reported errors under both likelihoods; a USU offset on the technique we suspect | 14 s |
 | `local_optical_model_calibration` | 10, 14, 15, 16, 17, 18, 19, 21, 40 | pocomc, NUTS | EXFOR O1199007, p + ⁴⁰Ca at 35 MeV, which quotes no systematics, read from a plain dict: the unit contract; log-space residuals with the jitr α+Ca error model (reported statistics plus inferred point-to-point and common relative errors, as custom terms) against linear residuals with the reported errors alone, compared by evidence with the Jacobian, by predictives for the potential alone (on a grid) and with every error term (at the measured angles), and by three coverage curves each; pocomc checked against a short NUTS run from the MAP; the singular guard | 1239 s |
 | `alpha_ca_error_model_comparison` | 7, 10, 13, 17, 18, 19, 40 | pocomc | real ⁴⁴Ca(α,α) data without reported errors, in log space with the jitr error model (inferred point-to-point and common relative errors as custom terms); a Matérn GP in angle, its length-scale prior spanning one point spacing to the full range, with a constant amplitude against one growing as an inferred power of q, by evidence; the potential alone and the full predictive on a fine grid, their coverage, and the mean-zero envelope that says *where* the potential fails | 714 s |
 | `hierarchical_calibration` | 22, 24, 30, 35, 38 | NUTS | eight schools, with the shrinkage explained rather than assumed; a hierarchy on the physics parameters recovering the predictive power a misspecified energy dependence threw away, scored in sample and at a held-out energy | 271 s |

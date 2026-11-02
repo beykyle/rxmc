@@ -18,8 +18,6 @@ Calibration basics
    :maxdepth: 1
 
    examples/linear_calibration.ipynb
-   examples/error_models.ipynb
-   examples/sharing_error_models.ipynb
    examples/normalization_and_covariance_structure.ipynb
 
 Beyond the Gaussian
@@ -30,7 +28,6 @@ Beyond the Gaussian
 
    examples/gp_discrepancy.ipynb
    examples/robust_likelihoods.ipynb
-   examples/error_scale_and_usu.ipynb
 
 Reactions and studies
 ---------------------
