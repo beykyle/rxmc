@@ -26,7 +26,7 @@ NOTEBOOKS = {
     "linear_calibration": {1, 2, 17, 33, 40},
     "error_models": {2, 4, 19},
     "sharing_error_models": {5},
-    "normalization_and_covariance_structure": {3, 4, 6, 27},
+    "normalization_and_covariance_structure": {2, 3, 4, 5, 6, 19, 27},
     "gp_discrepancy": {7},
     "robust_likelihoods": {9, 12, 39},
     "error_scale_and_usu": {34},
