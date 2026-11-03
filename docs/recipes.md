@@ -215,8 +215,8 @@ Expected behaviour:
 - The model parameters relax from their biased values toward the truth
   (`gp_discrepancy`, on the toy).  The mean-zero envelope describes how far
   the model may stray; it is not a fit to the defect and need not contain it
-  (in `gp_discrepancy` it does over about two thirds of the toy's range and
-  half the cross section's), and on a model with missing physics some
+  (in `gp_discrepancy` it does over most of the toy's data range and about
+  half of the cross section's grid), and on a model with missing physics some
   parameters can stay confidently wrong.
 - The kernel declares a **mean-zero** discrepancy, so the likelihood is the
   marginal `y ~ N(ym(θ), Σ(θ))` and `θ` is inferred with the discrepancy
