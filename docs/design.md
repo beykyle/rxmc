@@ -623,11 +623,12 @@ from `p.sample_prior` and `p.log_posterior`, and under `black-box-bayes`
 from a `dill` pickle and a six-line module that forwards
 `starting_location`, `log_posterior`, `log_likelihood` and
 `prior_transform`.  Reaction problems are driven by pocomc by preference:
-affine-invariant ensembles mix poorly on optical-model posteriors, and on
-the p + ⁴⁰Ca benchmark pocomc, at twice its default resolution, reaches the
-reference posterior fastest; at their defaults both pocomc and dynesty are
-biased there, and dynesty needs 500 live points and about twice pocomc's
-time ([benchmarks](benchmarks.md)).
+affine-invariant ensembles mix poorly on optical-model posteriors, and the
+p + ⁴⁰Ca benchmark posterior has two separated islands, which gradient
+samplers started at the MAP never leave (R-hat does not notice).  pocomc,
+at eight times its default resolution, is the only benchmarked sampler
+correct there; below that it weighs the islands differently from run to
+run, so run it more than once and compare ([benchmarks](benchmarks.md)).
 With gradients available, HMC/NUTS (blackjax, numpyro) on `log_posterior_unconstrained`,
 or a MAP by `rx.optimize.find_map` followed by a Laplace approximation from
 `p.hessian_log_posterior`, are the alternatives.
@@ -667,11 +668,11 @@ throughput of the cheap densities a hundredfold.
 
 Scored against exact or long-run reference posteriors, no sampler is best
 everywhere.  NUTS is the only one correct on the funnel-shaped `modes` and
-`hierarchy` problems, in about a minute; pocomc (at twice its default
-resolution) is correct and fastest on the optical models, and gives the
-evidence; dynesty is correct there too, at about twice pocomc's time; emcee
-is fastest on the line but short of 50 autocorrelation times on everything
-harder.  Each example notebook uses the sampler that is correct and fastest
+`hierarchy` problems, in about a minute.  On the single-mode `elastic`
+problem pocomc, NUTS and dynesty are all correct, pocomc fastest; on the
+two-island `omp` only pocomc is, at eight times its default resolution, and
+it gives the evidence.  emcee is fastest on the line but short of 50
+autocorrelation times on everything harder.  Each example notebook uses the sampler that is correct and fastest
 on its benchmark analogue.
 
 ## 4. Capability map

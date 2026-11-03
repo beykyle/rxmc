@@ -445,7 +445,7 @@ def log_likelihood(u):                               # rows of the unit cube
     return problem.log_likelihood_batch(problem.prior_transform_batch(u))
 smc = pocomc.Sampler(pocomc.Prior([stats.uniform(0, 1)] * problem.ndim),
                      log_likelihood, vectorize=True,
-                     n_effective=1024, n_active=512)  # twice the defaults
+                     n_effective=4096, n_active=2048)  # 8x the defaults
 smc.run(); u, _, _ = smc.posterior(resample=True)
 samples = problem.prior_transform_batch(u)
 logz = rx.diagnostics.logz_summary(*smc.evidence())
@@ -479,10 +479,11 @@ Expected behaviour:
 - pocomc samples a prior of its own; given the unit cube and the likelihood
   of `prior_transform(u)` it samples the problem's prior exactly, whatever
   its marginals, and its evidence is the problem's.  It is the sampler the
-  reaction notebooks use: on the p + ⁴⁰Ca optical model it reaches the
-  reference posterior fastest of those benchmarked, at twice its default
-  `n_effective` and `n_active`; at its defaults it is biased there
-  ([benchmarks](benchmarks.md)).
+  reaction notebooks use: on the p + ⁴⁰Ca optical model, whose posterior has
+  two separated islands, it is the only benchmarked sampler to reach the
+  reference posterior, at eight times its default `n_effective` and
+  `n_active`.  Below that, how it weighs the islands changes from run to
+  run, so run it more than once and compare ([benchmarks](benchmarks.md)).
 - Parallelism: `log_posterior_batch` with emcee's `vectorize=True` needs no
   pool, and `log_prior_batch`, `log_likelihood_batch` and
   `prior_transform_batch` serve other vectorised samplers (pocomc above;

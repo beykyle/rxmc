@@ -45,8 +45,8 @@ posterior means and standard deviations.  A chain-based run with R-hat above
 
 Every run is scored against a reference posterior (``reference.py``, written
 by ``--reference`` to ``results/references.json``): exact quadrature where the
-problem is linear-Gaussian given a few parameters, a long NUTS run
-otherwise.  Its bias is the largest error of a posterior mean, and its width
+problem is linear-Gaussian given a few parameters, pooled high-resolution
+pocomc runs on the two-island ``omp``, a long NUTS run otherwise.  Its bias is the largest error of a posterior mean, and its width
 error the largest of ``|log(sd / sd_ref)|``, both over the parameters and in
 reference standard deviations.  A run is correct if it converged and both
 are at most ``TOLERANCE``; ESS rates are reported only for correct runs.
@@ -102,15 +102,18 @@ BUDGETS = {
         draws=1000,
         chains=2,
         hmc_steps=20,
+        # two islands: at 1024/512 pocomc's split between them swings from
+        # seed to seed (docs/benchmarks.md)
+        pocomc=dict(n_effective=4096, n_active=2048),
     ),
 }
 RHAT_MAX = 1.01
 #: largest bias and width error, in reference standard deviations
 TOLERANCE = 0.1
 #: the settings of the samplers that start from the prior: the cheapest that
-#: are correct on the optical models over three seeds (the defaults are not,
-#: and no setting tried is correct on the funnels gp and modes;
-#: docs/benchmarks.md)
+#: are correct on ``elastic`` over three seeds (the defaults are not, and no
+#: setting tried is correct on the funnels gp and modes; docs/benchmarks.md).
+#: ``omp`` sets its own pocomc resolution in ``BUDGETS``
 DYNESTY = dict(nlive=500, sample="rwalk")
 POCOMC = dict(n_effective=1024, n_active=512)
 
@@ -314,7 +317,7 @@ def run_pocomc(problem, b, seed=0, **settings):
         log_likelihood,
         vectorize=True,
         random_state=seed,
-        **(POCOMC | settings),
+        **(POCOMC | b.get("pocomc", {}) | settings),
     )
     sampler.run(progress=False)
     wall = time.perf_counter() - t0
@@ -536,7 +539,11 @@ def _row(v, ref):
 
 
 def _reference_cells(ref):
-    logz = "" if ref.get("logz") is None else f"{ref['logz']:.2f} (exact)"
+    logz = ""
+    if ref.get("logz") is not None and ref["method"] == "quadrature":
+        logz = f"{ref['logz']:.2f} (exact)"
+    elif ref.get("logz") is not None:
+        logz = f"{ref['logz']:.2f} ± {ref['logz_err']:.2f}"
     return ("",) * (len(HEAD) - 1) + (logz,)
 
 

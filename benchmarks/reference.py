@@ -9,9 +9,13 @@ posterior moments and the evidence to quadrature accuracy::
     gp          (log variance, log length scale) on a grid; (m, b) Gaussian
     hierarchy   tau on a grid; (m, mu, eta_j) Gaussian
 
-The others have no closed form, and their reference is one long blackjax
-NUTS run from a ball about the MAP, with a seed of its own, so the benchmarked NUTS row is not scored
-against itself.  ``python bench_samplers.py --reference`` writes them all to
+The others have no closed form.  ``modes`` and ``elastic`` have one mode,
+and their reference is one long blackjax NUTS run from a ball about the MAP,
+with a seed of its own, so the benchmarked NUTS row is not scored against
+itself.  ``omp`` has two separated islands, and a NUTS chain stays in the
+island it starts in, so R-hat cannot see an island no chain visited; its
+reference pools several pocomc runs at four times the benchmark's
+resolution, each with a seed of its own, accepted only if they agree.  ``python bench_samplers.py --reference`` writes them all to
 ``results/references.json``.
 """
 
@@ -29,6 +33,11 @@ GRIDS = {
     "linear": {},
     "gp": {2: (-12.0, 2.0, 100), 3: (-3.0, 1.0, 100)},
     "hierarchy": {2: (0.0, 6.0, 4000)},
+}
+#: per problem: pocomc runs pooled into the reference, and how closely each
+#: must agree with the pool (bias and width, in posterior standard deviations)
+POPULATION = {
+    "omp": dict(n_effective=8192, n_active=4096, seeds=(2000, 2001, 2002), agree=0.05),
 }
 #: smaller steps than the benchmark's NUTS (target acceptance 0.8), to stay
 #: clear of divergences
@@ -129,8 +138,52 @@ def long_nuts(problem):
     )
 
 
+def long_pocomc(problem, seeds, agree, **settings):
+    """pocomc runs at ``settings``, one per seed, pooled with equal weight;
+    accepted only if every run is within ``agree`` of the pool.  The
+    evidence is the runs' mean, its error their half-spread or the largest
+    quoted error, whichever is larger."""
+    from bench_samplers import errors, run_pocomc
+
+    runs = []
+    for seed in seeds:  # each run is logged as it ends, so a refusal keeps them
+        runs.append(run_pocomc(problem, {}, seed, **settings))
+        r = runs[-1]
+        print(
+            f"  pocomc seed {seed}: {r['wall_s']:.0f} s, log Z {r['logz']:.2f}, "
+            f"mean {np.round(r['mean'], 3).tolist()}, sd {np.round(r['sd'], 3).tolist()}",
+            flush=True,
+        )
+    mean = np.mean([r["mean"] for r in runs], axis=0)
+    # the pooled variance: within-run variances plus the spread of the means
+    var = np.mean(
+        [np.square(r["sd"]) + np.square(np.subtract(r["mean"], mean)) for r in runs],
+        axis=0,
+    )
+    pool = dict(mean=mean.tolist(), sd=np.sqrt(var).tolist())
+    worst = max(max(errors(r, pool)) for r in runs)
+    if worst > agree:
+        raise RuntimeError(f"reference pocomc: a run is {worst:.3f} sd from the pool")
+    logz = np.array([r["logz"] for r in runs])
+    logz_err = max(np.ptp(logz) / 2, max(r["logz_err"] for r in runs))
+    return dict(
+        method=f"pocomc {settings['n_effective']}/{settings['n_active']}, {len(seeds)} runs",
+        mean=pool["mean"],
+        sd=pool["sd"],
+        logz=float(logz.mean()),
+        logz_err=float(logz_err),
+        max_disagreement=float(worst),
+        runs=[
+            dict(mean=r["mean"], sd=r["sd"], logz=r["logz"], wall_s=r["wall_s"])
+            for r in runs
+        ],
+    )
+
+
 def reference(name, problem):
     """The reference posterior of benchmark problem ``name``."""
     if name in GRIDS:
         return conditional_gaussian(problem, GRIDS[name])
+    if name in POPULATION:
+        return long_pocomc(problem, **POPULATION[name])
     return long_nuts(problem)

@@ -12,11 +12,11 @@ regimes of the performance comparison in the JAX rewrite plan:
 * ``elastic``     -- recipes 15/26: ElasticXS at several energies with a
                      proportional model error (solver-bound)
 * ``ias``         -- an IsobaricAnalogPN prediction at one energy
-* ``omp``         -- the log-space p + 40Ca optical model of the notebooks
-                     ``local_optical_model_calibration`` and
-                     ``gradient_based_sampling``: EXFOR O1199007 at 35 MeV,
-                     seven potential parameters and two inferred relative
-                     errors (9 parameters; JAX rxmc only)
+* ``omp``         -- the log-space p + 40Ca optical model of the notebook
+                     ``local_optical_model_calibration``: EXFOR C0076002
+                     (Gross et al. 1967) at 35.8 MeV, seven potential
+                     parameters and two inferred relative errors (9
+                     parameters; JAX rxmc only)
 * ``hierarchy``   -- recipe 38 at scale: 30 lines sharing a slope, their
                      intercepts non-centred about a common mean (33
                      parameters; the sampler benchmark's high-dimensional case)
@@ -232,18 +232,21 @@ def omp():
     from rxmc import transforms as tf
 
     here = __import__("pathlib").Path(__file__).resolve().parents[1]
-    df = pd.read_csv(here / "examples" / "data" / "p40ca_elastic_35mev.csv")
+    df = pd.read_csv(
+        here / "examples" / "data" / "p40ca_elastic_35p8mev_gross1967.csv",
+        comment="#",
+    )
     measurement = {
         "x": df["angle_cm_deg"].to_numpy(),
-        "y": df["ratio_to_rutherford"].to_numpy(),
-        "statistical_err": df["stat_err"].to_numpy(),
-        "Einc": 35.0,
-        "quantity": "dXS/dRuth",
-        "y_units": "no-dim",
+        "y": df["dxs_mb_sr"].to_numpy(),
+        "statistical_err": df["stat_err_mb_sr"].to_numpy(),
+        "Einc": 35.8,
+        "quantity": "dXS/dA",
+        "y_units": "mb/sr",
         "x_units": "CM-degrees",
         "systematic_norm_err": 0.0,
         "systematic_offset_err": 0.0,
-        "subentry": "O1199007",
+        "subentry": "C0076002",
     }
     reaction = jitr.reactions.ElasticReaction(target=(40, 20), projectile=(1, 1))
     data = rxmc.from_measurement(measurement, reaction=reaction)
@@ -268,7 +271,7 @@ def omp():
         for n, m, s, lo in zip(names, start, sd, lower)
     ]
     model = rxmc.reactions.ElasticXS(
-        "dXS/dRuth",
+        "dXS/dA",
         central,
         spin_orbit,
         lambda ws, *x: (tuple(x), (5.5, 1.0 * A13, 0.6)),
