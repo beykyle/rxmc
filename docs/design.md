@@ -801,11 +801,11 @@ half-normal, as marginal priors, sampled with NUTS from prior draws.  One `Model
 `E_j`; the held-out comparison is fully masked, so its `η_new` is sampled
 from the prior, driven by `τ`, and `complement()`, `predictive_draws` and
 `heldout_log_predictive` score the new energy with no extra code.  The
-correct mapping covers in and out of sample; the misspecified one
-under-covers both and leaves structured per-dataset residuals; the
-hierarchy recovers coverage with wider, longer-tailed bands at the new
-energy, a `τ` posterior away from zero, and the better held-out score of
-the misspecified pair.  A hierarchy learns the spread of deviations it has
+correct mapping covers in sample and, to within what twelve points can
+tell, at the new energy; the misspecified one under-covers both; the
+hierarchy over-covers, conservatively, with bands about four times wider
+at the new energy, $\tau$ posteriors pushed away from zero against their
+prior, and the better held-out score of the misspecified pair.  A hierarchy learns the spread of deviations it has
 seen: holding out an unmodelled peak between its datasets is the
 few-datasets caveat, not a prediction it can make.
 
