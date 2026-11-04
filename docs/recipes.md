@@ -1475,7 +1475,10 @@ Expected behaviour:
 - rxmc owns no sampler: this is blackjax's API, and numpyro's NUTS takes the
   same density as `potential_fn=lambda z: -logdensity(z)`.  Which sampler to
   use is a question of the problem: NUTS for many parameters and a smooth,
-  unimodal posterior (a hierarchy, recipe 38); emcee for a few; pocomc for
+  unimodal posterior (a hierarchy, recipe 38, started from prior draws
+  rather than the MAP: a non-centred hierarchy's mode trades small
+  deviations for a large spread, away from the bulk of the posterior);
+  emcee for a few; pocomc for
   an optical model, whose posterior is correlated and may have several
   modes; dynesty or pocomc for the evidence (recipes 16, 18).
   The notebook `gradient_based_sampling` compares NUTS and emcee, and the

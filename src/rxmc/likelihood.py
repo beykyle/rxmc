@@ -75,8 +75,10 @@ class StudentT(Likelihood):
         prior=gamma(a=2, scale=10), bounds=(1, inf))``: the Gamma(2, rate 0.1)
         prior of Juárez & Steel, "Model-based clustering of non-Gaussian panel
         data based on skew-t distributions", J. Bus. Econ. Stat. 28, 52 (2010),
-        truncated to ``nu >= 1``.  It has most of its mass on heavy tails and a
-        mean near 20, and a unit-cube map, so nested samplers take it as is.
+        truncated to ``nu >= 1``.  It is weakly informative, with a median
+        near 17 and about 9 % of its mass below ``nu = 5``, so a posterior
+        that settles at small ``nu`` is the data asking for heavy tails.  It
+        has a unit-cube map, so nested samplers take it as is.
         Two constraints using the default each derive a ``"nu"`` and the
         problem fails to compile on the duplicate name, so pass ``nu=`` to
         share one or to name them apart.
