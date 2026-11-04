@@ -24,7 +24,7 @@ BANNER = re.search(r'^BANNER = "(.+)"$', (EXAMPLES / "budget.py").read_text(), r
 # design document section 9, item 8: the eight notebooks and their recipes
 NOTEBOOKS = {
     "linear_calibration": {1, 2, 17, 33, 40},
-    "normalization_and_covariance_structure": {2, 3, 4, 5, 6, 19, 27},
+    "normalization_and_covariance_structure": {2, 3, 4, 5, 6, 17, 19, 27},
     "gp_discrepancy": {2, 7, 10, 16, 17, 18, 33, 40},
     "robust_likelihoods": {12, 34, 39},
     "local_optical_model_calibration": {10, 14, 15, 16, 17, 18, 19, 21, 33, 40, 41},
