@@ -353,7 +353,6 @@ def _draw_on_grid(
             z = z @ _psd_factor(0.5 * (C + C.T)).T
         else:
             z *= np.sqrt(np.clip(np.diag(C), 0.0, None))
-        z *= c.likelihood.predictive_scale(rng, n_rep, *theta[c.like_gather])[:, None]
         out[i * n_rep : (i + 1) * n_rep] = back(mu + f_mean + z)
     return out if return_draws else predictive_band(out, levels)
 
@@ -384,12 +383,10 @@ def grid_draws(
 
     .. math::
 
-        y_* = y_m(x_*; \theta) + s\,L(\theta) z, \qquad
+        y_* = y_m(x_*; \theta) + L(\theta) z, \qquad
         L L^T = C(\theta), \quad z \sim \mathcal N(0, I)
 
-    are taken, with ``s`` the likelihood's
-    :meth:`~rxmc.likelihood.Likelihood.predictive_scale` (1 for a Gaussian).
-    This is the grid counterpart of
+    are taken.  This is the grid counterpart of
     :func:`~rxmc.diagnostics.predictive_draws`, and at the measured points,
     with every term a function, the two draw from the same distribution.
 

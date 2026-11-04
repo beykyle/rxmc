@@ -7,7 +7,7 @@ import pytest
 from helpers import assemble_dense
 from rxmc import Dataset, Model, Parameter
 from rxmc.constraint import Comparison, Constraint
-from rxmc.likelihood import StudentT
+from rxmc.likelihood import Chi2
 from rxmc.terms import Term, noise, statistical
 from rxmc.transforms import Transform, log, scale
 
@@ -161,9 +161,7 @@ class TestConstraint:
             Constraint([])
         with pytest.raises(TypeError, match="Likelihood"):
             Constraint([self.c1], likelihood=object())
-        assert isinstance(
-            Constraint([self.c1], likelihood=StudentT()).likelihood, StudentT
-        )
+        assert isinstance(Constraint([self.c1], likelihood=Chi2()).likelihood, Chi2)
 
     def test_masks_validated(self):
         with pytest.raises(ValueError, match="one entry per comparison"):
@@ -218,7 +216,7 @@ class TestConstraint:
 
     def test_views_share_objects(self):
         t = noise(self.eps)
-        c = Constraint([self.c1, self.c2], terms=[t], weight=0.5, likelihood=StudentT())
+        c = Constraint([self.c1, self.c2], terms=[t], weight=0.5, likelihood=Chi2())
         view = c.masked_where(lambda x: x > 1.5)
         assert view.comparisons == c.comparisons and view.terms == (t,)
         assert view.terms[0].params[0] is self.eps

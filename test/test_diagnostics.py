@@ -22,7 +22,7 @@ from rxmc.diagnostics import (
     predictive_draws,
     sharpness,
 )
-from rxmc.likelihood import StudentT
+from rxmc.likelihood import Chi2
 from rxmc.terms import noise
 from rxmc.transforms import log
 
@@ -96,17 +96,6 @@ class TestPredictiveDraws:
         assert d.shape == (3, 3)
         with pytest.raises(ValueError, match=r"\(n, 2\)"):
             predictive_draws(p, [[1.0, 2.0, 3.0]], return_draws=True)
-
-    def test_student_t_draws_follow_the_multivariate_t(self):
-        p, _ = line_problem(likelihood=StudentT(Parameter("nu", bounds=(1, 30))))
-        draws = predictive_draws(
-            p, [1.0, 2.0, 6.0], n_rep=100000, rng=0, return_draws=True
-        )
-        # a multivariate t with scale diag(ERR**2) has covariance nu/(nu-2) times it
-        np.testing.assert_allclose(draws.var(axis=0), 1.5 * ERR**2, rtol=0.05)
-        # one mixing scale per draw: the points' |residuals| move together
-        r = np.abs(draws - Y)
-        assert np.corrcoef(r[:, 0], r[:, 1])[0, 1] > 0.05
 
     def test_fallback_factor_is_triangular(self):
         S = np.array([[1.0, 1.0001], [1.0001, 1.0]])  # indefinite: both Choleskys fail
@@ -262,12 +251,11 @@ class TestHeldout:
         with pytest.raises(ValueError, match="same comparison objects"):
             heldout_log_predictive(held, [1.0, 2.0], given=other)
         c = Constraint(
-            [Comparison(self.d, self.model)],
-            likelihood=StudentT(Parameter("nu", prior=stats.uniform(1, 30))),
+            [Comparison(self.d, self.model)], likelihood=Chi2()
         ).masked_where(lambda x: x < 2.5)
-        fit_t, held_t = Problem([c]), Problem([c.complement()])
-        with pytest.raises(ValueError, match="StudentT"):
-            heldout_log_predictive(held_t, [1.0, 2.0, 1.0], given=fit_t)
+        fit_c, held_c = Problem([c]), Problem([c.complement()])
+        with pytest.raises(ValueError, match="Chi2"):
+            heldout_log_predictive(held_c, [1.0, 2.0], given=fit_c)
 
     def test_log_posterior_predictive(self):
         lp = np.array([-1.0, -2.0, -0.5])

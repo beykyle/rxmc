@@ -15,7 +15,6 @@ from rxmc import (
     Model,
     Parameter,
     Problem,
-    StudentT,
     Term,
 )
 from rxmc.diagnostics import predictive_draws
@@ -526,7 +525,7 @@ class TestGridDraws:
         )  # fmt: skip
         np.testing.assert_allclose(draws.std(0), 2.0, rtol=0.03)  # 100 / 50
 
-    def test_physical_and_a_student_t_likelihood(self):
+    def test_grid_physical_band_under_log_space(self):
         eps = noise(Parameter("log_eps", prior=stats.norm(-2, 1)))
         p, model, _ = one(eps, space=log)
         rows = np.tile([0.5, 1.2, np.log(0.1)], (26, 1))
@@ -536,16 +535,6 @@ class TestGridDraws:
             grid_draws(p, pred, X_GRID, rows, physical=True, **kw),
             np.exp(grid_draws(p, pred, X_GRID, rows, **kw)),
         )
-        eps_t = noise(Parameter("log_eps", prior=stats.norm(-2, 1)))
-        pt, mt, _ = one(eps_t, likelihood=StudentT())
-        theta = np.zeros(pt.ndim)
-        theta[pt.names.index("m")], theta[pt.names.index("b")] = 0.5, 0.2
-        theta[pt.names.index("log_eps")] = np.log(0.1)
-        theta[pt.names.index("nu")] = 3.0
-        t_draws = grid_draws(pt, mt.bind(X_GRID, {}), X_GRID, theta, n_rep=40000,
-                             rng=6, return_draws=True)  # fmt: skip
-        # a multivariate t with nu = 3 has variance nu / (nu - 2) = 3 times the scale
-        np.testing.assert_allclose(t_draws.var(0).mean(), 3 * 0.01, rtol=0.2)
 
     def test_several_comparisons_need_to_say_which_experiment_the_grid_is(self):
         model = line()

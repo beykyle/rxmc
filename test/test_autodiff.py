@@ -3,7 +3,7 @@ finite differences, one problem per family of the error model.
 
 The families follow the recipes: reported errors (01), unknown noise (02),
 a free normalisation and offset (04), a latent scale (06), a GP discrepancy
-(07), heavy tails (09), log space (10), a hyperprior (24), a model error
+(07), log space (10), a hyperprior (24), a model error
 proportional to the prediction (26), and the two jitr reaction models.
 """
 
@@ -28,7 +28,6 @@ from rxmc import (
     Model,
     Parameter,
     Problem,
-    StudentT,
 )
 from rxmc import terms as T
 from rxmc import transforms as tf
@@ -92,12 +91,6 @@ def gp_discrepancy():
     )
     c = Constraint([Comparison(data(), line())], terms=[gp])
     return Problem([c]), [2.1, 0.9, -3.0, -0.5]
-
-
-def heavy_tails():
-    nu = Parameter("nu", prior=stats.gamma(a=2.0, scale=10.0), bounds=(1.0, np.inf))
-    c = Constraint([Comparison(data(), line())], likelihood=StudentT(nu))
-    return Problem([c]), [2.1, 0.9, 7.0]
 
 
 def log_space():
@@ -217,7 +210,6 @@ FAMILIES = {
     "normalisation and offset (04)": normalisation_and_offset,
     "latent scale (06)": latent_scale,
     "GP discrepancy (07)": gp_discrepancy,
-    "heavy tails (09)": heavy_tails,
     "log space (10)": log_space,
     "hyperprior (24)": hyperprior,
     "proportional model error (26)": proportional_model_error,

@@ -15,7 +15,7 @@ from scipy import stats
 
 from helpers import manual_mvn_loglike
 from rxmc import Comparison, Constraint, Dataset, Model, Parameter, Problem
-from rxmc.likelihood import StudentT
+from rxmc.likelihood import Chi2
 from rxmc.problem import ParameterIndex, clip_unit_cube
 from rxmc.terms import (
     Term,
@@ -55,19 +55,17 @@ def problem(**kw):
 
 
 class TestIndex:
-    def test_first_seen_order_predictors_terms_likelihood(self):
+    def test_first_seen_order_predictors_then_terms(self):
         model = line_model()
-        eps, nu = (
-            Parameter("log_eps", prior=stats.norm()),
-            Parameter("nu", bounds=(1, 50)),
-        )
+        eps = Parameter("log_eps", prior=stats.norm())
         c = Constraint(
-            [Comparison(dataset(), model)], terms=[noise(eps)], likelihood=StudentT(nu)
+            [Comparison(dataset(), model)], terms=[noise(eps)], likelihood=Chi2()
         )
         p = Problem([c])
-        assert p.names == ["m", "b", "log_eps", "nu"]
-        assert p.params == (*model.params, eps, nu)
-        assert p.ndim == 4 and p.bounds.shape == (4, 2)
+        # the likelihood contributes no parameters
+        assert p.names == ["m", "b", "log_eps"]
+        assert p.params == (*model.params, eps)
+        assert p.ndim == 3 and p.bounds.shape == (3, 2)
 
     def test_shared_object_is_one_slot_across_constraints(self):
         eps = Parameter("log_eps", prior=stats.norm())
@@ -91,18 +89,6 @@ class TestIndex:
         )
         with pytest.raises(ValueError, match="duplicate parameter name.*SAME object"):
             Problem([c])
-        # two default StudentT likelihoods derive two "nu"
-        cs = [
-            Constraint(
-                [Comparison(dataset(0, label="a"), line_model())], likelihood=StudentT()
-            ),
-            Constraint(
-                [Comparison(dataset(1, label="b"), line_model(prior=False))],
-                likelihood=StudentT(),
-            ),
-        ]
-        with pytest.raises(ValueError, match="nu="):
-            Problem(cs)
 
     def test_index_api(self):
         ix = ParameterIndex()
@@ -264,11 +250,11 @@ class TestPriors:
             Problem([c], priors=[([m, b], stats.norm())])
 
     def test_one_parameter_block_of_a_univariate_is_a_marginal(self):
-        # the natural way to give a bounded parameter (StudentT's nu) a prior
-        nu = Parameter("nu", bounds=(1.0, np.inf))
-        c = Constraint([Comparison(dataset(), line_model())], likelihood=StudentT(nu))
+        # the natural way to give a bounded parameter a prior
+        s = Parameter("log_s", bounds=(1.0, np.inf))
+        c = Constraint([Comparison(dataset(), line_model())], terms=[noise(s)])
         expon = stats.expon(loc=1, scale=10)
-        p = Problem([c], priors=[(nu, expon)])
+        p = Problem([c], priors=[(s, expon)])
         theta = np.array([*TRUE, 4.0])
         m_b = stats.norm(0, 5).logpdf(TRUE).sum()
         assert p.log_prior(theta) == pytest.approx(m_b + expon.logpdf(4.0))

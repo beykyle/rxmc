@@ -30,7 +30,6 @@ from .data import Dataset as Dataset
 from .data import from_measurement as from_measurement
 from .likelihood import Chi2 as Chi2
 from .likelihood import Gaussian as Gaussian
-from .likelihood import StudentT as StudentT
 from .model import Model as Model
 from .model import polynomial as polynomial
 from .params import Parameter as Parameter
@@ -54,7 +53,6 @@ __all__ = [
     "Model",
     "Parameter",
     "Problem",
-    "StudentT",
     "Term",
     "from_measurement",
     "polynomial",

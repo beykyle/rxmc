@@ -12,7 +12,6 @@ stated:
     L2y  L0 plus a free correlated normalisation mode, sys * ym
     Lgp  L0 plus a Matern(5/2) Gaussian process in u = theta / pi with a
          constant amplitude
-    L0t  L0 under a Student-t likelihood
 """
 
 import dynesty
@@ -27,7 +26,6 @@ from rxmc import Comparison, Constraint, Model, Parameter, Problem
 from rxmc import terms as T
 from rxmc import transforms as tf
 from rxmc.diagnostics import compare_logz, logz_summary
-from rxmc.likelihood import StudentT
 
 
 def error_models(d, model):
@@ -55,12 +53,6 @@ def error_models(d, model):
             statistical=False,
         ),
         "Lgp": Constraint([comp_log], terms=[T.noise(log_eps), gp], statistical=False),
-        "L0t": Constraint(
-            [comp_log],
-            terms=[T.noise(log_eps)],
-            statistical=False,
-            likelihood=StudentT(),  # the default nu, as the recipe writes it
-        ),
     }
 
 
@@ -78,15 +70,11 @@ def test_each_problem_compiles_independently_with_shared_parameter_objects():
         "discrepancy_length_scale",
         "log_A",
     ]
-    assert problems["L0t"].names == ["m", "b", "log_eps", "nu"]
     # the same log_eps object is one column in each, at the same slot
     assert all(p.names.index("log_eps") == 2 for p in problems.values())
     theta = np.array([*TRUE, np.log(0.1)])
     assert np.isfinite(problems["L0"].log_posterior(theta))
     assert np.isfinite(problems["E0"].log_posterior(theta))
-    # the default nu has a proper prior with a unit-cube map: dynesty takes L0t
-    assert np.isfinite(problems["L0t"].log_posterior([*theta, 5.0]))
-    assert np.all(np.isfinite(problems["L0t"].prior_transform(np.full(4, 0.5))))
 
 
 def test_log_jacobian_makes_spaces_comparable():

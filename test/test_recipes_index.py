@@ -68,9 +68,8 @@ def test_the_error_model_legend_matches_the_recipe_table():
     end = text.index("## 19. ")
     table = {label: desc for label, desc in LEGEND_ROW.findall(text[start:end])}
     assert table, "recipe 18 must carry the error-model legend table"
-    # L0t is a likelihood choice, not a covariance form the study builder makes;
     # "custom" is a test-only spelling of the L1 form
-    forms = set(table) - {"L0t"}
+    forms = set(table)
     built = set(STUDY_LEGEND) - {"custom"}
     assert forms == built, f"table {sorted(forms)} vs tests {sorted(built)}"
     for label in forms:

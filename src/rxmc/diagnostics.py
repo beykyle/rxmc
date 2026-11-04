@@ -6,9 +6,8 @@ matrix of posterior ``samples`` of shape ``(n, problem.ndim)`` in
 ``samples_equal()`` and black-box-bayes give) and never touches a sampler:
 
 * :func:`predictive_draws` — the posterior predictive (band or draws) of a
-  constraint's likelihood on its active points (``N(ym(theta), Sigma(theta))``,
-  or the multivariate t of :class:`~rxmc.likelihood.StudentT`), or the
-  model-only predictive ``ym(theta)``.
+  constraint's likelihood on its active points (``N(ym(theta), Sigma(theta))``),
+  or the model-only predictive ``ym(theta)``.
 * :func:`coverage_curve`, :func:`coverage_error`, :func:`sharpness` —
   empirical calibration and width of those draws against the data.
 * :func:`heldout_log_predictive`, :func:`log_posterior_predictive` —
@@ -193,12 +192,9 @@ def predictive_draws(
     """Posterior-predictive band, or draws, on a constraint's active points.
 
     For each posterior row ``theta_i`` the constraint gives ``ym_i`` and
-    ``Sigma_i``; ``n_rep`` draws ``ym_i + s L_i z`` (``z ~ N(0, I)``) are taken,
-    where ``s`` is the likelihood's per-draw
-    :meth:`~rxmc.likelihood.Likelihood.predictive_scale` (1 for a Gaussian,
-    the multivariate-t mixing scale under a Student-t).  With
-    ``model_only=True`` the rows are ``ym_i`` themselves and no covariance is
-    assembled.
+    ``Sigma_i``; ``n_rep`` draws ``ym_i + L_i z`` (``z ~ N(0, I)``) are
+    taken.  With ``model_only=True`` the rows are ``ym_i`` themselves and no
+    covariance is assembled.
 
     ``terms`` and ``statistical`` choose which pieces of the error model the
     draws carry (:meth:`~rxmc.problem.CompiledConstraint.entries_for`).  The
@@ -276,7 +272,6 @@ def predictive_draws(
             Sigma = c.matrix(theta, terms=terms, statistical=statistical)
         L = _psd_factor(Sigma)
         z = rng.standard_normal((n_rep, N))
-        z *= c.likelihood.predictive_scale(rng, n_rep, *theta[c.like_gather])[:, None]
         out[i * n_rep : (i + 1) * n_rep] = mu + z @ L.T
     return out if return_draws else np.percentile(out, levels, axis=0)
 

@@ -3,11 +3,10 @@ The compile step: from declarations to the flat interface a sampler wants.
 
 :class:`Problem` is the only place in the package that walks the parameter
 graph.  It assigns every distinct :class:`~rxmc.params.Parameter` a slot in
-first-seen order (each constraint's predictors, then its terms, then its
-likelihood), checks that names are unique, resolves every term's ``on`` to
-rows, factors the constant parts of every covariance, and assembles the
-prior so that every slot is covered exactly once.  The result exposes what
-emcee, dynesty and ``black-box-bayes`` need: ``ndim``, ``names``,
+first-seen order (each constraint's predictors, then its terms), checks
+that names are unique, resolves every term's ``on`` to rows, factors the
+constant parts of every covariance, and assembles the prior so that every
+slot is covered exactly once.  The result exposes what emcee, dynesty and ``black-box-bayes`` need: ``ndim``, ``names``,
 ``log_prior``, ``log_likelihood``, ``log_posterior``, ``prior_transform`` and
 ``sample_prior``, and what a gradient-based sampler or optimiser needs:
 ``grad_log_posterior``, ``value_and_grad_log_posterior`` and
@@ -151,7 +150,7 @@ class ParameterIndex:
                 f"duplicate parameter name(s) {sorted(set(dup))}: distinct Parameter "
                 "objects with one name would become two chain columns with the same "
                 "label.  Pass the SAME object everywhere the value is shared, or "
-                "name them apart (prefix= of kernel_params, nu= for StudentT)."
+                "name them apart (prefix= of kernel_params)."
             )
 
 
@@ -587,7 +586,6 @@ class CompiledConstraint:
         entries = [
             (t, constraint.support(t.on), index.add_all(t.params)) for t in terms
         ]
-        self.like_gather = index.add_all(self.likelihood.params)
         self.covariance = StructuredCovariance(
             entries,
             self.x,
@@ -647,14 +645,12 @@ class CompiledConstraint:
 
     def log_likelihood(self, theta):
         d2, logdet, ok = self._stats(theta)
-        ll = self.likelihood.log_likelihood(
-            d2, logdet, self.n_active, *theta[self.like_gather]
-        )
+        ll = self.likelihood.log_likelihood(d2, logdet, self.n_active)
         return jnp.where(ok, ll, -jnp.inf)
 
     def chi2(self, theta):
         d2, logdet, ok = self._stats(theta)
-        c2 = self.likelihood.chi2(d2, logdet, self.n_active, *theta[self.like_gather])
+        c2 = self.likelihood.chi2(d2, logdet, self.n_active)
         return jnp.where(ok, c2, jnp.inf)
 
     def entries_for(self, terms=None, statistical: bool = True):
