@@ -776,6 +776,7 @@ class Problem:
         self._log_posterior_j = jax.jit(self._log_posterior_impl)
         self._chi2_j = jax.jit(self._chi2_impl)
         self._vg_j = jax.jit(jax.value_and_grad(self._log_posterior_impl))
+        self._vg_like_j = jax.jit(jax.value_and_grad(self._log_likelihood_impl))
         self._hess_j = jax.jit(jax.hessian(self._log_posterior_impl))
         self._batch_j = jax.jit(jax.vmap(self._log_posterior_impl))
         self._prior_batch_j = jax.jit(jax.vmap(self._log_prior_impl))
@@ -890,6 +891,15 @@ class Problem:
     def value_and_grad_log_posterior(self, theta) -> tuple[float, np.ndarray]:
         """``(log_posterior(theta), grad_log_posterior(theta))`` in one pass."""
         v, g = self._vg_j(self._theta(theta))
+        return float(v), np.asarray(g)
+
+    def grad_log_likelihood(self, theta) -> np.ndarray:
+        """The gradient of :meth:`log_likelihood` (a numpy array)."""
+        return np.asarray(self._vg_like_j(self._theta(theta))[1])
+
+    def value_and_grad_log_likelihood(self, theta) -> tuple[float, np.ndarray]:
+        """``(log_likelihood(theta), grad_log_likelihood(theta))`` in one pass."""
+        v, g = self._vg_like_j(self._theta(theta))
         return float(v), np.asarray(g)
 
     def hessian_log_posterior(self, theta) -> np.ndarray:

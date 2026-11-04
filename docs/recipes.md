@@ -1091,7 +1091,7 @@ fit = rx.optimize.find_map(problem, n_starts=8, rng=0)   # L-BFGS-B, exact gradi
 H = -problem.hessian_log_posterior(fit.x)                # exact, by automatic differentiation
 cov = np.linalg.inv(H)                                   # Laplace covariance
 print(fit.ends)                                          # log posterior at each search's end: local modes?
-mle = rx.optimize.find_mle(problem, rng=0)               # the likelihood's maximum, by Nelder-Mead
+mle = rx.optimize.find_mle(problem, rng=0)               # the likelihood's maximum, the same way
 ```
 
 Expected behaviour:
@@ -1105,8 +1105,12 @@ Expected behaviour:
 - `find_map` searches inside `problem.support`, the bounds narrowed by the
   priors' supports, and keeps the best of its starts; `fit.ends` shows
   whether the others stopped in other modes.  `find_mle` has the same
-  signature and return, maximising the likelihood without gradients (where
-  an ensemble sampler is started, recipe 16).
+  signature and return, maximising the likelihood.  A hierarchy's
+  likelihood has a ridge of maxima rather than one, so its MLE is one point
+  of many; start samplers from the MAP or from prior draws instead.
+- A search is never silently wrong: `fit.n_success` counts the starts that
+  converged, and a `RuntimeWarning` quotes scipy's message when the best one
+  did not.  `options=` reaches scipy (e.g. `{"maxiter": 500}`).
 
 References: Pruitt, Lovell, Hebborn, Nunes, *The role of the likelihood for
 elastic scattering uncertainty quantification*, arXiv:2403.00753; Schunck

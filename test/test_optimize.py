@@ -1,5 +1,7 @@
 """rx.optimize: the posterior mode and the maximum of the likelihood."""
 
+import warnings
+
 import numpy as np
 import pytest
 from scipy import stats
@@ -54,3 +56,29 @@ def test_an_optimum_on_a_bound_is_found_inside():
         b = fit.x[p.columns(p.params[1])][0]
         assert 0.0 < b < 0.8 and b == pytest.approx(0.8, abs=1e-4)
         assert np.isfinite(fit.fun)
+
+
+def test_likelihood_gradient_matches_finite_differences():
+    p = Problem([Constraint([Comparison(data(), line())])])
+    theta = np.array([1.7, 1.3])
+    value, grad = p.value_and_grad_log_likelihood(theta)
+    assert value == pytest.approx(p.log_likelihood(theta))
+    h = 1e-5
+    fd = [
+        (p.log_likelihood(theta + h * e) - p.log_likelihood(theta - h * e)) / (2 * h)
+        for e in np.eye(2)
+    ]
+    np.testing.assert_allclose(p.grad_log_likelihood(theta), fd, rtol=1e-5)
+    np.testing.assert_allclose(grad, fd, rtol=1e-5)
+
+
+def test_a_search_that_does_not_converge_says_so():
+    p = Problem([Constraint([Comparison(data(), line())])])
+    with pytest.warns(RuntimeWarning, match="did not converge"):
+        fit = rx.optimize.find_mle(p, n_starts=3, rng=0, options={"maxiter": 1})
+    assert fit.n_success == 0
+    # a converged search reports every start and stays quiet
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        fit = rx.optimize.find_map(p, n_starts=3, rng=0)
+    assert fit.n_success == 3
