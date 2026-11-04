@@ -93,4 +93,15 @@ def test_a_search_on_an_infinite_plateau_is_no_success():
     p = Problem([Constraint([Comparison(data(), model)])])
     fit = rx.optimize.find_mle(p, n_starts=8, rng=1)
     assert np.isfinite(fit.fun) and fit.fun == fit.ends[0]
-    assert fit.n_success == int(np.isfinite(fit.ends).sum()) < 8
+    # searches that stopped on the plateau are no successes
+    assert fit.n_success <= int(np.isfinite(fit.ends).sum()) < 8
+
+
+def test_all_searches_on_an_infinite_plateau_fail_loudly():
+    m = Parameter("m", prior=stats.uniform(4, 6))  # every start is undefined
+    b = Parameter("b", prior=stats.norm(0, 5))
+    model = Model(lambda x, m, b: jnp.where(m > 3, jnp.nan, m * x + b), [m, b])
+    p = Problem([Constraint([Comparison(data(), model)])])
+    with pytest.warns(RuntimeWarning, match="finite"):
+        fit = rx.optimize.find_mle(p, n_starts=3, rng=0)
+    assert not fit.success and fit.n_success == 0 and fit.fun == -np.inf

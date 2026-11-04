@@ -36,8 +36,9 @@ def find_map(problem, n_starts: int = 8, rng=None, options=None) -> OptimizeResu
     ``fun`` the log posterior there, ``nfev`` the evaluations of all
     ``n_starts`` searches, ``wall`` their time in seconds, ``ends`` the log
     posterior at every search's end, best first, and ``n_success`` the number
-    of searches scipy reports as converged on a finite density.  ``options`` is passed to scipy
-    (e.g. ``{"maxiter": 500}``).  Warns when the best search did not converge.
+    of searches that converged on a finite density; ``success`` is whether
+    the best one did.  ``options`` is passed to scipy (e.g.
+    ``{"maxiter": 500}``).  Warns when the best search did not converge.
     """
     return _search(
         problem, problem.value_and_grad_log_posterior, n_starts, rng, options
@@ -100,7 +101,10 @@ def _search(problem, value_and_grad, n_starts, rng, options):
             RuntimeWarning,
             stacklevel=3,
         )
+    finite = bool(np.isfinite(value.max()))
     best.update(
+        success=bool(best.success) and finite,
+        message=best.message if finite else "no search ended on a finite density",
         fun=float(value.max()),
         nfev=int(sum(f.nfev for f in fits)),
         wall=time.perf_counter() - t0,
