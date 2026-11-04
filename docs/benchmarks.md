@@ -282,9 +282,9 @@ Which sampler is correct, and fastest among those that are, on each problem:
 | problem | correct | fastest correct |
 |---|---|---|
 | `linear` | all four | NUTS, 6 s (emcee 6 s, at 12 000 steps, with ten times the ESS per second) |
-| `gp` | none at these budgets | emcee's means are closest (0.07), but its widths are 0.30 off and its chain is 37 τ, not 50 |
+| `gp` | none at these budgets | emcee's means are closest (0.07), but its widths are 0.30 off and its kept chain is 25 τ, not 50 |
 | `modes` | NUTS | NUTS, 61 s |
-| `elastic` | dynesty, pocomc, NUTS | pocomc, 312 s (NUTS 320 s, dynesty 646 s) |
+| `elastic` | dynesty, pocomc, NUTS | pocomc, 312 s (NUTS 324 s, dynesty 646 s) |
 | `hierarchy` | NUTS | NUTS, 41 s, at 3000 draws per chain |
 | `omp` | pocomc | pocomc, 875 s, at 4096/2048 |
 
@@ -292,17 +292,20 @@ Which sampler is correct, and fastest among those that are, on each problem:
   and `hierarchy` each have a scale parameter that, when small, pins the
   others into a narrow neck: the GP's log variance against its bound, the
   shared normalisation mode's width, the hierarchy's τ.  dynesty and pocomc
-  under-visit the neck, so their scale parameters come out biased and their
-  widths too wide; more resolution narrows the error only slowly (the sweep
-  above), and on `hierarchy` it costs an hour (dynesty misses the width by
-  0.11 after 71 min, pocomc is 0.39 off after 57 min).  NUTS, adapting a
+  under-visit the neck, and come out wrong in ways that differ by problem:
+  on `gp` both bias the log variance (0.20 and 0.60) and widen the
+  posterior; on `modes` and `hierarchy` their widths come out too narrow
+  where they miss, and their worst biases fall on other parameters.  More
+  resolution narrows the error only slowly (the sweep above), and on
+  `hierarchy` it costs an hour (dynesty misses the width by 0.11 after
+  71 min, pocomc is 0.39 off after 57 min).  NUTS, adapting a
   step size to the neck, is correct on `modes` and `hierarchy` in about a
   minute (on `hierarchy` once its chains are 3000 draws long: at 1000 the
   rank-normalised R-hat was 1.021).  On `gp` it is not: 31 of its
   transitions diverge in the neck, its widths come out 0.23 too narrow and
   its R-hat is 1.018, while its means agree.  emcee on `gp`, started at the
   MAP, has its means within the tolerance but its widths 0.30 off, and its
-  3000 steps are 37 τ.
+  kept chain is 25 τ.
 - **Separated modes defeat the samplers that start at the MAP, and R-hat
   seldom tells.**  The `omp` posterior has two islands, and the gradient
   samplers, started from a ball about the MAP, stay in the one they start
@@ -310,8 +313,8 @@ Which sampler is correct, and fastest among those that are, on each problem:
   their means and 0.69 to 0.77 in their widths, while their rank-normalised
   R-hats are 1.004 to 1.006.  Chains that never visit an island agree with
   one another about it.  PyMC's HMC is the exception: its R-hat of 1.152
-  flags a chain that moved partway toward the other island, and its errors
-  are halved (0.14 and 0.18) but not gone.  Only pocomc, at eight times its default resolution, is correct; at
+  says its chains disagree (its min ESS is 9), and its errors shrink (its bias to 0.14, about half the others', its width error to
+  0.18, about a quarter) but do not vanish.  Only pocomc, at eight times its default resolution, is correct; at
   lower resolutions it weighs the islands differently from seed to seed
   (the sweep above).  On `elastic`, which has one mode, NUTS, pocomc and
   dynesty are all correct.
@@ -324,7 +327,7 @@ Which sampler is correct, and fastest among those that are, on each problem:
 - **Evidence.**  Against the exact log Z, dynesty is within its error on
   `linear` and `gp` (80.3 ± 0.28 against 80.48) but 4 errors high on
   `hierarchy` (76.2 ± 0.55 against 73.97); pocomc is within its error on
-  `linear` and `hierarchy` but 7 errors low on `gp` (80.2 ± 0.04), where its
+  `hierarchy`, 1.2 errors low on `linear` and 6 errors low on `gp` (80.2 ± 0.04), where its
   posterior is biased too.  On `omp`, against the reference's −6.63 ± 0.01,
   pocomc and dynesty are within their errors (−6.6 ± 0.01, −6.8 ± 0.29),
   dynesty's evidence right even where its posterior is not; ptemcee, which
@@ -334,10 +337,11 @@ Which sampler is correct, and fastest among those that are, on each problem:
   NUTS gives the same answer on `omp`, wrong in the same way: PyMC's NUTS
   takes 1.2 times blackjax's wall time, since its call costs 13 ms against 9
   (the forward pass repeated for the gradient Op, and PyTensor's overhead).
-- **Cost per call.**  A reaction-model call costs 2–4 ms whatever the
+- **Cost per call.**  A reaction-model call costs 1.8–3.7 ms whatever the
   sampler, since the solver dominates; a gradient call 6.6 to 8.9 ms in
-  blackjax.  On the
-  cheap densities the batched samplers (emcee, pocomc) pay a few hundredths
-  of a millisecond per point, and dynesty, which cannot batch, several times
-  more.  pocomc spends 60–99% of its calls tempering from the prior to the
-  posterior, and its per-call time includes training its flow.
+  blackjax.  On the cheap densities emcee, which evaluates its walkers in
+  one batch, pays a few hundredths of a millisecond per point (0.015 to
+  0.19 ms); dynesty, which cannot batch, pays 3 to 85 times more, and
+  pocomc more still (0.5 to 5 ms), because its per-call time includes
+  training its normalizing flow.  pocomc spends 62–99 % of its calls
+  tempering from the prior to the posterior.
