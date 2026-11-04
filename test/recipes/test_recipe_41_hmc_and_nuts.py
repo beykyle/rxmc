@@ -39,7 +39,7 @@ def test_nuts_recovers_the_linear_gaussian_posterior():
     chains = [nuts(problem, seed) for seed in (0, 1)]
     samples = np.concatenate([c[0] for c in chains])
     assert sum(c[1] for c in chains) == 0
-    ess = blackjax.diagnostics.effective_sample_size(np.stack([c[0] for c in chains]))
+    ess = blackjax.diagnostics.ess_bulk(np.stack([c[0] for c in chains]))
     mcse = np.sqrt(np.diag(cov) / ess)
     assert np.all(np.abs(samples.mean(0) - mean) < 4 * mcse)
     np.testing.assert_allclose(np.cov(samples.T), cov, rtol=0.2)

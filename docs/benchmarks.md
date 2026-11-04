@@ -99,21 +99,25 @@ its own.
 
 | sampler | start | budget on `omp` |
 |---|---|---|
-| [emcee](https://emcee.readthedocs.io/) | a ball about the MLE (`rx.optimize.find_mle`, Nelder–Mead) | 32 walkers × 3000 steps |
+| [emcee](https://emcee.readthedocs.io/) | a ball about the MAP (`rx.optimize.find_map`, L-BFGS-B) | 32 walkers × 3000 steps |
 | [ptemcee](https://github.com/NuclearTalent/ptemcee_2025) | the same ball, at every temperature | 32 walkers × 8 temperatures × 2000 steps, adaptive ladder |
 | [dynesty](https://dynesty.readthedocs.io/) | the prior | rwalk, 500 live points, to Δlog Z = 0.5 |
 | [pocomc](https://pocomc.readthedocs.io/) | the prior (the unit cube, with `log_likelihood(prior_transform(u))`) | `n_effective` = 4096, `n_active` = 2048 (eight times its defaults; 1024 and 512 on the other problems) |
-| NUTS ([blackjax](https://blackjax-devs.github.io/blackjax/)) | a ball about the MAP (`rx.optimize.find_map`, L-BFGS-B) | 2 chains × (300 warm-up + 1000 draws) |
+| NUTS ([blackjax](https://blackjax-devs.github.io/blackjax/)) | the same ball as emcee | 2 chains × (300 warm-up + 1000 draws) |
 | HMC (blackjax) | the same | as NUTS, 20 leapfrog steps |
 | NUTS, HMC ([PyMC](https://www.pymc.io/)) | the same | as blackjax; HMC with path length 2 |
 
 A ball is `to_theta(to_unconstrained(start) + 0.01 N(0, I))`, inside the
 support.  The gradient samplers run on `log_posterior_unconstrained`
 (recipe 41); PyMC calls it through a PyTensor Op whose gradient is
-`jax.grad`.  On `hierarchy` NUTS starts from prior draws instead: a
-hierarchy's density peaks in the neck of its funnel, so the MAP is a corner
-the posterior hardly visits.  The other problems' budgets are in `BUDGETS`
-at the top of the script.
+`jax.grad`.  Every chain sampler starts about the MAP rather than the
+maximum of the likelihood, because on `hierarchy` the likelihood depends on
+`mu + tau * eta_j` alone, so its maximum is a ridge, not a point.  On
+`hierarchy` emcee and NUTS start from prior draws instead, because its MAP
+is far from the bulk of the posterior: the non-centred mode shrinks the
+`eta_j` toward their prior and inflates τ to compensate, putting τ at 1.27
+against a posterior of 0.31 ± 0.04.  The other problems' budgets are in
+`BUDGETS` at the top of the script.
 
 dynesty's and pocomc's settings are the cheapest of a sweep that are
 correct (below) over three seeds: on `elastic` for every problem but `omp`,
@@ -162,7 +166,7 @@ against −6.63).
 
   | phase | what it is |
   |---|---|
-  | search | the MLE or MAP search that found the start (Nelder–Mead steps are value calls, L-BFGS-B steps value-and-gradient calls) |
+  | search | the MAP search that found the start (each L-BFGS-B step is one value-and-gradient call) |
   | warm-up | emcee's and ptemcee's discarded burn-in (every rung of ptemcee's ladder), NUTS's and HMC's step-size and mass-matrix adaptation, pocomc's tempering from the prior until β reaches 1 |
   | sampling | the calls that produced the kept draws: post-burn-in steps, post-warm-up trajectories, dynesty's whole run, pocomc's iterations at β = 1 |
   | evidence | pocomc's importance sampling of its normalizing flow for log Z |
@@ -184,8 +188,9 @@ against −6.63).
   value calls; blackjax evaluates `value_and_grad` once, while PyMC
   evaluates the value and the gradient as two Ops, repeating the forward
   pass, and adds PyTensor's own overhead.
-- **ESS.**  The smallest bulk effective sample size over the parameters,
-  from `blackjax.diagnostics` across chains (the walkers, for the
+- **ESS.**  The smallest rank-normalised bulk effective sample size over
+  the parameters ([Vehtari et al. 2021](https://arxiv.org/abs/1903.08008),
+  `blackjax.diagnostics.ess_bulk`) across chains (the walkers, for the
   ensembles).  It is reported per second of wall time, start search and
   compilation included, and per thousand calls.  ESS per call does not
   depend on the machine; ESS per second is what a user waits for.
@@ -207,8 +212,9 @@ against −6.63).
 - **Correct.**  A run is correct if it converged (next) and its bias and
   width are both within the tolerance; ESS is reported only for correct
   runs.
-- **Convergence.**  A run has not converged (✗, and no ESS) if its split
-  [R-hat](https://en.wikipedia.org/wiki/Gelman-Rubin_statistic) exceeds
+- **Convergence.**  A run has not converged (✗, and no ESS) if its
+  rank-normalised split [R-hat](https://arxiv.org/abs/1903.08008)
+  (`blackjax.diagnostics.rhat`) exceeds
   1.01 or, for an ensemble, its kept chain is shorter than 50 times emcee's
   integrated autocorrelation time τ.  The second rule matters: walkers that
   swap or stretch toward one another can agree, and pass R-hat, long before

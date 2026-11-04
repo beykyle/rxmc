@@ -13,12 +13,16 @@ model ``omp`` also runs ptemcee, blackjax HMC and PyMC's NUTS and HMC (the
 
 Each sampler starts the way it is usually used, and pays for the search:
 
-* ensemble samplers (emcee, ptemcee) from a small ball about the maximum of
-  the likelihood, ``rx.optimize.find_mle`` (Nelder-Mead, no gradient);
-* HMC and NUTS (blackjax, PyMC) from a ball about the posterior mode,
-  ``rx.optimize.find_map`` (L-BFGS-B with the exact gradient), on
-  ``log_posterior_unconstrained``; except on the hierarchy, whose MAP sits
-  in the funnel's neck, where NUTS starts from prior draws;
+* ensemble samplers (emcee, ptemcee) and HMC and NUTS (blackjax, PyMC) from
+  a small ball about the posterior mode, ``rx.optimize.find_map`` (L-BFGS-B
+  with the exact gradient), the gradient samplers on
+  ``log_posterior_unconstrained``.  Not the maximum of the likelihood: on
+  the hierarchy that is a ridge (the likelihood sees only ``mu + tau *
+  eta_j``), not a point.  The exception is the hierarchy, whose MAP is far
+  from the bulk of its posterior: the non-centred mode shrinks the
+  ``eta_j`` toward their prior and inflates ``tau`` to compensate (1.27 at
+  the MAP, against a posterior of 0.31 +/- 0.04), so emcee and NUTS start
+  there from prior draws;
 * nested sampling (dynesty) and preconditioned Monte Carlo (pocomc) from the
   prior, as their algorithms do; pocomc samples the unit cube with
   ``log_likelihood(prior_transform(u))``, the prior exactly.
@@ -35,10 +39,11 @@ evidence step.  ESS per thousand calls does not depend on the machine; the
 wall time per call shows what a call costs (a gradient, PyMC's overhead,
 pocomc's flow training).
 
-Recorded per sampler: wall time, calls, the smallest bulk ESS over the
-parameters (``blackjax.diagnostics`` for every chain-based sampler, walkers
-taken as chains for the ensembles, which flatters them), the largest split
-R-hat, the ensembles' integrated autocorrelation time tau (flagged under the
+Recorded per sampler: wall time, calls, the smallest bulk and tail ESS and
+the largest rank-normalised split R-hat over the parameters (Vehtari et al.
+2021: ``blackjax.diagnostics.ess_bulk``, ``ess_tail`` and ``rhat``) for every
+chain-based sampler, walkers taken as chains for the ensembles (which
+flatters them), the ensembles' integrated autocorrelation time tau (flagged under the
 50 tau emcee asks for), the evidence where the algorithm gives one, and the
 posterior means and standard deviations.  A chain-based run with R-hat above
 1.01, or an ensemble run shorter than 50 tau, has not converged.
@@ -87,7 +92,7 @@ BUDGETS = {
     "elastic": dict(samplers=COMMON, emcee=1500, warmup=500, draws=500, chains=4),
     "hierarchy": dict(
         samplers=COMMON,
-        starts=dict(NUTS="prior"),  # the MAP is in the funnel's neck
+        starts=dict(NUTS="prior", emcee="prior"),  # the MAP is far from the bulk
         emcee=6000,
         warmup=1000,
         draws=1000,
@@ -135,12 +140,14 @@ def _calls(warmup=0, sampling=0, evidence=0):
 def _summary(chains, wall, calls):
     """``chains``: (n_chains, n_draws, ndim)."""
     flat = chains.reshape(-1, chains.shape[-1])
-    ess = np.asarray(blackjax.diagnostics.effective_sample_size(chains))
-    rhat = np.asarray(blackjax.diagnostics.potential_scale_reduction(chains))
+    ess = np.asarray(blackjax.diagnostics.ess_bulk(chains))
+    ess_tail = np.asarray(blackjax.diagnostics.ess_tail(chains))
+    rhat = np.asarray(blackjax.diagnostics.rhat(chains))
     return dict(
         wall_s=wall,
         calls=calls,
         min_ess=float(ess.min()),
+        min_ess_tail=float(ess_tail.min()),
         max_rhat=float(rhat.max()),
         mean=flat.mean(0).tolist(),
         sd=flat.std(0).tolist(),
@@ -175,7 +182,7 @@ def _ball(problem, start, n, seed):
 def _charge(out, search):
     """Charge a start search's wall time and calls to a sampler (none for
     prior draws).  An L-BFGS-B step evaluates the density and its gradient,
-    one call; a Nelder-Mead step the density alone."""
+    one call."""
     if search is None:
         return out
     out["wall_s"] += search.wall
@@ -190,10 +197,17 @@ def _tau(kept):
     return dict(tau=tau, tau_reliable=len(kept) > 50 * tau)
 
 
-# -- ensemble samplers, from the MLE --------------------------------------------
+# -- ensemble samplers, from the MAP or the prior -------------------------------
 
 
-def run_emcee(problem, b, mle, seed=0):
+def _walkers(problem, start, n, seed):
+    """A ball about ``start``, or prior draws if it is None."""
+    if start is None:
+        return problem.sample_prior(n, rng=seed)
+    return _ball(problem, start.x, n, seed)
+
+
+def run_emcee(problem, b, start, seed=0):
     n_walkers = max(32, 2 * problem.ndim + 2)
     steps = b["emcee"]
     t0 = time.perf_counter()
@@ -201,17 +215,17 @@ def run_emcee(problem, b, mle, seed=0):
         n_walkers, problem.ndim, problem.log_posterior_batch, vectorize=True
     )
     sampler.random_state = np.random.RandomState(seed).get_state()
-    sampler.run_mcmc(_ball(problem, mle.x, n_walkers, seed), steps, progress=False)
+    sampler.run_mcmc(_walkers(problem, start, n_walkers, seed), steps, progress=False)
     wall = time.perf_counter() - t0
     kept = sampler.get_chain(discard=steps // 3)
     burn = n_walkers * (steps // 3)
     calls = _calls(warmup=burn, sampling=n_walkers * steps - burn)
     out = _summary(np.swapaxes(kept, 0, 1), wall, calls)
     out.update(walkers=n_walkers, steps=steps, **_tau(kept))
-    return _charge(out, mle)
+    return _charge(out, start)
 
 
-def run_ptemcee(problem, b, mle, seed=0):
+def run_ptemcee(problem, b, start, seed=0):
     import ptemcee
 
     n_walkers = max(32, 2 * problem.ndim + 2)
@@ -237,7 +251,8 @@ def run_ptemcee(problem, b, mle, seed=0):
         adaptive=True,
         mapper=mapper,
     )
-    x0 = _ball(problem, mle.x, temps * n_walkers, seed).reshape(temps, n_walkers, -1)
+    x0 = _walkers(problem, start, temps * n_walkers, seed)
+    x0 = x0.reshape(temps, n_walkers, -1)
     chain = sampler.chain(x0, random=np.random.RandomState(seed))
     chain.run(steps)
     wall = time.perf_counter() - t0
@@ -254,7 +269,7 @@ def run_ptemcee(problem, b, mle, seed=0):
         logz_err=float(logz_err),
         **_tau(kept),
     )
-    return _charge(out, mle)
+    return _charge(out, start)
 
 
 def _ti_log_evidence(chain, fburnin):
@@ -579,8 +594,8 @@ def report(results, markdown=False, refs=None):
 
 
 RUNNERS = {
-    "emcee": (run_emcee, "mle"),
-    "ptemcee": (run_ptemcee, "mle"),
+    "emcee": (run_emcee, "map"),
+    "ptemcee": (run_ptemcee, "map"),
     "dynesty": (run_dynesty, None),
     "pocomc": (run_pocomc, None),
     "NUTS": (run_nuts, "map"),
