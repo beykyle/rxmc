@@ -78,9 +78,11 @@ from __future__ import annotations
 import numpy as np
 import scipy.linalg as sla
 
-from .diagnostics import _psd_factor, _rows
+from .diagnostics import _one_space, _psd_factor, _rows, _to_physical
 from .problem import Problem, _per_point
 from .terms import KernelTerm, TermContext, as_2d
+
+_GRID_HINT = "Pass comparison= to predict in the space of one of them"
 
 __all__ = [
     "grid_draws",
@@ -195,27 +197,6 @@ def _locate(problem: Problem, term: KernelTerm):
     raise ValueError("the kernel term is not part of any constraint of the problem")
 
 
-def _same_space(a, b) -> bool:
-    """One space: the same object, or parameter-free wrappers of one callable
-    (``space=np.log`` on each comparison wraps it anew each time)."""
-    return a is b or (not a.params and not b.params and a.fn is b.fn)
-
-
-def _one_space(constraint, rows):
-    spaces = []
-    for comp, o in zip(constraint.comparisons, constraint.offsets):
-        if np.any((rows >= o.start) & (rows < o.stop)):
-            if not any(_same_space(comp.space, s) for s in spaces):
-                spaces.append(comp.space)
-    if len(spaces) != 1:
-        raise ValueError(
-            "the comparisons a grid draw spans must share one comparison space "
-            f"to predict in it; found {[s.name for s in spaces]}.  Pass "
-            "comparison= to predict in the space of one of them"
-        )
-    return spaces[0]
-
-
 def _term_name(t) -> str:
     """A term in a message: its kind, its parameters and the data it sits on."""
     names = ", ".join(p.name for p in t.params)
@@ -316,8 +297,7 @@ def _draw_on_grid(
 ):
     """The loop both grid functions share; ``condition(theta, mu)`` returns the
     GP posterior ``(mean, v)`` to shift the draw and subtract ``v^T v``."""
-    if physical and space.inverse is None:
-        raise ValueError(f"comparison space {space.name!r} has no inverse")
+    back = _to_physical(space, physical)
     x_pred = np.asarray(x_pred)
     n_pred = x_pred.shape[0]
     cols_pred = problem.columns(predictor.params)
@@ -328,7 +308,6 @@ def _draw_on_grid(
         if predictor.meta is None
         else {k: _per_point(v, n_pred) for k, v in predictor.meta.items()}
     )
-    back = space.inverse if physical else (lambda y: y)
     n = samples.shape[0]
 
     if model_only:
@@ -466,7 +445,7 @@ def grid_draws(
                 f"{comparison!r} is not a comparison of constraint {constraint}"
             )
         rows = np.arange(c.offsets[i].start, c.offsets[i].stop)
-    space = _one_space(c, rows)
+    space = _one_space(c, rows, hint=_GRID_HINT)
     chosen = [] if model_only else _grid_terms(c, terms, rows)
     return _draw_on_grid(
         problem, c, space, chosen, predictor, x_pred, samples,
@@ -568,7 +547,7 @@ def gp_predictive_draws(
     rows = entry.rows
     keep = entry.keep  # the active rows of the term's support
     pos = entry.pos[keep]  # their positions in the active stack
-    space = _one_space(c, rows)
+    space = _one_space(c, rows, hint=_GRID_HINT)
     chosen = _grid_terms(c, terms, rows)
     if not any(t is term for t in chosen):
         raise ValueError(

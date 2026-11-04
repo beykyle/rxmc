@@ -28,8 +28,8 @@ problem as ``given=`` to :func:`heldout_log_predictive` and
 term the conditional equals the marginal.
 
 Draws and densities are in the comparison space of the constraint (a
-``space=log`` comparison gives log-space draws; map them back with
-``comparison.space.inverse``).
+``space=log`` comparison gives log-space draws); ``predictive_draws(...,
+physical=True)`` maps draws back through the space's inverse.
 """
 
 from __future__ import annotations
@@ -175,6 +175,38 @@ def _gaussian_logpdf(r, cov) -> float:
 # ----------------------------------------------------------------------------
 
 
+def _same_space(a, b) -> bool:
+    """One space: the same object, or parameter-free wrappers of one callable
+    (``space=np.log`` on each comparison wraps it anew each time)."""
+    return a is b or (not a.params and not b.params and a.fn is b.fn)
+
+
+def _one_space(constraint, rows, hint=""):
+    """The one comparison space shared by the comparisons covering ``rows``."""
+    spaces = []
+    for comp, o in zip(constraint.comparisons, constraint.offsets):
+        if np.any((rows >= o.start) & (rows < o.stop)):
+            if not any(_same_space(comp.space, s) for s in spaces):
+                spaces.append(comp.space)
+    if len(spaces) != 1:
+        raise ValueError(
+            "the comparisons a draw spans must share one comparison space "
+            f"to map between it and physical units; found "
+            f"{[s.name for s in spaces]}.  {hint}".rstrip()
+        )
+    return spaces[0]
+
+
+def _to_physical(space, physical: bool):
+    """``space.inverse`` when ``physical``, else the identity; raises when a
+    physical draw is asked of a space with no inverse."""
+    if not physical:
+        return lambda y: y
+    if space.inverse is None:
+        raise ValueError(f"comparison space {space.name!r} has no inverse")
+    return space.inverse
+
+
 def predictive_draws(
     problem: Problem,
     samples,
@@ -188,6 +220,7 @@ def predictive_draws(
     given: Problem | None = None,
     levels=(16, 50, 84),
     return_draws: bool = False,
+    physical: bool = False,
 ) -> np.ndarray:
     """Posterior-predictive band, or draws, on a constraint's active points.
 
@@ -235,13 +268,19 @@ def predictive_draws(
         Percentiles of the band.
     return_draws : bool, optional
         Return the draws instead of the band.
+    physical : bool, optional
+        Map every draw back through the comparison space's inverse (a log-space
+        comparison gives cross sections, not their logarithms) before the band
+        is taken, as :func:`~rxmc.predictive.grid_draws` does.  The active
+        points must share one comparison space with an inverse.  Coverage
+        against ``c.y`` wants the default, comparison space.
 
     Returns
     -------
     np.ndarray
-        In comparison space: the band, ``(len(levels), n_active)``; with
-        ``return_draws`` the draws, ``(n * n_rep, n_active)``, or
-        ``(n, n_active)`` when ``model_only``.
+        In comparison space, or physical units with ``physical``: the band,
+        ``(len(levels), n_active)``; with ``return_draws`` the draws,
+        ``(n * n_rep, n_active)``, or ``(n, n_active)`` when ``model_only``.
     """
     rng = np.random.default_rng(rng)
     samples = _rows(samples, problem.ndim)
@@ -255,11 +294,17 @@ def predictive_draws(
             "drop terms=/statistical= or drop given="
         )
     cond = None if given is None else _Conditional(problem, given, constraint)
+    back = (
+        _to_physical(_one_space(c, np.asarray(c.active)), True)
+        if physical
+        else (lambda y: y)
+    )
 
     if model_only:
         out = np.empty((n, N))
         for i in range(n):
             out[i] = cond(samples[i])[0] if cond else c.ym(samples[i])[c.active]
+        out = back(out)
         return out if return_draws else np.percentile(out, levels, axis=0)
 
     out = np.empty((n * n_rep, N))
@@ -273,6 +318,7 @@ def predictive_draws(
         L = _psd_factor(Sigma)
         z = rng.standard_normal((n_rep, N))
         out[i * n_rep : (i + 1) * n_rep] = mu + z @ L.T
+    out = back(out)
     return out if return_draws else np.percentile(out, levels, axis=0)
 
 

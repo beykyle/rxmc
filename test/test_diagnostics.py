@@ -24,7 +24,7 @@ from rxmc.diagnostics import (
 )
 from rxmc.likelihood import Chi2
 from rxmc.terms import noise
-from rxmc.transforms import log
+from rxmc.transforms import Transform, log
 
 X = np.linspace(0.0, 4.0, 5)
 Y = 1.0 + 2.0 * X
@@ -96,6 +96,29 @@ class TestPredictiveDraws:
         assert d.shape == (3, 3)
         with pytest.raises(ValueError, match=r"\(n, 2\)"):
             predictive_draws(p, [[1.0, 2.0, 3.0]], return_draws=True)
+
+    def test_physical_maps_back_through_the_space(self):
+        eps = noise(Parameter("log_eps", prior=stats.norm(-2, 1)))
+        d = Dataset(X, Y, ERR, label="d")
+        p = Problem([Constraint([Comparison(d, poly(1), space=log)], terms=[eps])])
+        rows = np.tile([1.0, 2.0, np.log(0.1)], (6, 1))
+        for kw in (dict(n_rep=3), dict(model_only=True)):
+            draws = predictive_draws(p, rows, rng=2, return_draws=True, **kw)
+            back = predictive_draws(
+                p, rows, rng=2, return_draws=True, physical=True, **kw
+            )
+            np.testing.assert_allclose(back, np.exp(draws))
+            np.testing.assert_allclose(
+                predictive_draws(p, rows, rng=2, physical=True, **kw),
+                np.percentile(np.exp(draws), (16, 50, 84), axis=0),
+            )
+
+    def test_physical_needs_an_inverse(self):
+        d = Dataset(X, Y, ERR, label="d")
+        sqrt = Transform(jnp.sqrt, name="sqrt")
+        p = Problem([Constraint([Comparison(d, poly(1), space=sqrt)])])
+        with pytest.raises(ValueError, match="'sqrt' has no inverse"):
+            predictive_draws(p, [1.0, 2.0], physical=True)
 
     def test_fallback_factor_is_triangular(self):
         S = np.array([[1.0, 1.0001], [1.0001, 1.0]])  # indefinite: both Choleskys fail
