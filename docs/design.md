@@ -626,7 +626,7 @@ from a `dill` pickle and a six-line module that forwards
 `prior_transform`.  Reaction problems are driven by pocomc by preference:
 affine-invariant ensembles mix poorly on optical-model posteriors, and the
 p + ⁴⁰Ca benchmark posterior has two separated islands, which gradient
-samplers started at the MAP never leave (R-hat does not notice).  pocomc,
+samplers started at the MAP almost never leave (and R-hat seldom notices).  pocomc,
 at eight times its default resolution, is the only benchmarked sampler
 correct there; below that it weighs the islands differently from run to
 run, so run it more than once and compare ([benchmarks](benchmarks.md)).
@@ -672,8 +672,9 @@ everywhere.  NUTS is the only one correct on the funnel-shaped `modes` and
 `hierarchy` problems, in about a minute.  On the single-mode `elastic`
 problem pocomc, NUTS and dynesty are all correct, pocomc fastest; on the
 two-island `omp` only pocomc is, at eight times its default resolution, and
-it gives the evidence.  emcee is fastest on the line but short of 50
-autocorrelation times on everything harder.  Each example notebook uses the sampler that is correct and fastest
+it gives the evidence.  emcee, at 12 000 steps, matches NUTS's time on the line with ten
+times its effective draws per second, but is short of 50 autocorrelation
+times on everything harder.  Each example notebook uses the sampler that is correct and fastest
 on its benchmark analogue.
 
 ## 4. Capability map

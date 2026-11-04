@@ -86,7 +86,8 @@ REFERENCES = Path(__file__).parent / "results" / "references.json"
 COMMON = ("emcee", "dynesty", "pocomc", "NUTS")
 EXTRA = ("ptemcee", "HMC", "PyMC NUTS", "PyMC HMC")
 BUDGETS = {
-    "linear": dict(samplers=COMMON, emcee=3000, warmup=1000, draws=1000, chains=4),
+    # 12000 steps: rank-normalised R-hat was 1.019 at 3000 and 1.010 at 6000
+    "linear": dict(samplers=COMMON, emcee=12000, warmup=1000, draws=1000, chains=4),
     "gp": dict(samplers=COMMON, emcee=3000, warmup=1000, draws=1000, chains=4),
     "modes": dict(samplers=COMMON, emcee=3000, warmup=1000, draws=1000, chains=4),
     "elastic": dict(samplers=COMMON, emcee=1500, warmup=500, draws=500, chains=4),
@@ -95,7 +96,7 @@ BUDGETS = {
         starts=dict(NUTS="prior", emcee="prior"),  # the MAP is far from the bulk
         emcee=6000,
         warmup=1000,
-        draws=1000,
+        draws=3000,  # at 1000 the rank-normalised R-hat was 1.021
         chains=4,
     ),
     "omp": dict(

@@ -240,57 +240,52 @@ within the tolerance.
 
 ### Results
 
-> The chain samplers' rows below (emcee, ptemcee, NUTS, HMC, PyMC) predate
-> two changes described above: the MAP starts for the ensembles, and the
-> rank-normalised R-hat and ESS.  They are being rerun; the dynesty and
-> pocomc rows and the references are current.
-
 | problem | sampler | wall time | calls | search | warm-up | sampling | evidence | ms/call | bias | width | min ESS | ESS/s | ESS/1k calls | R-hat | τ (steps) | log Z |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| linear (2) | emcee | 2 s | 96771 | 1% | 33% | 66% | 0% | 0.02 | 0.00 | 0.00 | 1855 | 1120.64 | 19.16 | 1.008 | 28 |  |
+| linear (2) | emcee | 6 s | 384075 | 0% | 33% | 67% | 0% | 0.01 | 0.00 | 0.00 | 7619 | 1324.66 | 19.84 | 1.006 | 33 |  |
 | linear (2) | dynesty | 34 s | 93609 | 0% | 0% | 100% | 0% | 0.37 | 0.02 | 0.03 | 1605 | 46.75 | 17.15 | — |  | 0.7 ± 0.24 |
 | linear (2) | pocomc | 27 s | 53760 | 0% | 70% | 23% | 8% | 0.50 | 0.02 | 0.01 | 4292 | 159.70 | 79.84 | — |  | 0.6 ± 0.06 |
-| linear (2) | NUTS | 6 s | 62145 | 0% | 49% | 51% | 0% | 0.09 | 0.03 | 0.01 | 726 | 124.34 | 11.69 | 1.000 |  |  |
+| linear (2) | NUTS | 6 s | 62145 | 0% | 49% | 51% | 0% | 0.09 | 0.03 | 0.01 | 732 | 132.75 | 11.77 | 1.003 |  |  |
 | linear (2) | reference: quadrature |  |  |  |  |  |  |  |  |  |  |  |  |  |  | 0.64 (exact) |
-| gp (4) | emcee | 18 s | 98389 | 2% | 33% | 65% | 0% | 0.18 | 0.09 | 0.03 | — | — | — | 1.053 ✗ | 86 (< 50 τ) |  |
+| gp (4) | emcee | 18 s | 96329 | 0% | 33% | 66% | 0% | 0.19 | 0.07 | 0.30 ✗ | — | — | — | 1.062 ✗ | 82 (< 50 τ) |  |
 | gp (4) | dynesty | 71 s | 139598 | 0% | 0% | 100% | 0% | 0.51 | 0.20 ✗ | 0.11 ✗ | — | — | — | — |  | 80.3 ± 0.28 |
 | gp (4) | pocomc | 73 s | 99840 | 0% | 71% | 25% | 4% | 0.73 | 0.60 ✗ | 0.42 ✗ | — | — | — | — |  | 80.2 ± 0.04 |
-| gp (4) | NUTS | 206 s | 245453 | 0% | 68% | 32% | 0% | 0.84 | 0.08 | 0.23 ✗ | — | — | — | 1.003 |  |  |
+| gp (4) | NUTS | 211 s | 245453 | 0% | 68% | 32% | 0% | 0.86 | 0.08 | 0.23 ✗ | — | — | — | 1.018 ✗ |  |  |
 | gp (4) | reference: quadrature |  |  |  |  |  |  |  |  |  |  |  |  |  |  | 80.48 (exact) |
-| elastic (5) | emcee | 163 s | 51409 | 7% | 31% | 62% | 0% | 3.17 | 0.13 ✗ | 0.04 | — | — | — | 1.062 ✗ | 43 (< 50 τ) |  |
+| elastic (5) | emcee | 162 s | 48212 | 0% | 33% | 66% | 0% | 3.35 | 0.07 | 0.03 | — | — | — | 1.071 ✗ | 41 (< 50 τ) |  |
 | elastic (5) | dynesty | 646 s | 232479 | 0% | 0% | 100% | 0% | 2.78 | 0.04 | 0.02 | 2399 | 3.71 | 10.32 | — |  | 495.9 ± 0.34 |
 | elastic (5) | pocomc | 312 s | 84480 | 0% | 81% | 15% | 5% | 3.69 | 0.02 | 0.03 | 4501 | 14.42 | 53.28 | — |  | 496.0 ± 0.01 |
-| elastic (5) | NUTS | 320 s | 50006 | 0% | 51% | 48% | 0% | 6.39 | 0.04 | 0.02 | 621 | 1.94 | 12.42 | 1.003 |  |  |
+| elastic (5) | NUTS | 324 s | 48984 | 0% | 53% | 47% | 0% | 6.62 | 0.06 | 0.02 | 673 | 2.07 | 13.73 | 1.003 |  |  |
 | elastic (5) | reference: NUTS, 4 x 3000 draws |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| hierarchy (33) | emcee | 18 s | 440232 | 7% | 31% | 62% | 0% | 0.04 | 17.47 ✗ | 2.12 ✗ | — | — | — | 1.045 ✗ | 578 (< 50 τ) |  |
+| hierarchy (33) | emcee | 11 s | 408000 | 0% | 33% | 67% | 0% | 0.03 | 1.43 ✗ | 0.58 ✗ | — | — | — | 1.504 ✗ | 518 (< 50 τ) |  |
 | hierarchy (33) | dynesty | 4256 s | 1926706 | 0% | 0% | 100% | 0% | 2.21 | 0.05 | 0.11 ✗ | — | — | — | — |  | 76.2 ± 0.55 |
 | hierarchy (33) | pocomc | 3410 s | 663040 | 0% | 92% | 7% | 1% | 5.14 | 0.39 ✗ | 0.21 ✗ | — | — | — | — |  | 73.9 ± 0.17 |
-| hierarchy (33) | NUTS | 27 s | 215227 | 0% | 56% | 44% | 0% | 0.13 | 0.06 | 0.04 | 231 | 8.41 | 1.07 | 1.004 |  |  |
+| hierarchy (33) | NUTS | 41 s | 406667 | 0% | 30% | 70% | 0% | 0.10 | 0.08 | 0.01 | 536 | 13.14 | 1.32 | 1.006 |  |  |
 | hierarchy (33) | reference: quadrature |  |  |  |  |  |  |  |  |  |  |  |  |  |  | 73.97 (exact) |
-| omp (9) | emcee | 189 s | 110400 | 13% | 29% | 58% | 0% | 1.72 | 4.44 ✗ | 0.67 ✗ | — | — | — | 1.110 ✗ | 142 (< 50 τ) |  |
+| omp (9) | emcee | 181 s | 96930 | 1% | 33% | 66% | 0% | 1.86 | 0.96 ✗ | 0.74 ✗ | — | — | — | 1.677 ✗ | 228 (< 50 τ) |  |
 | omp (9) | dynesty | 563 s | 260909 | 0% | 0% | 100% | 0% | 2.16 | 0.31 ✗ | 0.17 ✗ | — | — | — | — |  | -6.8 ± 0.29 |
 | omp (9) | pocomc | 875 s | 352256 | 0% | 99% | 0% | 1% | 2.48 | 0.04 | 0.03 | 6665 | 7.62 | 18.92 | — |  | -6.6 ± 0.01 |
-| omp (9) | NUTS | 1134 s | 138183 | 1% | 54% | 45% | 0% | 8.21 | 0.28 ✗ | 0.73 ✗ | — | — | — | 1.004 |  |  |
-| omp (9) | ptemcee | 924 s | 526400 | 3% | 32% | 65% | 0% | 1.76 | 1.94 ✗ | 0.92 ✗ | — | — | — | 1.004 | 18 | -12.8 ± 2.52 |
-| omp (9) | HMC | 444 s | 52898 | 2% | 23% | 76% | 0% | 8.39 | 0.30 ✗ | 0.75 ✗ | — | — | — | 1.011 ✗ |  |  |
-| omp (9) | PyMC NUTS | 1414 s | 110244 | 1% | 45% | 55% | 0% | 12.83 | 0.27 ✗ | 0.75 ✗ | — | — | — | 1.007 |  |  |
-| omp (9) | PyMC HMC | 1670 s | 131827 | 1% | 80% | 19% | 0% | 12.67 | 0.28 ✗ | 0.78 ✗ | — | — | — | 1.003 |  |  |
+| omp (9) | NUTS | 1157 s | 132481 | 1% | 57% | 42% | 0% | 8.73 | 0.30 ✗ | 0.69 ✗ | — | — | — | 1.004 |  |  |
+| omp (9) | ptemcee | 946 s | 512930 | 0% | 33% | 67% | 0% | 1.84 | 1.34 ✗ | 5.85 ✗ | — | — | — | 1.556 ✗ | 112 (< 50 τ) | -11.0 ± 2.55 |
+| omp (9) | HMC | 468 s | 52930 | 2% | 23% | 76% | 0% | 8.85 | 0.29 ✗ | 0.76 ✗ | — | — | — | 1.006 |  |  |
+| omp (9) | PyMC NUTS | 1397 s | 104296 | 1% | 44% | 55% | 0% | 13.39 | 0.28 ✗ | 0.77 ✗ | — | — | — | 1.004 |  |  |
+| omp (9) | PyMC HMC | 1602 s | 119636 | 1% | 79% | 20% | 0% | 13.39 | 0.14 ✗ | 0.18 ✗ | — | — | — | 1.152 ✗ |  |  |
 | omp (9) | reference: pocomc 8192/4096, 3 runs |  |  |  |  |  |  |  |  |  |  |  |  |  |  | -6.63 ± 0.01 |
-| modes (9) | emcee | 11 s | 109533 | 12% | 29% | 58% | 0% | 0.10 | 3.03 ✗ | 0.66 ✗ | — | — | — | 1.174 ✗ | 261 (< 50 τ) |  |
+| modes (9) | emcee | 10 s | 96478 | 0% | 33% | 66% | 0% | 0.10 | 0.36 ✗ | 0.24 ✗ | — | — | — | 1.319 ✗ | 177 (< 50 τ) |  |
 | modes (9) | dynesty | 92 s | 222314 | 0% | 0% | 100% | 0% | 0.41 | 0.13 ✗ | 0.22 ✗ | — | — | — | — |  | 103.2 ± 0.29 |
 | modes (9) | pocomc | 130 s | 91136 | 0% | 62% | 33% | 4% | 1.43 | 0.59 ✗ | 0.29 ✗ | — | — | — | — |  | 102.7 ± 0.08 |
-| modes (9) | NUTS | 62 s | 340473 | 0% | 69% | 31% | 0% | 0.18 | 0.05 | 0.04 | 604 | 9.72 | 1.77 | 1.004 |  |  |
+| modes (9) | NUTS | 61 s | 340473 | 0% | 69% | 31% | 0% | 0.18 | 0.05 | 0.04 | 851 | 13.88 | 2.50 | 1.008 |  |  |
 | modes (9) | reference: NUTS, 4 x 3000 draws |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
 
 Which sampler is correct, and fastest among those that are, on each problem:
 
 | problem | correct | fastest correct |
 |---|---|---|
-| `linear` | all four | emcee, 2 s (NUTS 6 s) |
-| `gp` | none at these budgets | emcee is closest (0.09 / 0.03), but its chain is 35 τ, not 50 |
-| `modes` | NUTS | NUTS, 62 s |
+| `linear` | all four | NUTS, 6 s (emcee 6 s, at 12 000 steps, with ten times the ESS per second) |
+| `gp` | none at these budgets | emcee's means are closest (0.07), but its widths are 0.30 off and its chain is 37 τ, not 50 |
+| `modes` | NUTS | NUTS, 61 s |
 | `elastic` | dynesty, pocomc, NUTS | pocomc, 312 s (NUTS 320 s, dynesty 646 s) |
-| `hierarchy` | NUTS | NUTS, 27 s |
+| `hierarchy` | NUTS | NUTS, 41 s, at 3000 draws per chain |
 | `omp` | pocomc | pocomc, 875 s, at 4096/2048 |
 
 - **Funnels defeat the samplers that start from the prior.**  `gp`, `modes`
@@ -302,40 +297,45 @@ Which sampler is correct, and fastest among those that are, on each problem:
   above), and on `hierarchy` it costs an hour (dynesty misses the width by
   0.11 after 71 min, pocomc is 0.39 off after 57 min).  NUTS, adapting a
   step size to the neck, is correct on `modes` and `hierarchy` in about a
-  minute.  On `gp` it is not: 31 of its transitions diverge in the neck and
-  its widths come out 0.23 too narrow, while its means agree.  emcee's
-  means and widths on `gp` are within the tolerance, but its 3000 steps are
-  35 τ; a longer chain is the cheap fix.
+  minute (on `hierarchy` once its chains are 3000 draws long: at 1000 the
+  rank-normalised R-hat was 1.021).  On `gp` it is not: 31 of its
+  transitions diverge in the neck, its widths come out 0.23 too narrow and
+  its R-hat is 1.018, while its means agree.  emcee on `gp`, started at the
+  MAP, has its means within the tolerance but its widths 0.30 off, and its
+  3000 steps are 37 τ.
 - **Separated modes defeat the samplers that start at the MAP, and R-hat
-  cannot tell.**  The `omp` posterior has two islands, and every gradient
-  sampler, started from a ball about the MAP, stays in the one it starts
-  in: blackjax's NUTS and HMC and PyMC's are 0.27 to 0.30 sd off in their
-  means and 0.73 to 0.78 in their widths, while their R-hats are 1.003 to
-  1.011.  Chains that never visit an island agree with one another about
-  it.  Only pocomc, at eight times its default resolution, is correct; at
+  seldom tells.**  The `omp` posterior has two islands, and the gradient
+  samplers, started from a ball about the MAP, stay in the one they start
+  in: blackjax's NUTS and HMC and PyMC's NUTS are 0.28 to 0.30 sd off in
+  their means and 0.69 to 0.77 in their widths, while their rank-normalised
+  R-hats are 1.004 to 1.006.  Chains that never visit an island agree with
+  one another about it.  PyMC's HMC is the exception: its R-hat of 1.152
+  flags a chain that moved partway toward the other island, and its errors
+  are halved (0.14 and 0.18) but not gone.  Only pocomc, at eight times its default resolution, is correct; at
   lower resolutions it weighs the islands differently from seed to seed
   (the sweep above).  On `elastic`, which has one mode, NUTS, pocomc and
   dynesty are all correct.
-- **The ensembles do not converge in these budgets** outside `linear`.  emcee
-  is short of 50 τ everywhere else, and on `omp` and `hierarchy` it is
-  4 and 17 sd off; ptemcee's adaptive ladder passes R-hat and the 50 τ rule
-  on `omp` (τ = 18 steps against 1334 kept) and is still 1.9 sd off, with a
-  log Z of −12.8 ± 2.5 against −6.63.
+- **The ensembles do not converge in these budgets** outside `linear`, where
+  emcee needs 12 000 steps for the rank-normalised R-hat to pass (1.019 at
+  3000, 1.010 at 6000).  emcee is short of 50 τ everywhere else, and on
+  `omp` and `hierarchy` it is 1.0 and 1.4 sd off, with R-hats of 1.68 and
+  1.50; ptemcee on `omp`, started at the MAP, is 12 τ long with an R-hat of
+  1.56, and is 1.3 sd off, with a log Z of −11.0 ± 2.5 against −6.63.
 - **Evidence.**  Against the exact log Z, dynesty is within its error on
   `linear` and `gp` (80.3 ± 0.28 against 80.48) but 4 errors high on
   `hierarchy` (76.2 ± 0.55 against 73.97); pocomc is within its error on
   `linear` and `hierarchy` but 7 errors low on `gp` (80.2 ± 0.04), where its
   posterior is biased too.  On `omp`, against the reference's −6.63 ± 0.01,
   pocomc and dynesty are within their errors (−6.6 ± 0.01, −6.8 ± 0.29),
-  dynesty's evidence right even where its posterior is not; ptemcee is 2.5
-  errors low.  Like Kish's ESS, pocomc's log Z error leaves out the
+  dynesty's evidence right even where its posterior is not; ptemcee, which
+  has not converged, is 1.7 errors low.  Like Kish's ESS, pocomc's log Z error leaves out the
   correlation between its particles.
 - **PyMC against blackjax.**  The same algorithms on the same density, and
-  the same answers on `omp`, wrong in the same way: PyMC's NUTS takes 1.25
-  times blackjax's wall time, since its call costs 13 ms against 8 (the
-  forward pass repeated for the gradient Op, and PyTensor's overhead).
+  NUTS gives the same answer on `omp`, wrong in the same way: PyMC's NUTS
+  takes 1.2 times blackjax's wall time, since its call costs 13 ms against 9
+  (the forward pass repeated for the gradient Op, and PyTensor's overhead).
 - **Cost per call.**  A reaction-model call costs 2–4 ms whatever the
-  sampler, since the solver dominates; a gradient call 6 to 8.4 ms in
+  sampler, since the solver dominates; a gradient call 6.6 to 8.9 ms in
   blackjax.  On the
   cheap densities the batched samplers (emcee, pocomc) pay a few hundredths
   of a millisecond per point, and dynesty, which cannot batch, several times
