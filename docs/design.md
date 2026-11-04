@@ -361,6 +361,7 @@ class Problem:
     def columns(self, params) -> ndarray
     def log_prior / log_likelihood / log_posterior / chi2 (theta)   # float, or a tracer under JAX
     def grad_log_posterior / value_and_grad_log_posterior / hessian_log_posterior (theta)
+    def grad_log_likelihood / value_and_grad_log_likelihood (theta)
     def prior_transform(self, u); def sample_prior(self, n, rng=None)   # numpy/scipy
     def predict(self, theta, physical=False) -> list[list[ndarray]]   # per constraint, per comparison
     def log_jacobian(self) -> float
@@ -473,7 +474,7 @@ give.
 ```python
 predictive_draws(problem, samples, constraint=0, *, terms=None, statistical=True,
                  n_rep=1, rng=None, model_only=False, given=None,
-                 levels=(16, 50, 84), return_draws=False)
+                 levels=(16, 50, 84), return_draws=False, physical=False)
 coverage_curve(draws, y, levels=None); coverage_error(draws, y, levels=None)
 sharpness(draws, percentiles=(16, 84), transform=None)
 heldout_log_predictive(heldout_problem, samples, *, given=None)
@@ -716,7 +717,7 @@ test that pins it.  Recipe numbers refer to `recipes.md`.
 | cut posterior by multiple imputation | stage-1 and per-draw stage-2 problems | recipe 29 |
 | simulation-based calibration | `sample_prior`, `predictive_draws`, `dataclasses.replace(d, y=)` | recipe 31 |
 | emulator as `Model`, its variance as a `diag` term sharing parameters | recipe 32 | test_terms |
-| MAP, MLE and Laplace | `rx.optimize.find_map` (L-BFGS-B, exact gradient), `find_mle` (the same, on the likelihood), both within `problem.support`, warning when the best search did not converge; `hessian_log_posterior` | test_optimize, recipe 33 |
+| MAP, MLE and Laplace | `rx.optimize.find_map` (L-BFGS-B, exact gradient), `find_mle` (the same, on the likelihood), both within `problem.support`, reporting `n_success` and warning when the best search did not converge, `options=` passed to scipy; `hessian_log_posterior` | test_optimize, recipe 33 |
 | global error scale and USU modes | `diag` term closing over `comp.y_err` with `statistical=False`; `offset(parameter=, on=technique)` | recipe 34 |
 | energy-dependent parameters | per-comparison `Model` instances closing over `meta`, shared objects | test_model, recipe 35 |
 | discrepancy on a physical basis | `systematic` modes or `omp + Model(basis_sum)` | recipe 36 |

@@ -507,6 +507,7 @@ contain 68 % of the points, and how wide are they?*
 
 ```python
 band = rx.diagnostics.predictive_draws(problem, samples, constraint=0, n_rep=4)   # (16, 50, 84) %
+phys = rx.diagnostics.predictive_draws(problem, samples, n_rep=4, physical=True) # in the data's units
 draws = rx.diagnostics.predictive_draws(problem, samples, n_rep=4, return_draws=True)
 cov = rx.diagnostics.coverage_curve(draws, problem.constraints[0].y[problem.constraints[0].active])
 err = rx.diagnostics.coverage_error(draws, y_active)
@@ -1024,8 +1025,8 @@ model.*
 ```python
 ranks = []
 for theta0 in problem.sample_prior(n_sims, rng):
-    y_sim = rx.diagnostics.predictive_draws(problem, theta0[None], n_rep=1)[0]
-    d_sim = dataclasses.replace(d, y=comp.space.inverse(y_sim))            # back to physical units
+    y_sim = rx.diagnostics.predictive_draws(problem, theta0[None], n_rep=1, return_draws=True, physical=True)[0]
+    d_sim = dataclasses.replace(d, y=y_sim)                                # already in physical units
     p_sim = rx.Problem([rx.Constraint([rx.Comparison(d_sim, model)], terms=terms)], priors)
     s = run(p_sim)[::thin][:L]
     ranks.append((s < theta0).sum(0))                                 # one rank per column

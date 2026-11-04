@@ -36,8 +36,8 @@ def find_map(problem, n_starts: int = 8, rng=None, options=None) -> OptimizeResu
     ``fun`` the log posterior there, ``nfev`` the evaluations of all
     ``n_starts`` searches, ``wall`` their time in seconds, ``ends`` the log
     posterior at every search's end, best first, and ``n_success`` the number
-    of searches scipy reports as converged.  ``options`` is passed to scipy
-    (e.g. ``{"maxiter": 200}``).  Warns when the best search did not converge.
+    of searches scipy reports as converged on a finite density.  ``options`` is passed to scipy
+    (e.g. ``{"maxiter": 500}``).  Warns when the best search did not converge.
     """
     return _search(
         problem, problem.value_and_grad_log_posterior, n_starts, rng, options
@@ -83,19 +83,28 @@ def _search(problem, value_and_grad, n_starts, rng, options):
         )
         for start in problem.sample_prior(n_starts, rng=rng)
     ]
-    ends = np.sort([-f.fun for f in fits])[::-1]
-    best = min(fits, key=lambda f: f.fun)
-    if not best.success:
+    # a search that stops on a -inf plateau (zero gradient) reports success,
+    # so success counts only where it ended on a finite density
+    value = np.array([-f.fun if np.isfinite(f.fun) else -np.inf for f in fits])
+    ends = np.sort(value)[::-1]
+    best = fits[int(np.argmax(value))]
+    if not np.isfinite(value.max()):
+        warnings.warn(
+            f"none of {len(fits)} searches ended where the density is finite",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+    elif not best.success:
         warnings.warn(
             f"the best of {len(fits)} searches did not converge: {best.message}",
             RuntimeWarning,
             stacklevel=3,
         )
     best.update(
-        fun=-best.fun,
+        fun=float(value.max()),
         nfev=int(sum(f.nfev for f in fits)),
         wall=time.perf_counter() - t0,
         ends=ends,
-        n_success=int(sum(bool(f.success) for f in fits)),
+        n_success=int(sum(bool(f.success) and np.isfinite(f.fun) for f in fits)),
     )
     return best

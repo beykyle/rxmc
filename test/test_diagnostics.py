@@ -107,11 +107,23 @@ class TestPredictiveDraws:
             back = predictive_draws(
                 p, rows, rng=2, return_draws=True, physical=True, **kw
             )
+            assert isinstance(back, np.ndarray)
             np.testing.assert_allclose(back, np.exp(draws))
             np.testing.assert_allclose(
                 predictive_draws(p, rows, rng=2, physical=True, **kw),
                 np.percentile(np.exp(draws), (16, 50, 84), axis=0),
             )
+
+    def test_physical_needs_one_space(self):
+        a, b = Dataset(X, Y, ERR, label="a"), Dataset(X, Y, ERR, label="b")
+        model = poly(1)
+        mixed = Constraint([Comparison(a, model, space=log), Comparison(b, model)])
+        with pytest.raises(ValueError, match="share one comparison space"):
+            predictive_draws(Problem([mixed]), [1.0, 2.0], physical=True)
+        # a comparison masked out entirely does not count
+        only_log = mixed.masked([np.ones(5, bool), np.zeros(5, bool)])
+        band = predictive_draws(Problem([only_log]), [1.0, 2.0], physical=True)
+        assert band.shape == (3, 5)
 
     def test_physical_needs_an_inverse(self):
         d = Dataset(X, Y, ERR, label="d")

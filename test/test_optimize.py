@@ -2,6 +2,7 @@
 
 import warnings
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 from scipy import stats
@@ -44,7 +45,7 @@ def test_mle_ignores_the_prior():
     d = data()
     p = Problem([Constraint([Comparison(d, line(prior_scale=0.5))])])
     fit = rx.optimize.find_mle(p, n_starts=4, rng=0)
-    np.testing.assert_allclose(fit.x, weighted_least_squares(d), rtol=1e-4)
+    np.testing.assert_allclose(fit.x, weighted_least_squares(d), rtol=1e-6)
     assert fit.fun == pytest.approx(p.log_likelihood(fit.x))
 
 
@@ -82,3 +83,14 @@ def test_a_search_that_does_not_converge_says_so():
         warnings.simplefilter("error")
         fit = rx.optimize.find_map(p, n_starts=3, rng=0)
     assert fit.n_success == 3
+
+
+def test_a_search_on_an_infinite_plateau_is_no_success():
+    # the model is undefined for m > 3: searches that start there stop at once
+    m = Parameter("m", prior=stats.uniform(0, 10))
+    b = Parameter("b", prior=stats.norm(0, 5))
+    model = Model(lambda x, m, b: jnp.where(m > 3, jnp.nan, m * x + b), [m, b])
+    p = Problem([Constraint([Comparison(data(), model)])])
+    fit = rx.optimize.find_mle(p, n_starts=8, rng=1)
+    assert np.isfinite(fit.fun) and fit.fun == fit.ends[0]
+    assert fit.n_success == int(np.isfinite(fit.ends).sum()) < 8

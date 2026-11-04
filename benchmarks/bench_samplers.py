@@ -647,8 +647,6 @@ def main(argv=None):
         todo = [s for s in b["samplers"] if not args.only or s in args.only]
         start_of = {s: b.get("starts", {}).get(s, RUNNERS[s][1]) for s in todo}
         starts = {"prior": None}
-        if "mle" in start_of.values():
-            starts["mle"] = rx.optimize.find_mle(problem, rng=0)
         if "map" in start_of.values():
             starts["map"] = rx.optimize.find_map(problem, rng=0)
         r = dict(saved.get(name, {}).get("samplers", {})) if args.only else {}

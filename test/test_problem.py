@@ -251,7 +251,7 @@ class TestPriors:
 
     def test_one_parameter_block_of_a_univariate_is_a_marginal(self):
         # the natural way to give a bounded parameter a prior
-        s = Parameter("log_s", bounds=(1.0, np.inf))
+        s = Parameter("scale", bounds=(1.0, np.inf))
         c = Constraint([Comparison(dataset(), line_model())], terms=[noise(s)])
         expon = stats.expon(loc=1, scale=10)
         p = Problem([c], priors=[(s, expon)])

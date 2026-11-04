@@ -19,9 +19,9 @@ from rxmc.diagnostics import predictive_draws
 def simulate(problem, comp, theta0, rng):
     """A dataset drawn from the model at ``theta0``, back in physical units."""
     y_sim = predictive_draws(
-        problem, theta0[None], n_rep=1, rng=rng, return_draws=True
+        problem, theta0[None], n_rep=1, rng=rng, return_draws=True, physical=True
     )[0]
-    d_sim = dataclasses.replace(comp.data, y=comp.space.inverse(y_sim))
+    d_sim = dataclasses.replace(comp.data, y=y_sim)
     return Problem([Constraint([Comparison(d_sim, comp.model)])])
 
 

@@ -304,7 +304,7 @@ def predictive_draws(
         out = np.empty((n, N))
         for i in range(n):
             out[i] = cond(samples[i])[0] if cond else c.ym(samples[i])[c.active]
-        out = back(out)
+        out = np.asarray(back(out))
         return out if return_draws else np.percentile(out, levels, axis=0)
 
     out = np.empty((n * n_rep, N))
@@ -318,7 +318,7 @@ def predictive_draws(
         L = _psd_factor(Sigma)
         z = rng.standard_normal((n_rep, N))
         out[i * n_rep : (i + 1) * n_rep] = mu + z @ L.T
-    out = back(out)
+    out = np.asarray(back(out))
     return out if return_draws else np.percentile(out, levels, axis=0)
 
 

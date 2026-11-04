@@ -240,6 +240,11 @@ within the tolerance.
 
 ### Results
 
+> The chain samplers' rows below (emcee, ptemcee, NUTS, HMC, PyMC) predate
+> two changes described above: the MAP starts for the ensembles, and the
+> rank-normalised R-hat and ESS.  They are being rerun; the dynesty and
+> pocomc rows and the references are current.
+
 | problem | sampler | wall time | calls | search | warm-up | sampling | evidence | ms/call | bias | width | min ESS | ESS/s | ESS/1k calls | R-hat | τ (steps) | log Z |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | linear (2) | emcee | 2 s | 96771 | 1% | 33% | 66% | 0% | 0.02 | 0.00 | 0.00 | 1855 | 1120.64 | 19.16 | 1.008 | 28 |  |
