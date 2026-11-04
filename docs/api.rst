@@ -70,7 +70,6 @@ Likelihood functionals
 
    rxmc.likelihood.Likelihood
    rxmc.likelihood.Gaussian
-   rxmc.likelihood.StudentT
    rxmc.likelihood.Chi2
 
 The structured covariance

@@ -259,26 +259,30 @@ Expected behaviour:
   its constant special case.
 - The GP of recipe 7 may be used alongside it.
 
-## 9. Heavy tails
+## 9. Choose the likelihood functional
 
-*A few points are gross outliers.  I do not want them to drag the fit; I
-want a likelihood that widens instead of breaking.*
+*I want the same covariance under a different functional of the residual:
+the Gaussian, or a pure chi-squared objective.*
 
 ```python
-nu = rx.Parameter("nu", bounds=(1.0, 100.0))          # uniform on the bounds
-c = rx.Constraint([comp], likelihood=rx.StudentT(nu=nu))
+c = rx.Constraint([comp])                                 # rx.Gaussian(), the default
+c_chi2 = rx.Constraint([comp], likelihood=rx.Chi2())      # drops the log-determinant
 ```
 
 Expected behaviour:
 
-- Same covariance, different functional.  The Gaussian version puts the
-  truth at several σ; the Student-t version covers it
-  (`robust_likelihoods`), and the posterior of `nu` is small.
-- The multivariate t applies one radial tail to the whole stacked residual
-  of the constraint.  A comparison that needs Gaussian tails goes in its own
-  constraint.
-- `rx.Chi2()` drops the log-determinant for a pure chi-squared objective.
-- The Student-t value is pinned to its closed form (`test_likelihood`).
+- Same covariance, different functional.  A likelihood is a functional of
+  the Mahalanobis distance, the log-determinant and the number of points,
+  and has no parameters of its own.
+- `rx.Chi2()` is `-chi2 / 2`: it ignores the log-determinant, so it is only
+  right when nothing in the covariance is inferred.  With an inferred error
+  term it rewards inflating the errors without limit.
+- rxmc has no heavy-tailed likelihood.  For outliers, reject them (recipe
+  39); to widen every error bar, infer a global error scale (recipe 34) or
+  temper the likelihood (recipe 12).  A multivariate t of the whole residual
+  is exactly a global error scale with a heavy-tailed prior, so it does not
+  down-weight individual points.
+- Both values are pinned to their closed forms (`test_likelihood`).
 
 ## 10. Compare in log space
 
@@ -356,7 +360,7 @@ to work with nested sampling.*
 
 ```python
 log_eps = rx.Parameter("log_eps", prior=stats.halfnorm(scale=1))            # marginal
-nu      = rx.Parameter("nu", bounds=(1, 100))                               # uniform on bounds
+width   = rx.Parameter("width", bounds=(1, 100))                            # uniform on bounds
 V       = rx.Parameter("V", prior=stats.norm(50, 5), bounds=(30, 70))       # truncated marginal
 problem = rx.Problem([c], priors=[(omp.params, stats.multivariate_normal(mu, cov))])   # joint block
 ```
@@ -544,7 +548,6 @@ models = {
     "E0": rx.Constraint([comp_lin], terms=[T.proportional_error(log_eps)], statistical=False),
     "L2y": rx.Constraint([comp_log], terms=[T.noise(log_eps), T.normalization(log_sys)], statistical=False),
     "Lgp": rx.Constraint([comp_log], terms=[T.noise(log_eps), gp], statistical=False),
-    "L0t": rx.Constraint([comp_log], terms=[T.noise(log_eps)], statistical=False, likelihood=rx.StudentT()),
 }
 # the labels are defined in the table below this block
 logz = {}
@@ -571,7 +574,6 @@ is the scattering angle in radians and `u = theta / pi`.
 | `Lgp` | `L0` plus a Matérn(5/2) Gaussian process in `u` with constant amplitude |
 | `Lgpn` | `L0` plus the Gaussian process with an angle-growing amplitude |
 | `LKp` | noise, an offset mode, and an RBF Gaussian process in momentum transfer `q = 2 k sin(theta/2)` with amplitude `A q^(r/2)` |
-| `L0t` | `L0` under a Student-t likelihood |
 
 The test suite builds every covariance row of this table against a
 hand-built dense matrix, and a test compares the table above with the
@@ -1129,8 +1131,6 @@ usu = [T.offset(parameter=log_delta[tech], on=[comp for comp in comps if comp.da
 
 Expected behaviour:
 
-- Under a Student-t likelihood only a modest scale is needed where least
-  squares needs a large one, because the tail absorbs the outliers.
 - A global Birge-type rescaling inflates every point equally and is judged
   poor evaluation practice; the targeted USU component is preferred, added
   only when other explanations are exhausted.
@@ -1342,7 +1342,7 @@ Analysis*, 3rd ed., CRC Press (2013), Chapter 5.
 ## 39. Iterative outlier rejection
 
 *A few points are gross outliers.  I want to reject them and refit, the way
-KDUQ does, rather than let a heavy tail absorb them.*
+KDUQ does, rather than widen every error bar to accommodate them.*
 
 ```python
 mask = np.ones(d.n, dtype=bool)
@@ -1367,9 +1367,9 @@ Expected behaviour:
 - The loop either reaches a fixed point or cycles between two masks; cap the
   rounds, and report which points went and after how many rounds.  Given the
   starting mask and a deterministic fit it is reproducible.
-- Rejection and a heavy tail are different answers to the same question.
-  `StudentT` (recipe 9) keeps every point and widens; rejection commits to a
-  subset and fits it tightly.  Score them the same way, by holding out
+- Rejection and inflation are different answers to the same question.  A
+  global error scale (recipe 34) or tempering (recipe 12) keeps every point
+  and widens; rejection commits to a subset and fits it tightly.  Score them the same way, by holding out
   (recipe 11) or by evidence (recipe 18), and note that the evidence of a
   fit to a subset is not comparable with the evidence of a fit to all of it.
 - Nothing is deleted: the rejected points stay in the declaration and
@@ -1403,8 +1403,7 @@ Expected behaviour:
 - For each row the model is evaluated on the grid and every selected term is
   re-evaluated there from its own definition, with the model's prediction
   standing in for `c.y` and the predictor's `meta` for `c.meta`; one
-  correlated draw is taken from the sum (times the likelihood's
-  `predictive_scale`, so a Student-t draws a t).  At the measured points with
+  correlated draw is taken from the sum.  At the measured points with
   every term a function, it draws from the same distribution as
   `predictive_draws`.
 - Any term that is a function of the `TermContext` travels: `noise`,

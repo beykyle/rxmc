@@ -4,6 +4,13 @@ orphan: true
 
 # A ground-up rxmc: declare, then compile
 
+> **Note (2026-11).**  This is the historical plan of record.  Since it was
+> written, `StudentT` and the likelihood-parameter hook it relied on
+> (`Likelihood.params`, `predictive_scale`, `like_gather`, the trailing
+> `*values` of a likelihood) have been removed: a multivariate t of the whole
+> residual is one global error scale with a heavy-tailed prior, not a robust
+> likelihood.  See `design.md` and recipe 9 for the current state.
+
 This document guides a rewrite of `rxmc` from a blank repository.  It is the
 plan of record for that rewrite, not a comparison with the current code: the
 current `api_generalisation` branch stays where it is as the reference

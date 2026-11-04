@@ -81,7 +81,7 @@ The review checklist for every change.
     every MPI rank by path.  A round trip of a reaction problem is in the
     suite.
 12. **Correctness lives in tests that pin numbers**, not in defensive
-    branches: the closed-form Student-t, delta-method errors under `log`,
+    branches: the closed-form likelihoods, delta-method errors under `log`,
     the regression log-likelihood `1.195784087817536`, dense-versus-
     structured equality on every error-model form, and the closed forms of
     the reference papers.  Every recipe in `recipes.md` is a test under
@@ -282,16 +282,16 @@ its inputs from `c.meta("Elab")` and `c.x`; it takes the dense path.
 ### 2.6 `likelihood.py`
 
 ```python
-class Likelihood:                  # functional of (d2, logdet, n, *values); params are ordinary nodes
-    def log_likelihood(self, d2, logdet, n, *values)
-    def chi2(self, d2, logdet, n, *values)          # d2
+class Likelihood:                  # functional of (d2, logdet, n); no parameters of its own
+    def log_likelihood(self, d2, logdet, n)
+    def chi2(self, d2, logdet, n)          # d2
 class Gaussian(Likelihood)
-class StudentT(Likelihood)         # StudentT(nu=None) -> Parameter("nu", prior=gamma(a=2, scale=10), bounds=(1, inf)); pass nu= to share or rename
 class Chi2(Likelihood)             # -d2/2, no log-determinant
 ```
 
-All three are exported from the package (`rx.Gaussian`, `rx.StudentT`,
-`rx.Chi2`).
+Both are exported from the package (`rx.Gaussian`, `rx.Chi2`).  A
+multivariate t of the whole residual was removed: it is one global error
+scale with a heavy-tailed prior, not a robust likelihood (recipe 9).
 
 ### 2.7 `constraint.py`
 
@@ -339,7 +339,7 @@ when the comparison is built.
 | 2. mean modifications, composed on the `Model` | physical | `\| scale(ρ)`, `* g(x; φ)`, `+ δ(x; φ)` | ρ, φ |
 | 3. `space` | physical → comparison | `y = space(data.y)`, `ym = space(step 2)`, `y_err = \|space'\| · data.y_err`, `log_jacobian` | none |
 | 4. `Term`s, seeing `TermContext(x, y, ym)` | comparison | statistical diagonal; experimental terms (noise, reported modes, USU); model-discrepancy terms (kernel, bases) | term parameters, and `ym` |
-| 5. `Likelihood` | comparison | functional of `y − ym` and Σ | Student-t ν only |
+| 5. `Likelihood` | comparison | functional of `y − ym` and Σ | none |
 
 Experimental and model-discrepancy terms are one mechanism; the difference
 is what the user means.  A term that reads `ym` sees the prediction after
@@ -369,7 +369,7 @@ class Problem:
 
 `Problem.__init__` is the only place that walks the graph.  For each
 constraint it stacks the comparisons (comparison space, one slice each),
-registers every predictor's, term's and likelihood's parameters in
+registers every predictor's and term's parameters in
 first-seen order through `index.add_all`, which returns the gather array
 for that node, resolves each term's `on` to rows, and builds the
 `StructuredCovariance`, whose constant parts are factored eagerly so a
@@ -506,8 +506,8 @@ defined.  `grid_draws` is its counterpart on a grid that was never
 measured: per row it evaluates the predictor there, re-evaluates every
 selected term from its own definition in a `TermContext` whose `x` is the
 grid, whose `y` and `ym` are the model's prediction and whose `meta` is the
-predictor's, sums the pieces into one covariance and draws `ym + s L z`
-(`s` the likelihood's `predictive_scale`).  At the measured points, with
+predictor's, sums the pieces into one covariance and draws `ym + L z`.
+At the measured points, with
 every term a function, it draws from the same distribution as
 `predictive_draws`.  A term that is an array — the statistical diagonals the
 compiler builds, a fixed `Term(array)`, a per-point magnitude — has no value
@@ -708,7 +708,7 @@ test that pins it.  Recipe numbers refer to `recipes.md`.
 | Peelle's Pertinent Puzzle | `normalization()` reads `c.ym`; the estimate-built refit; the log-determinant pull of the live term | recipes 27, 37 |
 | unaccounted-for model error per data type (KDUQ) | `proportional_error(delta_T, averaging=True, on=comp)`; scalings as `Constraint(weight=)` | test_terms, recipe 26 |
 | tempering | `Constraint(weight=)` | test_problem, recipe 12 |
-| Student-t with bounded ν; `Chi2` | `StudentT(nu=Parameter("nu", bounds=(1, 100)))`; `Chi2()` | test_likelihood, recipe 9 |
+| a pure chi-squared functional | `Chi2()` | test_likelihood, recipe 9 |
 | log-space comparison, delta-method errors, Jacobian | `Comparison(d, m, space=log)`; `problem.log_jacobian()` | test_constraint, recipe 10 |
 | masks, hold-out, complement | `masked_where`, `complement()`, `heldout_log_predictive` | test_constraint, test_diagnostics, recipe 11 |
 | held-out scoring under a spanning term | `heldout_log_predictive(held, s, given=fit)`, `predictive_draws(..., given=fit)` | test_diagnostics, recipe 30 |
