@@ -113,6 +113,9 @@ BUDGETS = {
         pocomc=dict(n_effective=4096, n_active=2048),
     ),
 }
+# the two GP optical-model problems of the notebooks, at omp's budgets
+BUDGETS["alpha_gp"] = dict(BUDGETS["omp"])
+BUDGETS["n40ca_gp"] = dict(BUDGETS["omp"])
 RHAT_MAX = 1.01
 #: largest bias and width error, in reference standard deviations
 TOLERANCE = 0.1
@@ -319,7 +322,9 @@ def run_dynesty(problem, b, seed=0, **settings):
     )
 
 
-def run_pocomc(problem, b, seed=0, **settings):
+def run_pocomc(problem, b, seed=0, summary=None, **settings):
+    """``summary(theta, weights) -> dict``, if given, adds to the result
+    anything the moments cannot show (a mode's share, say)."""
     import pocomc
     from scipy import stats
 
@@ -349,7 +354,10 @@ def run_pocomc(problem, b, seed=0, **settings):
         sampling=cumulative[-1] - tempered,
         evidence=sampler.calls - cumulative[-1],
     )
-    return _weighted(theta, weights, wall, calls, float(logz), float(logz_err))
+    out = _weighted(theta, weights, wall, calls, float(logz), float(logz_err))
+    if summary is not None:
+        out.update(summary(np.asarray(theta), np.asarray(weights)))
+    return out
 
 
 # -- HMC and NUTS, from the MAP ---------------------------------------------------
@@ -615,7 +623,15 @@ def main(argv=None):
     ap.add_argument(
         "--reference",
         action="store_true",
-        help=f"compute the problems' reference posteriors into {REFERENCES.name}",
+        help="compute the problems' reference posteriors into --references",
+    )
+    ap.add_argument(
+        "--references",
+        type=Path,
+        default=REFERENCES,
+        help=f"the references file to read and, with --reference, to write "
+        f"(default {REFERENCES.name}; give each parallel job its own and merge "
+        "them with merge_results.py)",
     )
     ap.add_argument(
         "--only",
@@ -624,7 +640,7 @@ def main(argv=None):
         help="re-run these samplers into the saved --out file, keeping the rest",
     )
     args = ap.parse_args(argv)
-    refs = json.loads(REFERENCES.read_text()) if REFERENCES.exists() else {}
+    refs = json.loads(args.references.read_text()) if args.references.exists() else {}
     if args.report:
         problems = json.loads(args.report.read_text())["problems"]
         return report(problems, args.markdown, refs)
@@ -636,7 +652,7 @@ def main(argv=None):
             refs[name] = reference(name, PROBLEMS[name]()[0])
             refs[name]["wall_s"] = time.perf_counter() - t0
             print(f"{name}: {refs[name]['method']}, {refs[name]['wall_s']:.0f} s")
-            REFERENCES.write_text(json.dumps(refs, indent=1))
+            args.references.write_text(json.dumps(refs, indent=1))
         return None
     saved = {}
     if args.out and args.out.exists():

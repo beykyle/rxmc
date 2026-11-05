@@ -33,7 +33,9 @@ uv sync --managed-python --extra examples --extra samplers
 | `elastic` | 5 | `ElasticXS` at four energies with a proportional model error (recipes 15, 26): the reaction solver |
 | `ias` | 4 | an `IsobaricAnalogPN` prediction at one energy |
 | `hierarchy` | 33 | 30 lines sharing a slope, their intercepts non-centred about a common mean (recipe 38): high dimension |
-| `omp` | 9 | the log-space p + ⁴⁰Ca optical model of `local_optical_model_calibration`, with the earlier jitr parametrisation of its two inferred relative errors: EXFOR C0076002 (Gross et al. 1967) at 35.8 MeV, seven potential parameters and two inferred errors; its posterior has two separated islands |
+| `omp` | 9 | exactly the log-space p + ⁴⁰Ca problem of `local_optical_model_calibration`: EXFOR C0076002 (Gross et al. 1967) at 35.8 MeV, seven potential parameters and two median-one log-space errors; its posterior has two separated islands |
+| `alpha_gp` | 9 | exactly the power-of-$q$ problem of `alpha_ca_error_model_comparison`: ⁴⁴Ca(α,α) at 29 MeV, a four-parameter potential, two log-space errors and a Matérn GP whose amplitude grows with $q$; two families of potentials and GP hyperparameters at once |
+| `n40ca_gp` | 7 | exactly the "GP, growing amplitude" rung of `gp_discrepancy`'s cross-section ladder: mock n + ⁴⁰Ca data fitted by a volume-only potential with a GP discrepancy |
 
 ## Densities: `bench_log_posterior.py`
 
@@ -75,7 +77,7 @@ wave up to `lmax` (elastic agrees to 1e-6).
 ## Samplers: `bench_samplers.py`
 
 ```bash
-# everything (about 5 h)
+# everything (a day or more: the optical-model problems are meant for a cluster, see below)
 python benchmarks/bench_samplers.py --out benchmarks/results/samplers.json
 # some problems
 python benchmarks/bench_samplers.py --out benchmarks/results/samplers.json --problems linear gp
@@ -83,13 +85,20 @@ python benchmarks/bench_samplers.py --out benchmarks/results/samplers.json --pro
 python benchmarks/bench_samplers.py --out benchmarks/results/samplers.json --problems omp --only pocomc NUTS
 # print a saved run, or the Markdown table below
 python benchmarks/bench_samplers.py --report benchmarks/results/samplers.json --markdown
-# recompute the reference posteriors (about 2 h, most of it omp)
+# recompute the reference posteriors (many hours for the three optical-model problems)
 python benchmarks/bench_samplers.py --reference
 ```
 
-emcee, dynesty, pocomc and NUTS run on every problem; `omp` also runs
-ptemcee, HMC and PyMC's NUTS and HMC.  The results are written after each
-problem, so an interrupted run keeps what it finished.
+emcee, dynesty, pocomc and NUTS run on every problem; `omp`, `alpha_gp`
+and `n40ca_gp` also run ptemcee, HMC and PyMC's NUTS and HMC.  The results
+are written after each problem, so an interrupted run keeps what it
+finished.
+
+The three optical-model problems, their references and the pocomc
+settings sweeps (`benchmarks/sweep_pocomc.py`) take many hours; they are
+meant to run as independent cluster jobs, each writing a file of its own
+that `benchmarks/merge_results.py` merges afterwards.
+`benchmarks/hpc/README.md` is the runbook.
 
 ### The samplers and their starts
 
@@ -239,6 +248,10 @@ the MAP, against 15 % in the pocomc runs at 4096/2048, though no single dynesty 
 within the tolerance.
 
 ### Results
+
+> `omp` was redefined as the notebook's exact problem, and `alpha_gp` and
+> `n40ca_gp` were added; their rows and references below are pending a
+> cluster run.  The `omp` rows below are of the earlier parametrisation.
 
 | problem | sampler | wall time | calls | search | warm-up | sampling | evidence | ms/call | bias | width | min ESS | ESS/s | ESS/1k calls | R-hat | τ (steps) | log Z |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|

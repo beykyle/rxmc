@@ -12,11 +12,18 @@ regimes of the performance comparison in the JAX rewrite plan:
 * ``elastic``     -- recipes 15/26: ElasticXS at several energies with a
                      proportional model error (solver-bound)
 * ``ias``         -- an IsobaricAnalogPN prediction at one energy
-* ``omp``         -- the log-space p + 40Ca optical model of the notebook
+* ``omp``         -- exactly the log-space p + 40Ca problem of the notebook
                      ``local_optical_model_calibration``: EXFOR C0076002
                      (Gross et al. 1967) at 35.8 MeV, seven potential
-                     parameters and two inferred relative errors (9
+                     parameters and two median-one log-space errors (9
                      parameters; JAX rxmc only)
+* ``alpha_gp``    -- exactly the power-of-q problem of
+                     ``alpha_ca_error_model_comparison``: two log-space errors
+                     and a Matern GP whose amplitude grows with q (9
+                     parameters, two families of potentials; JAX only)
+* ``n40ca_gp``    -- exactly the "GP, growing amplitude" rung of
+                     ``gp_discrepancy``'s cross-section ladder (7 parameters;
+                     JAX only)
 * ``hierarchy``   -- recipe 38 at scale: 30 lines sharing a slope, their
                      intercepts non-centred about a common mean (33
                      parameters; the sampler benchmark's high-dimensional case)
@@ -219,7 +226,6 @@ def hierarchy(n_groups=30, n=5):
 
 
 def omp():
-    import jax.numpy as jnp
     import jitr
     import pandas as pd
     from jitr.optical_potentials.potential_forms import (
@@ -279,22 +285,189 @@ def omp():
         coulomb=coulomb,
         lmax=30,
     )
-    log_uniform = stats.uniform(np.log(0.05), np.log(2.0) - np.log(0.05))
-    log_s = Parameter("log_s", prior=log_uniform)
-    log_b = Parameter("log_b", prior=log_uniform)
-
-    def point_to_point_sd(c, log_s, log_b):
-        s2, b2 = jnp.exp(2 * log_s), jnp.exp(2 * log_b)
-        return jnp.full(len(c), jnp.sqrt(jnp.log1p(s2 / (1 + b2))))
-
-    def common_sd(c, log_b):
-        return jnp.full(len(c), jnp.sqrt(jnp.log1p(jnp.exp(2 * log_b))))
-
-    errors = [
-        T.Term(point_to_point_sd, (log_s, log_b), kind="diag"),
-        T.Term(common_sd, (log_b,), kind="mode"),
-    ]
+    # median-one point-to-point and common errors, as log-space sds
+    log_sigma_A = Parameter("log_sigma_A", prior=_log_uniform(0.05, 2.0))
+    log_sigma_B = Parameter("log_sigma_B", prior=_log_uniform(0.05, 2.0))
+    errors = [T.noise(log_sigma_A), T.offset(log_sigma_B)]
     p = Problem([Constraint([Comparison(data, model, space=tf.log)], terms=errors)])
+    return p, _thetas(p)
+
+
+def _log_uniform(lo, hi):
+    return stats.uniform(np.log(lo), np.log(hi) - np.log(lo))
+
+
+def alpha_gp():
+    """alpha_ca_error_model_comparison's power-of-q model, exactly as the
+    notebook builds it: 44Ca(a,a) at 29 MeV, every fourth angle, in log
+    space, with point-to-point and common log-space errors and a Matern GP
+    in u = theta / pi whose amplitude grows as sin(theta / 2) ** p."""
+    import jax.numpy as jnp
+    import jitr
+    import pandas as pd
+    import tinygp
+    from jitr.optical_potentials.potential_forms import (
+        coulomb_charged_sphere,
+        woods_saxon_safe,
+    )
+
+    from rxmc import transforms as tf
+
+    here = __import__("pathlib").Path(__file__).resolve().parents[1]
+    df = pd.read_csv(here / "examples" / "data" / "alpha_ca_ratio_ruth.csv")
+    df = df[df["target"] == "Ca44"].iloc[::4]
+    reaction = jitr.reactions.ElasticReaction(target=(44, 20), projectile=(4, 2))
+    meta = {"reaction": reaction, "Elab": 29.0, "quantity": "dXS/dRuth"}
+    angles = np.deg2rad(df["angle_cm_deg"].to_numpy())
+    ratio = df["ratio_to_rutherford"].to_numpy()
+    data = Dataset(
+        angles, ratio, np.zeros(ratio.size), label="44Ca(a,a) 29 MeV", meta=meta
+    )
+    A13 = 44 ** (1 / 3)
+
+    def central(r, V, W, R, a):
+        return -(V + 1j * W) * woods_saxon_safe(r, R * A13, a)
+
+    def coulomb(r):
+        return coulomb_charged_sphere(
+            r, reaction.target.Z * reaction.projectile.Z, 1.3 * A13
+        )
+
+    params = [
+        Parameter("V", prior=stats.norm(150.0, 20.0), bounds=(0.0, np.inf)),
+        Parameter("W", prior=stats.norm(20.0, 10.0), bounds=(0.0, np.inf)),
+        Parameter("r", prior=stats.norm(1.4, 0.3), bounds=(0.8, 2.0)),
+        Parameter("a", prior=stats.norm(0.5, 0.2), bounds=(0.2, 1.0)),
+    ]
+    model = rxmc.reactions.ElasticXS(
+        "dXS/dRuth",
+        central,
+        None,
+        lambda ws, *x: (tuple(x), (), ()),
+        params,
+        coulomb=coulomb,
+        lmax=30,
+    )
+    log_sigma_A = Parameter("log_sigma_A", prior=_log_uniform(0.05, 2.0))
+    log_sigma_B = Parameter("log_sigma_B", prior=_log_uniform(0.05, 2.0))
+
+    def by_angle(x):
+        return np.asarray(x, dtype=float) / np.pi
+
+    u = np.sort(by_angle(angles))
+    log_ell = Parameter(
+        "log_ell", prior=_log_uniform(np.median(np.diff(u)), u[-1] - u[0])
+    )
+    log_A_q = Parameter("log_A_q", prior=_log_uniform(0.05, 2.0))
+    power = Parameter("p", prior=stats.uniform(0.0, 16.0))
+
+    def power_of_q(c, log_amplitude, p):
+        return jnp.exp(log_amplitude) * jnp.sin(0.5 * jnp.pi * c.x) ** p
+
+    gp = T.kernel(
+        lambda log_ell: tinygp.kernels.Matern52(scale=jnp.exp(log_ell)),
+        coords=by_angle,
+        amplitude=power_of_q,
+        amplitude_params=(log_A_q, power),
+        params=[log_ell],
+    )
+    comp = Comparison(data, model, space=tf.log)
+    terms = [T.noise(log_sigma_A), T.offset(log_sigma_B), gp]
+    p = Problem([Constraint([comp], terms=terms, statistical=False)])
+    return p, _thetas(p)
+
+
+def n40ca_ladder():
+    """gp_discrepancy's cross-section ladder, exactly as the notebook builds
+    it: mock n + 40Ca data at 14.1 MeV from a potential with volume and
+    surface absorption (seed 2024), fitted in log space with a volume-only
+    potential under three error models.  Returns ``{rung: problem}``."""
+    import jax.numpy as jnp
+    import jitr
+    import tinygp
+    from jitr.optical_potentials.potential_forms import (
+        thomas_safe,
+        woods_saxon_prime_safe,
+        woods_saxon_safe,
+    )
+
+    from rxmc import transforms as tf
+
+    rng = np.random.default_rng(2024)
+    reaction = jitr.reactions.ElasticReaction(target=(40, 20), projectile=(1, 0))
+    R40 = 40 ** (1 / 3)
+    mso = 1.0 / jitr.utils.constants.WAVENUMBER_PION
+
+    def full_central(r, Vv, Wv, Rv, av, Wd, Rd, ad):
+        return -(Vv + 1j * Wv) * woods_saxon_safe(r, Rv, av) - 1j * Wd * (
+            -4 * ad
+        ) * woods_saxon_prime_safe(r, Rd, ad)
+
+    def volume_central(r, Vv, Wv, Rv, av):
+        return -(Vv + 1j * Wv) * woods_saxon_safe(r, Rv, av)
+
+    def spin_orbit(r, Vso, Rso, aso):
+        return Vso * mso**2 * thomas_safe(r, Rso, aso)
+
+    so_args = (6.0, 1.1 * R40, 0.45)
+    full_truth = np.array([48.0, 3.5, 1.1 * R40, 0.7, 21.0, 1.2 * R40, 0.5])
+    omp_full = rxmc.reactions.ElasticXS(
+        "dXS/dA",
+        full_central,
+        spin_orbit,
+        lambda ws, *x: (tuple(x), so_args),
+        [
+            Parameter(n, prior=stats.norm(0, 1))
+            for n in ("Vv", "Wv", "Rv", "av", "Wd", "Rd", "ad")
+        ],
+        lmax=10,
+    )
+    volume_params = [
+        Parameter("Vv", prior=stats.norm(48.0, 8.0)),
+        Parameter("Wv", prior=stats.norm(4.0, 4.0), bounds=(0.0, 30.0)),
+        Parameter("Rv", prior=stats.norm(1.15 * R40, 0.2)),
+        Parameter("av", prior=stats.norm(0.65, 0.1), bounds=(0.3, 1.2)),
+    ]
+    omp_vol = rxmc.reactions.ElasticXS(
+        "dXS/dA",
+        volume_central,
+        spin_orbit,
+        lambda ws, *x: (tuple(x), so_args),
+        volume_params,
+        lmax=10,
+    )
+    angles = np.deg2rad(np.linspace(5.0, 160.0, 25))
+    meta = {"reaction": reaction, "Elab": 14.1}
+    y_full = omp_full.bind(angles, meta)(*full_truth)
+    y = y_full * (1 + rng.normal(0.0, 0.04, angles.size))
+    d_xs = Dataset(angles, y, 0.04 * y, label="n+40Ca 14.1 MeV", meta=meta)
+    comp = Comparison(d_xs, omp_vol, space=tf.log)
+    gamma = Parameter("log_gamma_xs", prior=stats.norm(np.log(0.05), 1.0))
+    amp = Parameter("log_A_xs", prior=stats.norm(np.log(0.05), 1.5))
+    slope = Parameter("amp_slope_xs", prior=stats.norm(0.0, 1.5))
+    spacing, span = np.diff(angles).min(), angles.max() - angles.min()
+    ell = Parameter(
+        "log_ell_xs", prior=stats.uniform(np.log(spacing), np.log(span / spacing))
+    )
+    gp = T.kernel(
+        lambda log_ell: tinygp.kernels.Matern52(scale=jnp.exp(log_ell)),
+        params=[ell],
+        jitter=1e-6,
+        amplitude=T.exp_growth_amplitude(np.pi),
+        amplitude_params=(amp, slope),
+    )
+    return {
+        "bare": Problem([Constraint([comp])]),
+        "proportional error": Problem(
+            [Constraint([comp], terms=[T.proportional_error(gamma, averaging=True)])]
+        ),
+        "GP, growing amplitude": Problem([Constraint([comp], terms=[gp])]),
+    }
+
+
+def n40ca_gp():
+    """The ladder's "GP, growing amplitude" rung (7 parameters)."""
+    p = n40ca_ladder()["GP, growing amplitude"]
     return p, _thetas(p)
 
 
@@ -307,6 +480,8 @@ PROBLEMS = {
     "ias": ias,
     "hierarchy": hierarchy,
     "omp": omp,
+    "alpha_gp": alpha_gp,
+    "n40ca_gp": n40ca_gp,
 }
 
 __all__ = ["PROBLEMS", "JAX", "rxmc"]

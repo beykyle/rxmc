@@ -34,10 +34,21 @@ GRIDS = {
     "gp": {2: (-12.0, 2.0, 100), 3: (-3.0, 1.0, 100)},
     "hierarchy": {2: (0.0, 6.0, 4000)},
 }
-#: per problem: pocomc runs pooled into the reference, and how closely each
-#: must agree with the pool (bias and width, in posterior standard deviations)
+#: per problem: pocomc runs pooled into the reference, how closely each must
+#: agree with the pool (bias and width, in posterior standard deviations), and
+#: an independent dynesty run that must agree with the pool to the benchmark's
+#: tolerance; it guards against a bias that every pocomc run shares, which on
+#: the GP problems (pocomc is biased on the benchmark's ``gp``) is the risk
+_CORROBORATE = dict(nlive=2000, sample="rwalk", seed=3000)
 POPULATION = {
-    "omp": dict(n_effective=8192, n_active=4096, seeds=(2000, 2001, 2002), agree=0.05),
+    name: dict(
+        n_effective=8192,
+        n_active=4096,
+        seeds=(2000, 2001, 2002),
+        agree=0.05,
+        corroborate=_CORROBORATE,
+    )
+    for name in ("omp", "alpha_gp", "n40ca_gp")
 }
 #: smaller steps than the benchmark's NUTS (target acceptance 0.8), to stay
 #: clear of divergences
@@ -138,12 +149,18 @@ def long_nuts(problem):
     )
 
 
-def long_pocomc(problem, seeds, agree, **settings):
+def long_pocomc(problem, seeds, agree, corroborate=None, **settings):
     """pocomc runs at ``settings``, one per seed, pooled with equal weight;
     accepted only if every run is within ``agree`` of the pool.  The
     evidence is the runs' mean, its error their half-spread or the largest
-    quoted error, whichever is larger."""
-    from bench_samplers import errors, run_pocomc
+    quoted error, whichever is larger.
+
+    With ``corroborate`` (dynesty settings and a ``seed``), one dynesty run is
+    scored against the pool too.  Its result is recorded either way; if it
+    misses the benchmark's tolerance the reference is marked
+    ``corroborated: False`` (and a warning printed) rather than refused, so
+    both answers survive for a person to judge."""
+    from bench_samplers import TOLERANCE, errors, run_dynesty, run_pocomc
 
     runs = []
     for seed in seeds:  # each run is logged as it ends, so a refusal keeps them
@@ -166,7 +183,7 @@ def long_pocomc(problem, seeds, agree, **settings):
         raise RuntimeError(f"reference pocomc: a run is {worst:.3f} sd from the pool")
     logz = np.array([r["logz"] for r in runs])
     logz_err = max(np.ptp(logz) / 2, max(r["logz_err"] for r in runs))
-    return dict(
+    out = dict(
         method=f"pocomc {settings['n_effective']}/{settings['n_active']}, {len(seeds)} runs",
         mean=pool["mean"],
         sd=pool["sd"],
@@ -178,6 +195,28 @@ def long_pocomc(problem, seeds, agree, **settings):
             for r in runs
         ],
     )
+    if corroborate:
+        settings_d = {k: v for k, v in corroborate.items() if k != "seed"}
+        d = run_dynesty(problem, {}, corroborate["seed"], **settings_d)
+        bias, width = errors(d, pool)
+        ok = max(bias, width) <= TOLERANCE
+        out["corroboration"] = dict(
+            method=f"dynesty {settings_d}",
+            bias=bias,
+            width=width,
+            logz=d["logz"],
+            logz_err=d["logz_err"],
+            wall_s=d["wall_s"],
+            mean=d["mean"],
+            sd=d["sd"],
+        )
+        out["corroborated"] = bool(ok)
+        print(
+            f"  dynesty corroboration: bias {bias:.3f}, width {width:.3f}, "
+            f"log Z {d['logz']:.2f}: " + ("agrees" if ok else "WARNING: disagrees"),
+            flush=True,
+        )
+    return out
 
 
 def reference(name, problem):
