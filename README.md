@@ -107,7 +107,8 @@ omp = rx.reactions.ElasticXS(
 
 # an EXFOR-shaped measurement (exfor_tools.Distribution has these fields); here mock data
 angles = np.linspace(10.0, 150.0, 12)
-truth = omp.bind(np.deg2rad(angles), {"reaction": reaction, "Elab": 14.1})(48.0, 4.0, 0.65)
+true_params = (48.0, 4.0, 0.65)
+truth = omp.bind(np.deg2rad(angles), {"reaction": reaction, "Elab": 14.1})(*true_params)
 measurement = SimpleNamespace(
     x=angles, y=1e3 * truth * (1 + rng.normal(0, 0.05, angles.size)), Einc=14.1,
     quantity="dXS/dA", y_units="mb/sr", statistical_err=1e3 * truth * 0.05,
