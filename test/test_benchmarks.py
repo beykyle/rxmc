@@ -83,3 +83,49 @@ def test_the_sweep_and_the_seed_check_run_end_to_end(tmp_path):
     )
     assert set(res["20"]["GP, growing amplitude"]["volume"]) == {"Vv", "Wv", "Rv", "av"}
     assert len(res["20"]["delta_logz"]) == 2
+
+
+def test_every_array_job_maps_its_indices_to_runs():
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "benchmarks" / "hpc"))
+    import task
+
+    counts = {
+        (k, p): len(task.tasks(k, p))
+        for k in ("ref", "run", "sweep")
+        for p in ("omp", "alpha_gp", "n40ca_gp")
+    }
+    assert set(counts.values()) == {4, 8, 9}
+    assert len(task.tasks("seed", "gp")) == 9
+    assert task.tasks("ref", "omp")[-1][0] == "dynesty"
+
+
+def test_assemble_pools_reference_parts_and_joins_pieces(tmp_path, monkeypatch):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "benchmarks" / "hpc"))
+    import assemble
+
+    monkeypatch.setattr(assemble, "OUT", tmp_path)
+    ref_dir = tmp_path / "ref" / "n40ca_gp"
+    ref_dir.mkdir(parents=True)
+    run = dict(mean=[1.0, 2.0], sd=[1.0, 1.0], logz=-3.0, logz_err=0.1, wall_s=5.0)
+    for i in range(3):
+        part = dict(problem="n40ca_gp", part="pocomc", result=run)
+        (ref_dir / f"{i}.json").write_text(json.dumps(part))
+    dyn = dict(run, mean=[1.02, 2.0], method="dynesty")
+    (ref_dir / "3.json").write_text(
+        json.dumps(dict(problem="n40ca_gp", part="dynesty", result=dyn))
+    )
+    refs = assemble.references()  # the other problems have no pieces: skipped
+    assert list(refs) == ["n40ca_gp"]
+    assert refs["n40ca_gp"]["corroborated"] and refs["n40ca_gp"]["logz"] == -3.0
+    seed_dir = tmp_path / "seed" / "gp"
+    seed_dir.mkdir(parents=True)
+    rungs = ["bare", "proportional error", "GP, growing amplitude"]
+    for i, (base, r) in enumerate((b, r) for b in (20, 30, 40) for r in range(3)):
+        piece = dict(base=base, rung=rungs[r], result=dict(logz=float(r)))
+        (seed_dir / f"{i}.json").write_text(json.dumps(piece))
+    assemble.seed_check()
+    out = json.loads((tmp_path / "gp_seed_check.json").read_text())
+    assert out["30"]["delta_logz"] == {
+        "proportional error - bare": 1.0,
+        "GP, growing amplitude - proportional error": 1.0,
+    }

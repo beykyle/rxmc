@@ -159,18 +159,45 @@ def long_pocomc(problem, seeds, agree, corroborate=None, **settings):
     scored against the pool too.  Its result is recorded either way; if it
     misses the benchmark's tolerance the reference is marked
     ``corroborated: False`` (and a warning printed) rather than refused, so
-    both answers survive for a person to judge."""
-    from bench_samplers import TOLERANCE, errors, run_dynesty, run_pocomc
+    both answers survive for a person to judge.
 
-    runs = []
-    for seed in seeds:  # each run is logged as it ends, so a refusal keeps them
-        runs.append(run_pocomc(problem, {}, seed, **settings))
-        r = runs[-1]
-        print(
-            f"  pocomc seed {seed}: {r['wall_s']:.0f} s, log Z {r['logz']:.2f}, "
-            f"mean {np.round(r['mean'], 3).tolist()}, sd {np.round(r['sd'], 3).tolist()}",
-            flush=True,
-        )
+    On a cluster the parts run as separate jobs (``pocomc_part``,
+    ``dynesty_part``) and ``pool_parts`` assembles them."""
+    runs = [pocomc_part(problem, seed, settings) for seed in seeds]
+    dynesty = dynesty_part(problem, corroborate) if corroborate else None
+    return pool_parts(runs, agree, settings, dynesty)
+
+
+def pocomc_part(problem, seed, settings):
+    """One pocomc run of a population reference; logged as it ends."""
+    from bench_samplers import run_pocomc
+
+    r = run_pocomc(problem, {}, seed, **settings)
+    r["seed"] = seed
+    print(
+        f"  pocomc seed {seed}: {r['wall_s']:.0f} s, log Z {r['logz']:.2f}, "
+        f"mean {np.round(r['mean'], 3).tolist()}, sd {np.round(r['sd'], 3).tolist()}",
+        flush=True,
+    )
+    return r
+
+
+def dynesty_part(problem, corroborate):
+    """The independent dynesty run that corroborates a population reference."""
+    from bench_samplers import run_dynesty
+
+    settings = {k: v for k, v in corroborate.items() if k != "seed"}
+    d = run_dynesty(problem, {}, corroborate["seed"], **settings)
+    d["method"] = f"dynesty {settings}"
+    print(f"  dynesty: {d['wall_s']:.0f} s, log Z {d['logz']:.2f}", flush=True)
+    return d
+
+
+def pool_parts(runs, agree, settings, dynesty=None):
+    """The reference from its parts: the pocomc ``runs`` pooled and checked
+    against ``agree``, and ``dynesty`` scored against the pool."""
+    from bench_samplers import TOLERANCE, errors
+
     mean = np.mean([r["mean"] for r in runs], axis=0)
     # the pooled variance: within-run variances plus the spread of the means
     var = np.mean(
@@ -184,7 +211,7 @@ def long_pocomc(problem, seeds, agree, corroborate=None, **settings):
     logz = np.array([r["logz"] for r in runs])
     logz_err = max(np.ptp(logz) / 2, max(r["logz_err"] for r in runs))
     out = dict(
-        method=f"pocomc {settings['n_effective']}/{settings['n_active']}, {len(seeds)} runs",
+        method=f"pocomc {settings['n_effective']}/{settings['n_active']}, {len(runs)} runs",
         mean=pool["mean"],
         sd=pool["sd"],
         logz=float(logz.mean()),
@@ -195,25 +222,24 @@ def long_pocomc(problem, seeds, agree, corroborate=None, **settings):
             for r in runs
         ],
     )
-    if corroborate:
-        settings_d = {k: v for k, v in corroborate.items() if k != "seed"}
-        d = run_dynesty(problem, {}, corroborate["seed"], **settings_d)
-        bias, width = errors(d, pool)
+    if dynesty is not None:
+        bias, width = errors(dynesty, pool)
         ok = max(bias, width) <= TOLERANCE
         out["corroboration"] = dict(
-            method=f"dynesty {settings_d}",
+            method=dynesty.get("method", "dynesty"),
             bias=bias,
             width=width,
-            logz=d["logz"],
-            logz_err=d["logz_err"],
-            wall_s=d["wall_s"],
-            mean=d["mean"],
-            sd=d["sd"],
+            logz=dynesty["logz"],
+            logz_err=dynesty["logz_err"],
+            wall_s=dynesty["wall_s"],
+            mean=dynesty["mean"],
+            sd=dynesty["sd"],
         )
         out["corroborated"] = bool(ok)
         print(
             f"  dynesty corroboration: bias {bias:.3f}, width {width:.3f}, "
-            f"log Z {d['logz']:.2f}: " + ("agrees" if ok else "WARNING: disagrees"),
+            f"log Z {dynesty['logz']:.2f}: "
+            + ("agrees" if ok else "WARNING: disagrees"),
             flush=True,
         )
     return out

@@ -46,31 +46,36 @@ def volume_summary(problem):
     return summary
 
 
+def run_rung(ladder, base, i, settings=SETTINGS):
+    """Rung ``i`` of the ladder at seed ``base + i``, as the notebook seeds them."""
+    rung, problem = list(ladder.items())[i]
+    r = run_pocomc(problem, {}, base + i, summary=volume_summary(problem), **settings)
+    print(f"seeds {base}+: {rung}: log Z {r['logz']:.2f}", flush=True)
+    return rung, dict(
+        logz=r["logz"], logz_err=r["logz_err"], wall_s=r["wall_s"], volume=r["volume"]
+    )
+
+
+def with_differences(rungs):
+    """The rungs of one seed set, with the log Z differences between them."""
+    names = list(rungs)
+    return {
+        **rungs,
+        "delta_logz": {
+            f"{b} - {a}": rungs[b]["logz"] - rungs[a]["logz"]
+            for a, b in zip(names, names[1:])
+        },
+    }
+
+
 def check(seed_sets=SEED_SETS, out=None, settings=SETTINGS):
     ladder = n40ca_ladder()
     results = json.loads(out.read_text()) if out and out.exists() else {}
     for base in seed_sets:
-        key = str(base)
-        if key in results:
+        if str(base) in results:
             continue  # resume
-        rungs = {}
-        for i, (rung, problem) in enumerate(ladder.items()):
-            r = run_pocomc(
-                problem, {}, base + i, summary=volume_summary(problem), **settings
-            )
-            rungs[rung] = dict(
-                logz=r["logz"],
-                logz_err=r["logz_err"],
-                wall_s=r["wall_s"],
-                volume=r["volume"],
-            )
-            print(f"seeds {base}+: {rung}: log Z {r['logz']:.2f}", flush=True)
-        names = list(rungs)
-        rungs["delta_logz"] = {
-            f"{b} - {a}": rungs[b]["logz"] - rungs[a]["logz"]
-            for a, b in zip(names, names[1:])
-        }
-        results[key] = rungs
+        rungs = dict(run_rung(ladder, base, i, settings) for i in range(len(ladder)))
+        results[str(base)] = with_differences(rungs)
         if out:
             out.write_text(json.dumps(results, indent=1))
     return results
