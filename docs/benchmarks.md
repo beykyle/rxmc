@@ -33,7 +33,7 @@ uv sync --managed-python --extra examples --extra samplers
 | `elastic` | 5 | `ElasticXS` at four energies with a proportional model error (recipes 15, 26): the reaction solver |
 | `ias` | 4 | an `IsobaricAnalogPN` prediction at one energy |
 | `hierarchy` | 33 | 30 lines sharing a slope, their intercepts non-centred about a common mean (recipe 38): high dimension |
-| `omp` | 9 | the log-space p + ⁴⁰Ca optical model of `local_optical_model_calibration`: EXFOR C0076002 (Gross et al. 1967) at 35.8 MeV, seven potential parameters and two inferred relative errors; its posterior has two separated islands |
+| `omp` | 9 | the log-space p + ⁴⁰Ca optical model of `local_optical_model_calibration`, with the earlier jitr parametrisation of its two inferred relative errors: EXFOR C0076002 (Gross et al. 1967) at 35.8 MeV, seven potential parameters and two inferred errors; its posterior has two separated islands |
 
 ## Densities: `bench_log_posterior.py`
 
