@@ -73,21 +73,41 @@ def test_merge_refuses_two_inputs_with_the_same_entry(tmp_path):
         merge_results.merge([one, two], tmp_path / "s.json", tmp_path / "r.json")
 
 
+def test_mode_share_counts_the_notebooks_minor_mode():
+    p, thetas = problems.PROBLEMS["alpha_gp"]()
+    share = problems.mode_share("alpha_gp", p)
+    theta = np.tile(thetas[0], (4, 1))
+    theta[:2, p.names.index("V")] = [120.0, 130.0]  # the shallow family
+    theta[2:, p.names.index("V")] = [160.0, 170.0]  # the deeper one
+    out = share(theta, np.array([1.0, 1.0, 1.0, 3.0]))
+    assert out["mode_share"] == pytest.approx(4 / 6)
+    assert problems.mode_share("n40ca_gp", p) is None
+
+
 @pytest.mark.slow
-def test_the_sweep_and_the_seed_check_run_end_to_end(tmp_path):
-    import gp_seed_check
+def test_the_sweep_runs_end_to_end(tmp_path):
     import sweep_pocomc
 
     out = tmp_path / "sweep.json"
-    saved = sweep_pocomc.sweep("alpha_gp", [(64, 32)], (0,), out)
-    assert saved["runs"][0]["mode_share_label"] == "share in the deeper family"
+    tiny = dict(n_total=128, n_evidence=128)
+    saved = sweep_pocomc.sweep("linear", [(64, 32)], (0, 1), out, **tiny)
+    assert [r["seed"] for r in saved["runs"]] == [0, 1]
     assert json.loads(out.read_text())["runs"] == saved["runs"]
+    again = sweep_pocomc.sweep("linear", [(64, 32)], (0, 1), out, **tiny)
+    assert again["runs"] == saved["runs"]  # resumed: nothing rerun
     sweep_pocomc.report(saved, {})
-    res = gp_seed_check.check(
-        (20,), tmp_path / "seed.json", dict(n_effective=64, n_active=32)
-    )
-    assert set(res["20"]["GP, growing amplitude"]["volume"]) == {"Vv", "Wv", "Rv", "av"}
-    assert len(res["20"]["delta_logz"]) == 2
+
+
+def test_the_seed_check_summarises_as_the_notebook_quotes():
+    import gp_seed_check
+
+    x = np.array([3.0, 1.0, 2.0, 4.0])
+    w = np.array([1.0, 1.0, 1.0, 1.0])
+    lo, mid, hi = gp_seed_check._quantiles(x, w)
+    assert lo < mid < hi and 2.0 <= mid <= 3.0
+    rungs = {"a": dict(logz=1.0), "b": dict(logz=4.0), "c": dict(logz=4.5)}
+    out = gp_seed_check.with_differences(rungs)
+    assert out["delta_logz"] == {"b - a": 3.0, "c - b": 0.5}
 
 
 def test_every_array_job_maps_its_indices_to_runs():

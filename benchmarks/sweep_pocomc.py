@@ -24,7 +24,8 @@ SETTINGS = [(1024, 512), (2048, 1024), (4096, 2048)]
 SEEDS = (100, 101, 102)
 
 
-def sweep(name, settings=SETTINGS, seeds=SEEDS, out=None):
+def sweep(name, settings=SETTINGS, seeds=SEEDS, out=None, **lengths):
+    """``lengths`` (``n_total``, ``n_evidence``) shorten the runs, for tests."""
     problem, _ = PROBLEMS[name]()
     summary = mode_share(name, problem)
     saved = json.loads(out.read_text()) if out and out.exists() else {}
@@ -41,6 +42,7 @@ def sweep(name, settings=SETTINGS, seeds=SEEDS, out=None):
                 summary=summary,
                 n_effective=n_effective,
                 n_active=n_active,
+                **lengths,
             )
             r.update(n_effective=n_effective, n_active=n_active, seed=seed)
             runs.append(r)

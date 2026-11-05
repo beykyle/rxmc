@@ -328,7 +328,9 @@ def run_dynesty(problem, b, seed=0, summary=None, **settings):
 
 def run_pocomc(problem, b, seed=0, summary=None, **settings):
     """``summary(theta, weights) -> dict``, if given, adds to the result
-    anything the moments cannot show (a mode's share, say)."""
+    anything the moments cannot show (a mode's share, say).  ``n_total`` and
+    ``n_evidence`` among ``settings`` go to ``run`` (pocomc's defaults
+    otherwise, 4096 each); the rest configure the sampler."""
     import pocomc
     from scipy import stats
 
@@ -336,15 +338,13 @@ def run_pocomc(problem, b, seed=0, summary=None, **settings):
         return problem.log_likelihood_batch(problem.prior_transform_batch(u))
 
     prior = pocomc.Prior([stats.uniform(0.0, 1.0)] * problem.ndim)
+    settings = POCOMC | b.get("pocomc", {}) | settings
+    lengths = {k: settings.pop(k) for k in ("n_total", "n_evidence") if k in settings}
     t0 = time.perf_counter()
     sampler = pocomc.Sampler(
-        prior,
-        log_likelihood,
-        vectorize=True,
-        random_state=seed,
-        **(POCOMC | b.get("pocomc", {}) | settings),
+        prior, log_likelihood, vectorize=True, random_state=seed, **settings
     )
-    sampler.run(progress=False)
+    sampler.run(progress=False, **lengths)
     wall = time.perf_counter() - t0
     u, weights, _, _ = sampler.posterior()
     logz, logz_err = sampler.evidence()
