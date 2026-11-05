@@ -16,5 +16,12 @@ set -euo pipefail
 cd "${SLURM_SUBMIT_DIR:-$(pwd)}"
 source benchmarks/hpc/env.sh
 echo "$(date -Is) $(git rev-parse --short HEAD) task ${SLURM_ARRAY_TASK_ID:-} $*"
-"$@"
+if [[ -n "${SLURM_JOB_ID:-}" ]] && command -v srun >/dev/null; then
+    # bind the task to its allocated cores: XLA does not read OMP_NUM_THREADS,
+    # and binding keeps all its threads on the task's cores, so tasks sharing
+    # a node do not collide (and the wall times stay comparable)
+    srun --ntasks=1 --cpus-per-task="${SLURM_CPUS_PER_TASK:-8}" --cpu-bind=cores "$@"
+else
+    "$@"
+fi
 echo "$(date -Is) done"

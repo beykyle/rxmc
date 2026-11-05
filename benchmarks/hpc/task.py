@@ -16,7 +16,7 @@ KIND is
 * ``run``   -- one sampler of the benchmark on PROBLEM;
 * ``sweep`` -- one (setting, seed) of the pocomc resolution sweep;
 * ``seed``  -- one (seed set, rung) of gp_discrepancy's ladder (PROBLEM is
-               ignored; use ``gp``).
+               always ``gp``).
 
 Every task writes ``benchmarks/results/hpc/<kind>/<problem>/<index>.json`` and
 nothing else, so any number of them can run at once.
@@ -64,6 +64,8 @@ def tasks(kind, problem):
 
 
 def run(kind, problem, index):
+    if kind == "seed" and problem != "gp":
+        raise ValueError("seed tasks belong to gp_discrepancy's ladder: use 'gp'")
     task = tasks(kind, problem)[index]
     out = OUT / kind / problem / f"{index}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -106,10 +108,9 @@ def run(kind, problem, index):
         sweep_pocomc.sweep(problem, [task[0]], (task[1],), out)
     elif kind == "seed":
         import gp_seed_check
-        from problems import n40ca_ladder
 
         base, i = task
-        rung, result = gp_seed_check.run_rung(n40ca_ladder(), base, i)
+        rung, result = gp_seed_check.run_rung(base, i)
         out.write_text(json.dumps(dict(base=base, rung=rung, result=result)))
     print(f"{kind} {problem} task {index} ({task}) -> {out}")
 

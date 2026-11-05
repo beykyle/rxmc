@@ -53,7 +53,6 @@ def test_merge_replaces_what_the_inputs_carry_and_keeps_the_rest(tmp_path):
     one = _sampler_file(tmp_path / "1.json", "a", "NUTS", 1.0)
     two = _sampler_file(tmp_path / "2.json", "a", "pocomc", 2.0)
     ref = tmp_path / "ref.json"
-    ref.write_text(json.dumps(dict(a=dict(mean=[1.5]))))
     ref.write_text(json.dumps(dict(a=dict(mean=[1.5], sd=[1.0], method="m"))))
     s, r = merge_results.merge([one, two, ref], base, refs)
     assert s["problems"]["a"]["samplers"]["NUTS"]["mean"] == [1.0]
@@ -192,3 +191,44 @@ def test_merge_drops_the_rows_of_a_redefined_problem(tmp_path):
     s, _ = merge_results.merge([new], base, tmp_path / "r.json")
     assert s["problems"]["a"]["names"] == ["x"]
     assert list(s["problems"]["a"]["samplers"]) == ["NUTS"]  # emcee's stale row gone
+
+
+def test_equal_weights_give_the_midpoint_median():
+    import gp_seed_check
+
+    x, w = np.array([1.0, 2.0, 3.0, 4.0]), np.ones(4)
+    assert gp_seed_check._quantiles(x, w, (0.5,)) == [2.5]
+
+
+def test_a_reference_of_other_parameters_is_refused_and_a_doubtful_one_flagged(
+    capsys,
+):
+    import bench_samplers
+
+    ref = dict(mean=[0.0], sd=[1.0], method="m", names=["x"])
+    assert bench_samplers.usable_reference("p", ["x"], ref) is ref
+    with pytest.raises(ValueError, match="not the run's"):
+        bench_samplers.usable_reference("p", ["y"], ref)
+    with pytest.raises(ValueError, match="does not name"):
+        bench_samplers.usable_reference("p", ["x"], dict(mean=[0.0], sd=[1.0]))
+    bench_samplers.usable_reference("p", ["x"], dict(ref, corroborated=False))
+    assert "not corroborated" in capsys.readouterr().out
+
+
+def test_merge_drops_the_reference_of_a_redefined_problem(tmp_path):
+    base = tmp_path / "samplers.json"
+    old = dict(ndim=1, names=["old"], samplers={})
+    base.write_text(json.dumps(dict(problems=dict(a=old))))
+    refs = tmp_path / "refs.json"
+    refs.write_text(json.dumps(dict(a=dict(mean=[0.0], sd=[1.0], method="old"))))
+    new = _sampler_file(tmp_path / "new.json", "a", "NUTS", 1.0)  # names ["x"]
+    _, r = merge_results.merge([new], base, refs)
+    assert "a" not in r
+
+
+def test_seed_tasks_refuse_any_problem_but_gp():
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "benchmarks" / "hpc"))
+    import task
+
+    with pytest.raises(ValueError, match="'gp'"):
+        task.run("seed", "omp", 0)

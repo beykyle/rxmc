@@ -66,7 +66,11 @@ up to about 30 min on `omp` (PyMC is the slowest), a sweep run 5 to 40 min.
    pull CUDA wheels you don't want, install it from the CPU index first.
 
 2. Edit `benchmarks/hpc/env.sh` (modules, the venv path) and the
-   `--partition`/`--account` lines of `benchmarks/hpc/job.sbatch`.
+   `--partition`/`--account` lines of `benchmarks/hpc/job.sbatch`.  Each task
+   runs through `srun --cpu-bind=cores`, so its threads (XLA's included,
+   which ignore `OMP_NUM_THREADS`) stay on its own cores and the wall times
+   stay comparable when tasks share a node; if your site forbids `srun`
+   inside a batch job, take that line out and rely on its cgroups.
 
 3. With the environment active, submit (`submit.py` above).  Logs go to
    `benchmarks/results/hpc/logs/<job>-<array id>_<task>.out`.

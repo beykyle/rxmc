@@ -377,11 +377,15 @@ def alpha_gp():
     return p, _thetas(p)
 
 
-def n40ca_ladder():
+RUNGS = ("bare", "proportional error", "GP, growing amplitude")
+
+
+def n40ca_ladder(rungs=RUNGS):
     """gp_discrepancy's cross-section ladder, exactly as the notebook builds
     it: mock n + 40Ca data at 14.1 MeV from a potential with volume and
     surface absorption (seed 2024), fitted in log space with a volume-only
-    potential under three error models.  Returns ``{rung: problem}``."""
+    potential under three error models.  Returns ``{rung: problem}`` for the
+    ``rungs`` asked for (each compiled only if asked for)."""
     import jax.numpy as jnp
     import jitr
     import tinygp
@@ -456,18 +460,17 @@ def n40ca_ladder():
         amplitude=T.exp_growth_amplitude(np.pi),
         amplitude_params=(amp, slope),
     )
-    return {
-        "bare": Problem([Constraint([comp])]),
-        "proportional error": Problem(
-            [Constraint([comp], terms=[T.proportional_error(gamma, averaging=True)])]
-        ),
-        "GP, growing amplitude": Problem([Constraint([comp], terms=[gp])]),
+    terms = {
+        "bare": [],
+        "proportional error": [T.proportional_error(gamma, averaging=True)],
+        "GP, growing amplitude": [gp],
     }
+    return {r: Problem([Constraint([comp], terms=terms[r])]) for r in rungs}
 
 
 def n40ca_gp():
     """The ladder's "GP, growing amplitude" rung (7 parameters)."""
-    p = n40ca_ladder()["GP, growing amplitude"]
+    p = n40ca_ladder(["GP, growing amplitude"])["GP, growing amplitude"]
     return p, _thetas(p)
 
 

@@ -17,7 +17,14 @@ import argparse
 import json
 from pathlib import Path
 
-from bench_samplers import BUDGETS, REFERENCES, TOLERANCE, errors, run_pocomc
+from bench_samplers import (
+    BUDGETS,
+    REFERENCES,
+    TOLERANCE,
+    errors,
+    run_pocomc,
+    usable_reference,
+)
 from problems import PROBLEMS, mode_share
 
 SETTINGS = [(1024, 512), (2048, 1024), (4096, 2048)]
@@ -28,6 +35,8 @@ def sweep(name, settings=SETTINGS, seeds=SEEDS, out=None, **lengths):
     """``lengths`` (``n_total``, ``n_evidence``) shorten the runs, for tests."""
     problem, _ = PROBLEMS[name]()
     summary = mode_share(name, problem)
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
     saved = json.loads(out.read_text()) if out and out.exists() else {}
     runs = saved.get("runs", [])
     done = {(r["n_effective"], r["n_active"], r["seed"]) for r in runs}
@@ -63,7 +72,7 @@ def sweep(name, settings=SETTINGS, seeds=SEEDS, out=None, **lengths):
 
 def report(saved, refs):
     name = saved["problem"]
-    ref = refs.get(name)
+    ref = usable_reference(name, saved.get("names"), refs.get(name))
     print(f"| {name} | bias / width per seed | mode share | log Z | wall time |")
     print("|---|---|---|---|---|")
     by_setting = {}

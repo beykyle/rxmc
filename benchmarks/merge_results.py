@@ -49,8 +49,11 @@ def merge(inputs, samplers_path, references_path):
                 if new_names is not None and into.get("names") not in (None, new_names):
                     # a redefined problem: the old rows belong to the old problem
                     print(
-                        f"{name}: parameters changed; its old sampler rows are dropped"
+                        f"{name}: parameters changed; its old sampler rows and "
+                        "reference are dropped"
                     )
+                    if ("reference", name) not in seen:
+                        references.pop(name, None)
                     into["samplers"] = {
                         s: r
                         for s, r in into["samplers"].items()

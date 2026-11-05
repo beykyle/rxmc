@@ -18,7 +18,7 @@ from pathlib import Path
 
 import numpy as np
 from bench_samplers import run_pocomc
-from problems import n40ca_ladder
+from problems import RUNGS, n40ca_ladder
 
 #: the notebook's resolution for the ladder
 SETTINGS = dict(n_effective=1024, n_active=512)
@@ -28,8 +28,11 @@ VOLUME = ("Vv", "Wv", "Rv", "av")
 
 
 def _quantiles(x, w, qs=(0.16, 0.5, 0.84)):
+    """Weighted quantiles, each draw's weight centred on its value (equal
+    weights give the usual midpoint median)."""
     order = np.argsort(x)
-    cdf = np.cumsum(w[order]) / w.sum()
+    w = w[order] / w.sum()
+    cdf = np.cumsum(w) - 0.5 * w
     return [float(np.interp(q, cdf, x[order])) for q in qs]
 
 
@@ -46,9 +49,11 @@ def volume_summary(problem):
     return summary
 
 
-def run_rung(ladder, base, i, settings=SETTINGS):
-    """Rung ``i`` of the ladder at seed ``base + i``, as the notebook seeds them."""
-    rung, problem = list(ladder.items())[i]
+def run_rung(base, i, settings=SETTINGS, ladder=None):
+    """Rung ``i`` of the ladder at seed ``base + i``, as the notebook seeds them;
+    only that rung is built unless a whole ``ladder`` is given."""
+    rung = RUNGS[i]
+    problem = (ladder or n40ca_ladder([rung]))[rung]
     r = run_pocomc(problem, {}, base + i, summary=volume_summary(problem), **settings)
     # as the notebook prints it: a density of the cross sections, not their logs
     logz = r["logz"] + problem.log_jacobian()
@@ -72,11 +77,13 @@ def with_differences(rungs):
 
 def check(seed_sets=SEED_SETS, out=None, settings=SETTINGS):
     ladder = n40ca_ladder()
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
     results = json.loads(out.read_text()) if out and out.exists() else {}
     for base in seed_sets:
         if str(base) in results:
             continue  # resume
-        rungs = dict(run_rung(ladder, base, i, settings) for i in range(len(ladder)))
+        rungs = dict(run_rung(base, i, settings, ladder) for i in range(len(RUNGS)))
         results[str(base)] = with_differences(rungs)
         if out:
             out.write_text(json.dumps(results, indent=1))

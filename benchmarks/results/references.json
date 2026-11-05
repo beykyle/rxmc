@@ -10,7 +10,11 @@
    0.08837021160422669
   ],
   "logz": 0.6379342790241234,
-  "wall_s": 0.9132480730186217
+  "wall_s": 0.9132480730186217,
+  "names": [
+   "m",
+   "b"
+  ]
  },
  "gp": {
   "method": "quadrature",
@@ -27,7 +31,13 @@
    1.15399627516947
   ],
   "logz": 80.48157859901941,
-  "wall_s": 322.9984175330028
+  "wall_s": 322.9984175330028,
+  "names": [
+   "m",
+   "b",
+   "discrepancy_k1__constant_value",
+   "discrepancy_k2__length_scale"
+  ]
  },
  "hierarchy": {
   "method": "quadrature",
@@ -102,7 +112,42 @@
    0.36342494233540773
   ],
   "logz": 73.96556060447234,
-  "wall_s": 11.356523881026078
+  "wall_s": 11.356523881026078,
+  "names": [
+   "m",
+   "mu",
+   "tau",
+   "eta_0",
+   "eta_1",
+   "eta_2",
+   "eta_3",
+   "eta_4",
+   "eta_5",
+   "eta_6",
+   "eta_7",
+   "eta_8",
+   "eta_9",
+   "eta_10",
+   "eta_11",
+   "eta_12",
+   "eta_13",
+   "eta_14",
+   "eta_15",
+   "eta_16",
+   "eta_17",
+   "eta_18",
+   "eta_19",
+   "eta_20",
+   "eta_21",
+   "eta_22",
+   "eta_23",
+   "eta_24",
+   "eta_25",
+   "eta_26",
+   "eta_27",
+   "eta_28",
+   "eta_29"
+  ]
  },
  "modes": {
   "method": "NUTS, 4 x 3000 draws",
@@ -131,7 +176,18 @@
   "logz": null,
   "min_ess": 2474.9120668723353,
   "max_rhat": 1.0012106429457597,
-  "wall_s": 131.74165477394126
+  "wall_s": 131.74165477394126,
+  "names": [
+   "m",
+   "b",
+   "log_eta0",
+   "log_eta1",
+   "log_eta2",
+   "log_eta3",
+   "log_eta4",
+   "log_eta5",
+   "log_s"
+  ]
  },
  "elastic": {
   "method": "NUTS, 4 x 3000 draws",
@@ -152,7 +208,14 @@
   "logz": null,
   "min_ess": 3919.8569937460893,
   "max_rhat": 1.0009644643750073,
-  "wall_s": 1498.965707179159
+  "wall_s": 1498.965707179159,
+  "names": [
+   "Vv",
+   "Wv",
+   "Rv",
+   "av",
+   "log_c"
+  ]
  },
  "omp": {
   "method": "pocomc 8192/4096, 3 runs",
@@ -261,6 +324,17 @@
     "wall_s": 1517.996557220933
    }
   ],
-  "wall_s": 4480.6482554129325
+  "wall_s": 4480.6482554129325,
+  "names": [
+   "Vv",
+   "Wv",
+   "Rv",
+   "av",
+   "Wd",
+   "Rd",
+   "ad",
+   "log_s",
+   "log_b"
+  ]
  }
 }

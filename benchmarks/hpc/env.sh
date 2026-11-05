@@ -6,7 +6,8 @@ RXMC_VENV="${RXMC_VENV:-$HOME/rxmc-venv}"   # a venv with rxmc[validation,sample
 # ----------------------------------------------------------------------------
 
 source "$RXMC_VENV/bin/activate"
-# one job per allocation: let XLA, BLAS and torch use the job's cores, no more
+# BLAS and torch threads to the job's cores; XLA's threads are kept on those
+# cores by job.sbatch's srun --cpu-bind
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
 export MKL_NUM_THREADS="$OMP_NUM_THREADS"  # torch reads OMP_NUM_THREADS too
 export XLA_PYTHON_CLIENT_PREALLOCATE=false

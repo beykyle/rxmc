@@ -575,6 +575,37 @@ def _reference_cells(ref):
     return ("",) * (len(HEAD) - 1) + (logz,)
 
 
+def usable_reference(name, names, ref):
+    """``ref`` if it may score runs of problem ``name`` with parameters
+    ``names``: it must name the same parameters (a reference of a redefined
+    problem is refused), and a rejected or uncorroborated reference is
+    flagged.  None if there is no reference."""
+    if ref is None:
+        return None
+    if ref.get("names") is None:
+        raise ValueError(
+            f"{name}: the reference does not name its parameters, so it cannot be "
+            "matched to the runs; rerun it (bench_samplers.py --reference)"
+        )
+    if names is not None and ref["names"] != list(names):
+        raise ValueError(
+            f"{name}: the reference's parameters {ref['names']} are not the "
+            f"run's {list(names)}; rerun the reference for this problem"
+        )
+    for flag, meaning in (
+        ("accepted", "its pocomc runs disagree"),
+        ("corroborated", "the dynesty check disagrees"),
+    ):
+        if ref.get(flag) is False:
+            print(f"WARNING: {name}'s reference is not {flag}: {meaning}")
+    return ref
+
+
+def _reference_flags(ref):
+    flags = [f for f in ("accepted", "corroborated") if ref.get(f) is False]
+    return "".join(f" (NOT {f.upper()})" for f in flags)
+
+
 def report(results, markdown=False, refs=None):
     """Print the comparison table of a run, scored against ``refs``."""
     refs = refs or {}
@@ -584,12 +615,7 @@ def report(results, markdown=False, refs=None):
     else:
         print(f"{'':>12s}  " + "  ".join(f"{h:>10s}" for h in HEAD))
     for name, d in results.items():
-        ref = refs.get(name)
-        if ref and ref.get("names") and d.get("names") and ref["names"] != d["names"]:
-            raise ValueError(
-                f"{name}: the reference's parameters {ref['names']} are not the "
-                f"run's {d['names']}; rerun the reference for this problem"
-            )
+        ref = usable_reference(name, d.get("names"), refs.get(name))
         if not markdown:
             print(f"{name} ({d['ndim']} parameters)")
         for sampler, v in d["samplers"].items():
@@ -604,11 +630,14 @@ def report(results, markdown=False, refs=None):
         if ref is None:
             print("  (no reference: bias not scored)")
         elif markdown:
-            cells = (f"{name} ({d['ndim']})", f"reference: {ref['method']}")
+            cells = (
+                f"{name} ({d['ndim']})",
+                f"reference: {ref['method']}{_reference_flags(ref)}",
+            )
             print("| " + " | ".join(cells + _reference_cells(ref)) + " |")
         else:
             logz = "" if ref.get("logz") is None else f", log Z = {ref['logz']:.2f}"
-            print(f"  reference: {ref['method']}{logz}")
+            print(f"  reference: {ref['method']}{_reference_flags(ref)}{logz}")
 
 
 RUNNERS = {
