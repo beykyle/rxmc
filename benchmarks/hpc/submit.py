@@ -14,6 +14,18 @@ sets keeps their array indices, so a result lands in the same file whatever
 subset produced it.  Kinds: ``ref``, ``run``, ``sweep`` (any problem) and
 ``seed`` (gp_discrepancy's ladder; ``--problems`` does not apply).  Run it
 from inside the repository with the environment active.
+
+Site settings are options, not edits to ``job.sbatch``: ``--account``,
+``--partition``, ``--constraint``, ``--venv`` (the venv ``env.sh``
+activates; default ``~/rxmc-venv``) and ``--sbatch`` for any other ``sbatch``
+option.  Keep them in a file outside the repository, one argument per line,
+and pass it as ``@file``::
+
+    # ~/rxmc-hpc/site.args
+    --account=my-account
+    --constraint=my-node-feature
+
+    python benchmarks/hpc/submit.py @$HOME/rxmc-hpc/site.args --all --dry-run
 """
 
 from __future__ import annotations
@@ -56,6 +68,19 @@ def _selected(kind, entry, args):
     return True
 
 
+def site_options(args):
+    """The site's ``sbatch`` options: account, partition, constraint, the venv
+    (exported to ``env.sh`` as ``RXMC_VENV``) and any others given."""
+    opts = [
+        f"--{name}={value}"
+        for name in ("account", "partition", "constraint")
+        if (value := getattr(args, name, None))
+    ]
+    if venv := getattr(args, "venv", None):
+        opts.append(f"--export=ALL,RXMC_VENV={Path(venv).expanduser().resolve()}")
+    return opts + list(getattr(args, "sbatch", None) or [])
+
+
 def commands(args):
     """The sbatch command lines for the selection, one per array job."""
     from bench_samplers import BUDGETS
@@ -77,6 +102,7 @@ def commands(args):
                     f"--array={','.join(map(str, indices))}",
                     f"--job-name={kind}_{problem}",
                     f"--time={time}",
+                    *site_options(args),
                     str(HERE / "job.sbatch"),
                     "python",
                     str(HERE / "task.py"),
@@ -87,8 +113,11 @@ def commands(args):
     return jobs
 
 
-def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+def parse_args(argv=None):
+    """The command line, ``@file`` arguments read in place."""
+    ap = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0], fromfile_prefix_chars="@"
+    )
     from bench_samplers import BUDGETS
 
     ap.add_argument("--problems", nargs="*", choices=list(BUDGETS))
@@ -104,10 +133,26 @@ def main(argv=None):
     ap.add_argument("--seeds", type=int, nargs="*", help="sweep: these seeds only")
     ap.add_argument("--seed-sets", type=int, nargs="*", help="seed: these sets only")
     ap.add_argument("--time", help="walltime per task, overriding the table")
+    site = ap.add_argument_group("site settings (or put them in an @file)")
+    site.add_argument("--account", help="sbatch --account")
+    site.add_argument("--partition", help="sbatch --partition")
+    site.add_argument("--constraint", help="sbatch --constraint (node features)")
+    site.add_argument(
+        "--venv", help="the venv env.sh activates (default $RXMC_VENV or ~/rxmc-venv)"
+    )
+    site.add_argument(
+        "--sbatch", action="append", metavar="OPTION",
+        help="any other sbatch option, as --sbatch=--qos=x (repeatable)",
+    )  # fmt: skip
     ap.add_argument("--dry-run", action="store_true", help="print, don't submit")
     args = ap.parse_args(argv)
     if not (args.problems or args.all or args.kinds == ["seed"]):
         ap.error("name --problems, or --all for every problem")
+    return args
+
+
+def main(argv=None):
+    args = parse_args(argv)
     (HERE.parent / "results" / "hpc" / "logs").mkdir(parents=True, exist_ok=True)
     for cmd in commands(args):
         print(shlex.join(cmd))

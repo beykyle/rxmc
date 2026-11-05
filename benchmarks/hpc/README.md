@@ -41,7 +41,8 @@ python benchmarks/hpc/submit.py --problems alpha_gp --kinds sweep --settings 102
 python benchmarks/hpc/submit.py --kinds seed --seed-sets 20
 ```
 
-Add `--dry-run` to see the `sbatch` lines first.  A selection keeps each
+Add `--dry-run` to see the `sbatch` lines first, and `@<site file>` (step 2)
+for your site's account, partition and the like.  A selection keeps each
 task's array index, so its result lands in the same file whichever subset
 produced it, and a failed task is rerun by selecting it again (or with
 `sbatch --array=<index> ...` from the dry run).  `--time` overrides the
@@ -65,14 +66,32 @@ up to about 30 min on `omp` (PyMC is the slowest), a sweep run 5 to 40 min.
    dynesty, pocomc) and `samplers` adds ptemcee and PyMC.  If torch would
    pull CUDA wheels you don't want, install it from the CPU index first.
 
-2. Edit `benchmarks/hpc/env.sh` (modules, the venv path) and the
-   `--partition`/`--account` lines of `benchmarks/hpc/job.sbatch`.  Each task
+2. Put your site's settings in a file outside the repository, one argument
+   per line, for `submit.py` to read as `@file` (nothing in the repository
+   needs editing):
+
+   ```
+   # ~/rxmc-hpc/site.args
+   --account=my-account
+   --partition=my-partition
+   --constraint=my-node-feature
+   --venv=~/rxmc-venv
+   --sbatch=--qos=my-qos
+   ```
+
+   Every line is optional: `--account`, `--partition` and `--constraint` go to
+   `sbatch` as they are, `--venv` is exported to the job as `RXMC_VENV` (else
+   it is inherited from your shell, else `~/rxmc-venv`), and `--sbatch`
+   passes any other `sbatch` option.  Each task
    runs through `srun --cpu-bind=cores`, so its threads (XLA's included,
    which ignore `OMP_NUM_THREADS`) stay on its own cores and the wall times
    stay comparable when tasks share a node; if your site forbids `srun`
-   inside a batch job, take that line out and rely on its cgroups.
+   inside a batch job, take that line out of `job.sbatch` and rely on its
+   cgroups.  A node constraint naming one CPU generation keeps the wall times
+   comparable across tasks too.
 
-3. With the environment active, submit (`submit.py` above).  Logs go to
+3. With the environment active, submit (`submit.py` above), adding
+   `@$HOME/rxmc-hpc/site.args` to each command line.  Logs go to
    `benchmarks/results/hpc/logs/<job>-<array id>_<task>.out`.
 
 4. Bring back `benchmarks/results/hpc/` (everything but `logs/`): commit it

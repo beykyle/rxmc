@@ -1,9 +1,11 @@
-# Site settings for the cluster jobs: edit these once.  Sourced by job.sbatch.
+# The environment of every cluster task.  Sourced by job.sbatch.
 
-# --- edit -------------------------------------------------------------------
-# module load python/3.12            # whatever provides Python 3.12 here
-RXMC_VENV="${RXMC_VENV:-$HOME/rxmc-venv}"   # a venv with rxmc[validation,samplers]
-# ----------------------------------------------------------------------------
+# The venv: submit.py --venv exports RXMC_VENV to the job (else it is inherited
+# from the submitting shell, else ~/rxmc-venv).  It must hold
+# rxmc[validation,samplers] and be built from a Python that the compute nodes
+# can reach at the same path; no module load is done here, since Lmod's
+# `module` can trip job.sbatch's `set -u`.
+RXMC_VENV="${RXMC_VENV:-$HOME/rxmc-venv}"
 
 source "$RXMC_VENV/bin/activate"
 # BLAS and torch threads to the job's cores; XLA's threads are kept on those

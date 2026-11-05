@@ -177,6 +177,22 @@ def test_submit_selects_by_index_and_keeps_indices():
     assert len(everything) == 3 * 8  # three kinds on every BUDGETS problem
 
 
+def test_submit_reads_site_settings_from_an_args_file(tmp_path):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "benchmarks" / "hpc"))
+    import submit
+
+    site = tmp_path / "site.args"
+    site.write_text("--account=acct\n--constraint=feat\n--sbatch=--qos=q\n")
+    venv = tmp_path / "venv"
+    argv = [f"@{site}", f"--venv={venv}", "--problems", "linear", "--kinds", "ref"]
+    (cmd,) = submit.commands(submit.parse_args(argv))
+    script = cmd.index(str(submit.HERE / "job.sbatch"))
+    assert cmd[4:script] == [
+        "--account=acct", "--constraint=feat",
+        f"--export=ALL,RXMC_VENV={venv.resolve()}", "--qos=q",
+    ]  # fmt: skip
+
+
 def test_merge_drops_the_rows_of_a_redefined_problem(tmp_path):
     base = tmp_path / "samplers.json"
     old = dict(ndim=1, names=["old"], samplers=dict(emcee=dict(mean=[0.0])))

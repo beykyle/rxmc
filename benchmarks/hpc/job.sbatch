@@ -8,10 +8,9 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=16G
 #SBATCH --output=benchmarks/results/hpc/logs/%x-%A_%a.out
-# --- edit: your site's partition and account ----------------------------------
-##SBATCH --partition=CHANGE_ME
-##SBATCH --account=CHANGE_ME
-# ------------------------------------------------------------------------------
+# Site settings (account, partition, node constraint, venv) are not set here:
+# submit.py passes them on the sbatch command line (its --account, --partition,
+# --constraint, --venv and --sbatch options, or an @file of them).
 set -euo pipefail
 cd "${SLURM_SUBMIT_DIR:-$(pwd)}"
 source benchmarks/hpc/env.sh
