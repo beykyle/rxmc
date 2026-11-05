@@ -118,7 +118,8 @@ def test_every_array_job_maps_its_indices_to_runs():
         for k in ("ref", "run", "sweep")
         for p in ("omp", "alpha_gp", "n40ca_gp")
     }
-    assert set(counts.values()) == {6, 8, 9}
+    assert set(counts.values()) == {6, 8, 9, 12}
+    assert counts["ref", "alpha_gp"] == 12  # nine dynesty runs check it
     assert len(task.tasks("seed", "gp")) == 9
     assert task.tasks("ref", "omp")[-1][0] == "dynesty"
 

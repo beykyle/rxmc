@@ -20,7 +20,7 @@ The kinds of task:
 
 | kind | problems | tasks per problem |
 |---|---|---|
-| `ref` | any | `omp`, `alpha_gp`, `n40ca_gp`: 6 (three pocomc runs at 8192/4096, pooled into the reference, and three dynesty runs, rslice with 1000 live points, pooled into an independent check of it); every other problem: 1 (quadrature or a long NUTS run) |
+| `ref` | any | `omp`, `n40ca_gp`: 6 (three pocomc runs at 8192/4096, pooled into the reference, and three dynesty runs, rslice with 1000 live points, pooled into an independent check of it); `alpha_gp`: 12 (nine dynesty runs, whose share of the deeper family scatters too much for three); every other problem: 1 (quadrature or a long NUTS run) |
 | `run` | any | one per sampler the problem runs (4, or 8 for the three optical models) |
 | `sweep` | any | 9: pocomc at 1024/512, 2048/1024 and 4096/2048, three seeds each |
 | `seed` | `gp` only | 9: `gp_discrepancy`'s ladder, one rung at one of three other seed sets |
@@ -31,7 +31,7 @@ needs all of them), and the benchmark times a sampler as a user runs it.
 ## Selecting what to run
 
 ```bash
-# the refresh of the three optical-model problems (78 tasks in 10 arrays)
+# the refresh of the three optical-model problems (84 tasks in 10 arrays)
 python benchmarks/hpc/submit.py --problems omp alpha_gp n40ca_gp --kinds ref run sweep seed
 # every problem (default kinds: ref run sweep)
 python benchmarks/hpc/submit.py --all

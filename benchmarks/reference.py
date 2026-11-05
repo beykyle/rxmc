@@ -51,6 +51,9 @@ POPULATION = {
     )
     for name in ("omp", "alpha_gp", "n40ca_gp")
 }
+# alpha_gp's dynesty runs scatter in the share of the deeper family (0.55 to
+# 0.80 over three seeds; the bar is 0.03), so it pools nine
+POPULATION["alpha_gp"]["corroborate"]["seeds"] = tuple(range(3000, 3009))
 #: the pooled dynesty runs corroborate the pooled pocomc ones if their log Z
 #: agree within twice the combined error, their mode shares (where a problem
 #: has two modes) within ``share``, and their moments within ``moments`` sd
