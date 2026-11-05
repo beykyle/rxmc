@@ -237,23 +237,40 @@ against −6.63).
 |---|---|---|
 | `linear`, `gp`, `hierarchy` | exact moments and log Z | the log posterior is quadratic in all but a few parameters (none; the GP's log variance and log length scale; the hierarchy's τ).  At each node of a grid over those, one Newton step over the rest lands on the conditional mode, and the Hessian there is the conditional precision, both exact for a quadratic; the conditional normalisers weight the nodes. |
 | `modes`, `elastic` | moments | one long blackjax NUTS run, 4 chains × (1000 warm-up + 3000 draws) at target acceptance 0.95, from a ball about the MAP with a seed of its own, accepted only with a rank-normalised R-hat ≤ 1.01 and no divergences (R-hat 1.001, 1.001; min bulk ESS 2475, 3920).  Chains started from prior draws can stick in a minor mode: on `modes`, one with a log posterior 40 below the main one. |
-| `omp`, `alpha_gp`, `n40ca_gp` | moments and log Z | three pocomc runs at 8192/4096, sixteen times its defaults, each with a seed of its own, pooled; accepted only if every run is within 0.05 of the pool; then checked against three dynesty runs (rslice, 1000 live points; nine on `alpha_gp`, whose single runs put 0.55 to 0.80 of their mass in the deeper family), pooled the same way, on log Z (within twice the combined error), the mode share (within 0.03) and the moments (within 0.2 sd).  A NUTS reference cannot work on `omp`: its chains stay in the island they start in.  Pending the cluster refresh; the earlier `omp`'s reference agreed to 0.028, with log Z −6.63 ± 0.01. |
+| `omp`, `alpha_gp`, `n40ca_gp` | moments and log Z | three pocomc runs at 8192/4096, sixteen times its defaults, each with a seed of its own, pooled; accepted only if every run is within 0.05 of the pool; then checked against three dynesty runs (rslice, 1000 live points; nine on `alpha_gp`, whose single runs put 0.55 to 0.91 of their mass in the deeper family), pooled the same way, on log Z (within twice the combined error), the mode share (within 0.03) and the moments (within 0.2 sd).  A NUTS reference cannot work on `omp`: its chains stay in the island they start in.  All three are accepted (their pocomc runs agree to 0.018, 0.012 and 0.042); `omp` and `n40ca_gp` are corroborated, `alpha_gp` is not (below). |
 
 The benchmarked NUTS row on `modes` and `elastic`, and the pocomc row on
 `omp`, are scored against runs that share their algorithm, not their draws.
 On `gp` and `hierarchy`, where the reference is exact, NUTS's means agree
-to 0.08.  On `omp` the reference is corroborated by dynesty, an independent
-algorithm: three dynesty runs put 11, 16 and 20 % of their mass away from
-the MAP, against 15 % in the pocomc runs at 4096/2048, though no single dynesty run is
-within the tolerance.
+to 0.08.  On the three optical-model problems the reference is checked by dynesty, an
+independent algorithm:
+
+| problem | log Z, pocomc / dynesty | moments, bias / width | mode share, pocomc / dynesty | corroborated |
+|---|---|---|---|---|
+| `omp` | −6.65 ± 0.04 / −6.40 ± 0.25 | 0.04 / 0.07 | 0.131 / 0.121 away from the MAP island | yes |
+| `alpha_gp` | −84.53 ± 0.01 / −84.58 ± 0.59 | 0.16 / 0.03 | 0.740 / 0.787 in the deeper family | **no**: the share, by 0.047 |
+| `n40ca_gp` | −11.34 ± 0.01 / −11.84 ± 0.28 | 0.15 / 0.09 | (one mode) | yes |
+
+`alpha_gp`'s reference is kept, marked `corroborated: false` (the tables say
+so), because the disagreement is dynesty's noise as far as can be told.
+Single dynesty runs put 0.55 to 0.91 of the mass in the deeper family, so
+even nine of them pooled carry a standard error of 0.035 on the share, and
+the gap is 1.3 of those; with three runs the gap was 0.056 the other way
+(0.684).  The pocomc runs agree on 0.739 to 0.743, and the sweep's 4096/2048
+runs on 0.71 to 0.74.  log Z and the moments, which are what the bias and
+width are scored on, agree within their bars.  What it does not rule out is
+a bias pocomc shares across its own runs; the 0.03 bar would take about
+fifty dynesty runs at these settings to test.
 
 ### Results
 
-> `omp` was redefined as the notebook's exact problem, and `alpha_gp` and
-> `n40ca_gp` were added.  Their rows and references are pending a cluster
-> run; the earlier `omp`'s results were removed with it.  Until the refresh,
-> the `omp` numbers quoted in the text (the references, the sweep above and
-> the discussion) are those of the earlier parametrisation.
+> The `omp`, `alpha_gp` and `n40ca_gp` rows ran on a cluster (8 cores of an
+> AMD EPYC "amd20" node per sampler, `benchmarks/hpc/`), the others in an
+> earlier run on one local machine: compare wall times within a problem, not
+> across these two groups; calls and ESS per thousand calls do not depend on
+> the machine.
+> The discussion below still quotes the earlier `omp` parametrisation's
+> numbers where it names `omp`, and the `omp` sweep above is of that version.
 
 | problem | sampler | wall time | calls | search | warm-up | sampling | evidence | ms/call | bias | width | min ESS | ESS/s | ESS/1k calls | R-hat | τ (steps) | log Z |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -282,6 +299,33 @@ within the tolerance.
 | modes (9) | pocomc | 130 s | 91136 | 0% | 62% | 33% | 4% | 1.43 | 0.59 ✗ | 0.29 ✗ | — | — | — | — |  | 102.7 ± 0.08 |
 | modes (9) | NUTS | 61 s | 340473 | 0% | 69% | 31% | 0% | 0.18 | 0.05 | 0.04 | 851 | 13.88 | 2.50 | 1.008 |  |  |
 | modes (9) | reference: NUTS, 4 x 3000 draws |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
+| alpha_gp (9) | emcee | 166 s | 97744 | 2% | 33% | 65% | 0% | 1.70 | 1.32 ✗ | 1.48 ✗ | — | — | — | 1.605 ✗ | 164 (< 50 τ) |  |
+| alpha_gp (9) | dynesty | 584 s | 274264 | 0% | 0% | 100% | 0% | 2.13 | 0.30 ✗ | 0.26 ✗ | — | — | — | — |  | -84.6 ± 0.31 |
+| alpha_gp (9) | pocomc | 1048 s | 442368 | 0% | 99% | 0% | 1% | 2.37 | 0.03 | 0.01 | 7625 | 7.27 | 17.24 | — |  | -84.5 ± 0.01 |
+| alpha_gp (9) | NUTS | 780 s | 219832 | 1% | 49% | 50% | 0% | 3.55 | 0.60 ✗ | 1.43 ✗ | — | — | — | 1.008 |  |  |
+| alpha_gp (9) | ptemcee | 859 s | 513744 | 0% | 33% | 66% | 0% | 1.67 | 1.39 ✗ | 7.85 ✗ | — | — | — | 1.447 ✗ | 121 (< 50 τ) | -89.4 ± 4.87 |
+| alpha_gp (9) | HMC | 203 s | 53744 | 3% | 22% | 74% | 0% | 3.78 | 0.57 ✗ | 1.42 ✗ | — | — | — | 1.014 ✗ |  |  |
+| alpha_gp (9) | PyMC NUTS | 3037 s | 140769 | 1% | 43% | 55% | 0% | 21.58 | 0.59 ✗ | 1.43 ✗ | — | — | — | 1.009 |  |  |
+| alpha_gp (9) | PyMC HMC | 868 s | 148213 | 1% | 71% | 28% | 0% | 5.85 | 0.58 ✗ | 1.47 ✗ | — | — | — | 1.002 |  |  |
+| alpha_gp (9) | reference: pocomc 8192/4096, 3 runs (NOT CORROBORATED) |  |  |  |  |  |  |  |  |  |  |  |  |  |  | -84.53 ± 0.01 |
+| n40ca_gp (7) | emcee | 41 s | 96778 | 1% | 33% | 66% | 0% | 0.42 | 0.05 | 0.09 | — | — | — | 1.045 ✗ | 65 (< 50 τ) |  |
+| n40ca_gp (7) | dynesty | 284 s | 278094 | 0% | 0% | 100% | 0% | 1.02 | 0.06 | 0.08 | 3843 | 13.55 | 13.82 | — |  | -11.9 ± 0.34 |
+| n40ca_gp (7) | pocomc | 336 s | 280576 | 0% | 99% | 0% | 1% | 1.20 | 0.02 | 0.03 | 7180 | 21.37 | 25.59 | — |  | -11.4 ± 0.01 |
+| n40ca_gp (7) | NUTS | 94 s | 95455 | 1% | 49% | 51% | 0% | 0.99 | 0.10 ✗ | 0.08 | — | — | — | 1.005 |  |  |
+| n40ca_gp (7) | ptemcee | 225 s | 512778 | 0% | 33% | 67% | 0% | 0.44 | 0.14 ✗ | 0.15 ✗ | — | — | — | 1.008 | 9 | -17.4 ± 21.77 |
+| n40ca_gp (7) | HMC | 56 s | 52778 | 1% | 23% | 76% | 0% | 1.06 | 0.08 | 0.07 | 722 | 12.89 | 13.67 | 1.003 |  |  |
+| n40ca_gp (7) | PyMC NUTS | 139 s | 84674 | 1% | 44% | 55% | 0% | 1.64 | 0.10 | 0.07 | 626 | 4.49 | 7.39 | 1.004 |  |  |
+| n40ca_gp (7) | PyMC HMC | 106 s | 61151 | 1% | 64% | 35% | 0% | 1.74 | 0.05 | 0.10 | 655 | 6.16 | 10.71 | 1.003 |  |  |
+| n40ca_gp (7) | reference: pocomc 8192/4096, 3 runs |  |  |  |  |  |  |  |  |  |  |  |  |  |  | -11.34 ± 0.01 |
+| omp (9) | emcee | 183 s | 96876 | 1% | 33% | 66% | 0% | 1.89 | 1.26 ✗ | 1.29 ✗ | — | — | — | 1.593 ✗ | 170 (< 50 τ) |  |
+| omp (9) | dynesty | 565 s | 255013 | 0% | 0% | 100% | 0% | 2.21 | 0.20 ✗ | 0.12 ✗ | — | — | — | — |  | -6.4 ± 0.32 |
+| omp (9) | pocomc | 807 s | 311296 | 0% | 99% | 0% | 1% | 2.59 | 0.07 | 0.07 | 6815 | 8.44 | 21.89 | — |  | -6.7 ± 0.01 |
+| omp (9) | NUTS | 626 s | 161531 | 1% | 51% | 49% | 0% | 3.87 | 0.91 ✗ | 0.35 ✗ | — | — | — | 1.694 ✗ |  |  |
+| omp (9) | ptemcee | 927 s | 512876 | 0% | 33% | 67% | 0% | 1.81 | 1.35 ✗ | 7.34 ✗ | — | — | — | 1.535 ✗ | 97 (< 50 τ) | -12.0 ± 2.34 |
+| omp (9) | HMC | 214 s | 52876 | 2% | 23% | 76% | 0% | 4.04 | 0.31 ✗ | 0.75 ✗ | — | — | — | 1.005 |  |  |
+| omp (9) | PyMC NUTS | 613 s | 106554 | 1% | 45% | 54% | 0% | 5.76 | 0.32 ✗ | 0.68 ✗ | — | — | — | 1.006 |  |  |
+| omp (9) | PyMC HMC | 727 s | 130313 | 1% | 80% | 19% | 0% | 5.58 | 0.30 ✗ | 0.79 ✗ | — | — | — | 1.007 |  |  |
+| omp (9) | reference: pocomc 8192/4096, 3 runs |  |  |  |  |  |  |  |  |  |  |  |  |  |  | -6.65 ± 0.04 |
 
 Which sampler is correct, and fastest among those that are, on each problem:
 
@@ -292,7 +336,9 @@ Which sampler is correct, and fastest among those that are, on each problem:
 | `modes` | NUTS | NUTS, 61 s |
 | `elastic` | dynesty, pocomc, NUTS | pocomc, 312 s (NUTS 324 s, dynesty 646 s) |
 | `hierarchy` | NUTS | NUTS, 41 s, at 3000 draws per chain |
-| `omp` | pending the refresh (earlier parametrisation: pocomc only) | pending (earlier: pocomc, 875 s, at 4096/2048) |
+| `omp` | pocomc | pocomc, 807 s, at 4096/2048 |
+| `alpha_gp` | pocomc (against a reference not corroborated on its mode share) | pocomc, 1048 s, at 4096/2048 |
+| `n40ca_gp` | dynesty, pocomc, HMC, PyMC NUTS and HMC | HMC, 56 s (PyMC HMC 106 s, PyMC NUTS 139 s, dynesty 284 s, pocomc 336 s) |
 
 - **Funnels defeat the samplers that start from the prior.**  `gp`, `modes`
   and `hierarchy` each have a scale parameter that, when small, pins the
