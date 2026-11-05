@@ -227,7 +227,7 @@ against −6.63).
 | problem | reference | how |
 |---|---|---|
 | `linear`, `gp`, `hierarchy` | exact moments and log Z | the log posterior is quadratic in all but a few parameters (none; the GP's log variance and log length scale; the hierarchy's τ).  At each node of a grid over those, one Newton step over the rest lands on the conditional mode, and the Hessian there is the conditional precision, both exact for a quadratic; the conditional normalisers weight the nodes. |
-| `modes`, `elastic` | moments | one long blackjax NUTS run, 4 chains × (1000 warm-up + 3000 draws) at target acceptance 0.95, from a ball about the MAP with a seed of its own, accepted only with R-hat ≤ 1.01 and no divergences (R-hat 1.002, 1.000; min ESS 1551, 3905).  Chains started from prior draws can stick in a minor mode: on `modes`, one with a log posterior 40 below the main one. |
+| `modes`, `elastic` | moments | one long blackjax NUTS run, 4 chains × (1000 warm-up + 3000 draws) at target acceptance 0.95, from a ball about the MAP with a seed of its own, accepted only with a rank-normalised R-hat ≤ 1.01 and no divergences (R-hat 1.001, 1.001; min bulk ESS 2475, 3920).  Chains started from prior draws can stick in a minor mode: on `modes`, one with a log posterior 40 below the main one. |
 | `omp` | moments and log Z | three pocomc runs at 8192/4096, sixteen times its defaults, each with a seed of its own, pooled; accepted only if every run is within 0.05 of the pool (the worst was 0.028).  log Z is their mean, −6.63 ± 0.01.  A NUTS reference cannot work here: its chains stay in the island they start in. |
 
 The benchmarked NUTS row on `modes` and `elastic`, and the pocomc row on
