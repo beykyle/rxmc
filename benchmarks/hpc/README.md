@@ -1,42 +1,57 @@
-# Running the benchmark refresh on a cluster
+# Running the benchmark on a cluster
 
-The long jobs of the sampler benchmark run independently, one SLURM job
-each, writing a file of its own under `benchmarks/results/hpc/`.  Nothing
-here writes the committed `results/samplers.json` or `results/references.json`;
-`benchmarks/merge_results.py` does that afterwards.
+Every independent run of the sampler benchmark can be a SLURM array task of
+its own.  Each task writes `benchmarks/results/hpc/<kind>/<problem>/<index>.json`
+and nothing else, so any number can run at once; nothing here touches the
+committed `results/samplers.json` or `results/references.json` until you
+merge (step 4).
 
-## What runs
+## The pieces
 
-Ten SLURM array jobs, one task per independent run (72 in all).  Each task
-writes `benchmarks/results/hpc/<kind>/<problem>/<index>.json` and nothing
-else, so they can all run at once.  `python benchmarks/hpc/task.py KIND
-PROBLEM --list` shows what each index of a job is.
+| file | what it does |
+|---|---|
+| `task.py` | runs one task: `task.py KIND PROBLEM INDEX` (INDEX defaults to `$SLURM_ARRAY_TASK_ID`); `--list` shows what each index of a job is, `--count` how many there are |
+| `submit.py` | submits any subset as array jobs, one per (kind, problem) |
+| `job.sbatch` | the SLURM script every task runs in: resources, then `env.sh`, then the task |
+| `env.sh` | site settings: modules, the venv, thread counts |
+| `assemble.py` | after the runs: pools references, joins the sweep and seed-check pieces |
 
-| array job | tasks | each task |
+The kinds of task:
+
+| kind | problems | tasks per problem |
 |---|---|---|
-| `ref_<problem>` | 4 | one pocomc run at 8192/4096 (three seeds), or the dynesty run (2000 live points) that must agree with their pool |
-| `run_<problem>` | 8 | one sampler at the benchmark's budget: emcee, dynesty, pocomc, NUTS, ptemcee, HMC, PyMC NUTS, PyMC HMC |
-| `sweep_<problem>` | 9 | pocomc at one of 1024/512, 2048/1024, 4096/2048 and one of three seeds |
-| `seed_gp` | 9 | one rung of `gp_discrepancy`'s ladder at one of three other seed sets |
-
-The problems are `omp` (exactly the log-space problem of
-`local_optical_model_calibration`), `alpha_gp` (the power-of-q problem of
-`alpha_ca_error_model_comparison`) and `n40ca_gp` (the GP rung of
-`gp_discrepancy`'s cross-section ladder).
+| `ref` | any | `omp`, `alpha_gp`, `n40ca_gp`: 4 (three pocomc runs at 8192/4096 and the dynesty run that must agree with their pool); every other problem: 1 (quadrature or a long NUTS run) |
+| `run` | any | one per sampler the problem runs (4, or 8 for the three optical models) |
+| `sweep` | any | 9: pocomc at 1024/512, 2048/1024 and 4096/2048, three seeds each |
+| `seed` | `gp` only | 9: `gp_discrepancy`'s ladder, one rung at one of three other seed sets |
 
 A sampler run is not split further: its chains are scored together (R-hat
 needs all of them), and the benchmark times a sampler as a user runs it.
-What needs every piece (pooling a reference and checking dynesty against
-it, the sweep and seed-check tables) happens afterwards, in `assemble.py`.
 
-**Rough cost per task** (an 8-core laptop): a reference pocomc run 1 to
-2 h, dynesty up to about 1 h, a sampler run up to about 30 min (`omp`; the
-PyMC runs are the slowest), a sweep run 5 to 40 min, a seed-check run a few
-minutes.  `submit_all.sh` asks for about twice that.
+## Selecting what to run
+
+```bash
+# the refresh of the three optical-model problems (72 tasks in 10 arrays)
+python benchmarks/hpc/submit.py --problems omp alpha_gp n40ca_gp --kinds ref run sweep seed
+# everything, every problem (default kinds: ref run sweep)
+python benchmarks/hpc/submit.py
+# a subset: two samplers on omp; one sweep setting; one seed set of the gp check
+python benchmarks/hpc/submit.py --problems omp --kinds run --samplers NUTS pocomc
+python benchmarks/hpc/submit.py --problems alpha_gp --kinds sweep --settings 1024/512
+python benchmarks/hpc/submit.py --kinds seed --seed-sets 20
+```
+
+Add `--dry-run` to see the `sbatch` lines first.  A selection keeps each
+task's array index, so its result lands in the same file whichever subset
+produced it, and a failed task is rerun by selecting it again (or with
+`sbatch --array=<index> ...` from the dry run).  `--time` overrides the
+per-task walltimes in `submit.py`'s `TIME` table, which are about twice an
+8-core laptop's: a population-reference pocomc run 1 to 2 h, a sampler run
+up to about 30 min on `omp` (PyMC is the slowest), a sweep run 5 to 40 min.
 
 ## Steps
 
-1. Check out the commit to run, and build an environment with the extras:
+1. Check out the commit to run and build an environment:
 
    ```bash
    git clone https://github.com/beykyle/rxmc.git && cd rxmc
@@ -46,35 +61,26 @@ minutes.  `submit_all.sh` asks for about twice that.
    ```
 
    `validation` brings the samplers the benchmark drives (blackjax, emcee,
-   dynesty, pocomc) and `samplers` adds ptemcee and PyMC.  If torch would pull CUDA
-   wheels you don't want, install it from the CPU index first.
+   dynesty, pocomc) and `samplers` adds ptemcee and PyMC.  If torch would
+   pull CUDA wheels you don't want, install it from the CPU index first.
 
 2. Edit `benchmarks/hpc/env.sh` (modules, the venv path) and the
    `--partition`/`--account` lines of `benchmarks/hpc/job.sbatch`.
 
-3. With the environment active (`submit_all.sh` asks `task.py` how many
-   tasks each job has):
-
-   ```bash
-   bash benchmarks/hpc/submit_all.sh --dry-run   # look first
-   bash benchmarks/hpc/submit_all.sh
-   ```
-
-   Logs go to `benchmarks/results/hpc/logs/<job>-<array id>_<task>.out`.  A
-   failed or timed-out task is rerun alone, e.g.
-   `sbatch --array=5 --time=6:00:00 --job-name=run_omp benchmarks/hpc/job.sbatch python benchmarks/hpc/task.py run omp`.
+3. With the environment active, submit (`submit.py` above).  Logs go to
+   `benchmarks/results/hpc/logs/<job>-<array id>_<task>.out`.
 
 4. Bring back `benchmarks/results/hpc/` (everything but `logs/`): commit it
    on a branch and push, or copy it into the same place locally.  Then:
 
    ```bash
-   python benchmarks/hpc/assemble.py      # pools the references; joins sweeps, seed check
+   python benchmarks/hpc/assemble.py      # references; sweep and seed-check tables
    python benchmarks/merge_results.py benchmarks/results/hpc/references.json \
        benchmarks/results/hpc/run/*/*.json
    python benchmarks/bench_samplers.py --report benchmarks/results/samplers.json --markdown
    python benchmarks/sweep_pocomc.py --report benchmarks/results/hpc/sweep_alpha_gp.json
    ```
 
-   A reference whose dynesty corroboration disagrees is saved with
+   A population reference whose dynesty check disagrees is saved with
    `"corroborated": false`; look at it before trusting anything scored
    against it.

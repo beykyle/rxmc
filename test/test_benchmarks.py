@@ -129,3 +129,26 @@ def test_assemble_pools_reference_parts_and_joins_pieces(tmp_path, monkeypatch):
         "proportional error - bare": 1.0,
         "GP, growing amplitude - proportional error": 1.0,
     }
+
+
+def test_submit_selects_by_index_and_keeps_indices():
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "benchmarks" / "hpc"))
+    import submit
+
+    def lines(*argv):
+        args = submit.main.__globals__["argparse"].Namespace(
+            problems=None, kinds=["ref", "run", "sweep"], samplers=None,
+            settings=None, seeds=None, seed_sets=None, time=None,
+        )  # fmt: skip
+        for k, v in zip(argv[::2], argv[1::2]):
+            setattr(args, k, v)
+        return [" ".join(c[1:4]) for c in submit.commands(args)]
+
+    only = lines("problems", ["omp"], "kinds", ["run"], "samplers", ["NUTS", "HMC"])
+    assert only == ["--array=3,5 --job-name=run_omp --time=2:00:00"]
+    sweep = lines("problems", ["linear"], "kinds", ["sweep"], "settings", ["2048/1024"])
+    assert sweep == ["--array=3,4,5 --job-name=sweep_linear --time=1:00:00"]
+    seed = lines("kinds", ["seed"], "seed_sets", [30])
+    assert seed == ["--array=3,4,5 --job-name=seed_gp --time=1:00:00"]
+    everything = lines()
+    assert len(everything) == 3 * 8  # three kinds on every BUDGETS problem

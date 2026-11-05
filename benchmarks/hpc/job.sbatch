@@ -1,5 +1,5 @@
 #!/bin/bash
-# One benchmark task: the command line comes after the script.  submit_all.sh
+# One benchmark task: the command line comes after the script.  submit.py
 # submits each kind of run as an array job, e.g.
 #   sbatch --array=0-3 --job-name=ref_omp --time=3:00:00 job.sbatch \
 #       python benchmarks/hpc/task.py ref omp

@@ -9,8 +9,10 @@
 
 KIND is
 
-* ``ref``   -- a part of PROBLEM's reference: one pocomc seed, or the dynesty
+* ``ref``   -- PROBLEM's reference: for a population reference (``omp`` and
+               the GP problems) one part of it, a pocomc seed or the dynesty
                run that corroborates them (pooled later by assemble.py);
+               otherwise the whole reference, quadrature or a long NUTS run;
 * ``run``   -- one sampler of the benchmark on PROBLEM;
 * ``sweep`` -- one (setting, seed) of the pocomc resolution sweep;
 * ``seed``  -- one (seed set, rung) of gp_discrepancy's ladder (PROBLEM is
@@ -39,6 +41,8 @@ def tasks(kind, problem):
     if kind == "ref":
         from reference import POPULATION
 
+        if problem not in POPULATION:
+            return [("whole", None)]
         spec = POPULATION[problem]
         parts = [("pocomc", seed) for seed in spec["seeds"]]
         return parts + (
@@ -69,11 +73,15 @@ def run(kind, problem, index):
         from problems import PROBLEMS
         from reference import POPULATION, dynesty_part, pocomc_part
 
-        spec = POPULATION[problem]
+        spec = POPULATION.get(problem)
         p, _ = PROBLEMS[problem]()
         part, seed = task
-        settings = {k: spec[k] for k in ("n_effective", "n_active")}
-        if part == "pocomc":
+        if part == "whole":
+            from reference import reference
+
+            result = reference(problem, p)
+        elif part == "pocomc":
+            settings = {k: spec[k] for k in ("n_effective", "n_active")}
             result = pocomc_part(p, seed, settings)
         else:
             result = dynesty_part(p, spec["corroborate"])

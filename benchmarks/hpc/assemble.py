@@ -4,8 +4,8 @@
 
     python benchmarks/hpc/assemble.py
 
-* the reference parts of each problem are pooled (``reference.pool_parts``)
-  into ``results/hpc/references.json``;
+* each problem's reference, whole or pooled from its parts
+  (``reference.pool_parts``), goes into ``results/hpc/references.json``;
 * the sweep pieces of each problem become ``results/hpc/sweep_<problem>.json``;
 * the seed-check pieces become ``results/hpc/gp_seed_check.json``, with each
   seed set's log Z differences.
@@ -44,10 +44,15 @@ def references():
     from reference import POPULATION, pool_parts
 
     refs = {}
-    for problem, spec in POPULATION.items():
+    for problem_dir in sorted((OUT / "ref").glob("*")):
+        problem = problem_dir.name
         parts = _pieces("ref", problem)
         if parts is None:
             continue
+        if parts[0]["part"] == "whole":  # quadrature or a long NUTS run
+            refs[problem] = parts[0]["result"]
+            continue
+        spec = POPULATION[problem]
         runs = [p["result"] for p in parts if p["part"] == "pocomc"]
         dyn = [p["result"] for p in parts if p["part"] == "dynesty"]
         settings = {k: spec[k] for k in ("n_effective", "n_active")}
