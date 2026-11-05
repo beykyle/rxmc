@@ -294,8 +294,11 @@ Which sampler is correct, and fastest among those that are, on each problem:
   shared normalisation mode's width, the hierarchy's τ.  dynesty and pocomc
   under-visit the neck, and come out wrong in ways that differ by problem:
   on `gp` both bias the log variance (0.20 and 0.60) and widen the
-  posterior; on `modes` and `hierarchy` their widths come out too narrow
-  where they miss, and their worst biases fall on other parameters.  More
+  posterior; on `modes` pocomc biases the shared width `log_s` too (0.59)
+  and widens `m` (0.29), while dynesty is 0.13 off in `b` and `log_s` alike
+  and too narrow in `m` (0.22); on `hierarchy` both come out too narrow
+  (0.11 and 0.21), and pocomc's worst biases fall on the school effects
+  (0.39), τ close behind (0.37).  More
   resolution narrows the error only slowly (the sweep above), and on
   `hierarchy` it costs an hour (dynesty misses the width by 0.11 after
   71 min, pocomc is 0.39 off after 57 min).  NUTS, adapting a
@@ -341,7 +344,7 @@ Which sampler is correct, and fastest among those that are, on each problem:
   sampler, since the solver dominates; a gradient call 6.6 to 8.9 ms in
   blackjax.  On the cheap densities emcee, which evaluates its walkers in
   one batch, pays a few hundredths of a millisecond per point (0.015 to
-  0.19 ms); dynesty, which cannot batch, pays 3 to 85 times more, and
+  0.19 ms); dynesty, which cannot batch, pays 3 to 84 times more, and
   pocomc more still (0.5 to 5 ms), because its per-call time includes
   training its normalizing flow.  pocomc spends 62–99 % of its calls
   tempering from the prior to the posterior.

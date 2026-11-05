@@ -673,7 +673,7 @@ everywhere.  NUTS is the only one correct on the funnel-shaped `modes` and
 problem pocomc, NUTS and dynesty are all correct, pocomc fastest; on the
 two-island `omp` only pocomc is, at eight times its default resolution, and
 it gives the evidence.  emcee, at 12 000 steps, matches NUTS's time on the line with ten
-times its effective draws per second, but is short of 50 autocorrelation
+times NUTS's effective draws per second, but is short of 50 autocorrelation
 times on everything harder.  Each example notebook uses the sampler that is correct and fastest
 on its benchmark analogue.
 
