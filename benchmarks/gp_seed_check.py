@@ -50,9 +50,11 @@ def run_rung(ladder, base, i, settings=SETTINGS):
     """Rung ``i`` of the ladder at seed ``base + i``, as the notebook seeds them."""
     rung, problem = list(ladder.items())[i]
     r = run_pocomc(problem, {}, base + i, summary=volume_summary(problem), **settings)
-    print(f"seeds {base}+: {rung}: log Z {r['logz']:.2f}", flush=True)
+    # as the notebook prints it: a density of the cross sections, not their logs
+    logz = r["logz"] + problem.log_jacobian()
+    print(f"seeds {base}+: {rung}: log Z {logz:.2f}", flush=True)
     return rung, dict(
-        logz=r["logz"], logz_err=r["logz_err"], wall_s=r["wall_s"], volume=r["volume"]
+        logz=logz, logz_err=r["logz_err"], wall_s=r["wall_s"], volume=r["volume"]
     )
 
 

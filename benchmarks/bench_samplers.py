@@ -300,7 +300,7 @@ def _ti_log_evidence(chain, fburnin):
 # -- nested and preconditioned Monte Carlo, from the prior -----------------------
 
 
-def run_dynesty(problem, b, seed=0, **settings):
+def run_dynesty(problem, b, seed=0, summary=None, **settings):
     t0 = time.perf_counter()
     sampler = dynesty.NestedSampler(
         problem.log_likelihood,
@@ -312,14 +312,18 @@ def run_dynesty(problem, b, seed=0, **settings):
     sampler.run_nested(dlogz=0.5, print_progress=False)
     wall = time.perf_counter() - t0
     res = sampler.results
-    return _weighted(
+    weights = np.exp(res.logwt - res.logz[-1])
+    out = _weighted(
         res.samples,
-        np.exp(res.logwt - res.logz[-1]),
+        weights,
         wall,
         _calls(sampling=np.sum(res.ncall)),
         float(res.logz[-1]),
         float(res.logzerr[-1]),
     )
+    if summary is not None:
+        out.update(summary(np.asarray(res.samples), weights))
+    return out
 
 
 def run_pocomc(problem, b, seed=0, summary=None, **settings):
@@ -581,6 +585,11 @@ def report(results, markdown=False, refs=None):
         print(f"{'':>12s}  " + "  ".join(f"{h:>10s}" for h in HEAD))
     for name, d in results.items():
         ref = refs.get(name)
+        if ref and ref.get("names") and d.get("names") and ref["names"] != d["names"]:
+            raise ValueError(
+                f"{name}: the reference's parameters {ref['names']} are not the "
+                f"run's {d['names']}; rerun the reference for this problem"
+            )
         if not markdown:
             print(f"{name} ({d['ndim']} parameters)")
         for sampler, v in d["samplers"].items():
@@ -649,7 +658,9 @@ def main(argv=None):
 
         for name in args.problems:
             t0 = time.perf_counter()
-            refs[name] = reference(name, PROBLEMS[name]()[0])
+            problem = PROBLEMS[name]()[0]
+            refs[name] = reference(name, problem)
+            refs[name]["names"] = problem.names
             refs[name]["wall_s"] = time.perf_counter() - t0
             print(f"{name}: {refs[name]['method']}, {refs[name]['wall_s']:.0f} s")
             args.references.write_text(json.dumps(refs, indent=1))

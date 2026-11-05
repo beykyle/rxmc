@@ -54,11 +54,16 @@ def test_merge_replaces_what_the_inputs_carry_and_keeps_the_rest(tmp_path):
     two = _sampler_file(tmp_path / "2.json", "a", "pocomc", 2.0)
     ref = tmp_path / "ref.json"
     ref.write_text(json.dumps(dict(a=dict(mean=[1.5]))))
+    ref.write_text(json.dumps(dict(a=dict(mean=[1.5], sd=[1.0], method="m"))))
     s, r = merge_results.merge([one, two, ref], base, refs)
     assert s["problems"]["a"]["samplers"]["NUTS"]["mean"] == [1.0]
     assert s["problems"]["a"]["samplers"]["pocomc"]["mean"] == [2.0]
     assert s["problems"]["b"]["samplers"]["emcee"]["mean"] == [5.0]  # untouched
-    assert r == dict(a=dict(mean=[1.5]), b=dict(mean=[5.0]))
+    assert r == dict(a=dict(mean=[1.5], sd=[1.0], method="m"), b=dict(mean=[5.0]))
+    sweep = tmp_path / "sweep.json"
+    sweep.write_text(json.dumps(dict(problem="a", names=["x"], runs=[])))
+    with pytest.raises(ValueError, match="not a reference"):
+        merge_results.merge([sweep], base, refs)
 
 
 def test_merge_refuses_two_inputs_with_the_same_entry(tmp_path):
@@ -94,7 +99,7 @@ def test_every_array_job_maps_its_indices_to_runs():
         for k in ("ref", "run", "sweep")
         for p in ("omp", "alpha_gp", "n40ca_gp")
     }
-    assert set(counts.values()) == {4, 8, 9}
+    assert set(counts.values()) == {6, 8, 9}
     assert len(task.tasks("seed", "gp")) == 9
     assert task.tasks("ref", "omp")[-1][0] == "dynesty"
 
@@ -107,16 +112,15 @@ def test_assemble_pools_reference_parts_and_joins_pieces(tmp_path, monkeypatch):
     ref_dir = tmp_path / "ref" / "n40ca_gp"
     ref_dir.mkdir(parents=True)
     run = dict(mean=[1.0, 2.0], sd=[1.0, 1.0], logz=-3.0, logz_err=0.1, wall_s=5.0)
-    for i in range(3):
-        part = dict(problem="n40ca_gp", part="pocomc", result=run)
-        (ref_dir / f"{i}.json").write_text(json.dumps(part))
     dyn = dict(run, mean=[1.02, 2.0], method="dynesty")
-    (ref_dir / "3.json").write_text(
-        json.dumps(dict(problem="n40ca_gp", part="dynesty", result=dyn))
-    )
+    for i, (part, result) in enumerate([("pocomc", run)] * 3 + [("dynesty", dyn)] * 3):
+        piece = dict(problem="n40ca_gp", part=part, names=["a", "b"], result=result)
+        (ref_dir / f"{i}.json").write_text(json.dumps(piece))
     refs = assemble.references()  # the other problems have no pieces: skipped
     assert list(refs) == ["n40ca_gp"]
-    assert refs["n40ca_gp"]["corroborated"] and refs["n40ca_gp"]["logz"] == -3.0
+    ref = refs["n40ca_gp"]
+    assert ref["corroborated"] and ref["accepted"] and ref["logz"] == -3.0
+    assert ref["names"] == ["a", "b"] and len(ref["corroboration"]["runs"]) == 3
     seed_dir = tmp_path / "seed" / "gp"
     seed_dir.mkdir(parents=True)
     rungs = ["bare", "proportional error", "GP, growing amplitude"]
@@ -152,3 +156,19 @@ def test_submit_selects_by_index_and_keeps_indices():
     assert seed == ["--array=3,4,5 --job-name=seed_gp --time=1:00:00"]
     everything = lines()
     assert len(everything) == 3 * 8  # three kinds on every BUDGETS problem
+
+
+def test_merge_drops_the_rows_of_a_redefined_problem(tmp_path):
+    base = tmp_path / "samplers.json"
+    old = dict(ndim=1, names=["old"], samplers=dict(emcee=dict(mean=[0.0])))
+    base.write_text(json.dumps(dict(problems=dict(a=old))))
+    new = tmp_path / "new.json"
+    row = dict(mean=[1.0], sd=[1.0])
+    new.write_text(
+        json.dumps(
+            dict(problems=dict(a=dict(ndim=1, names=["x"], samplers=dict(NUTS=row))))
+        )
+    )
+    s, _ = merge_results.merge([new], base, tmp_path / "r.json")
+    assert s["problems"]["a"]["names"] == ["x"]
+    assert list(s["problems"]["a"]["samplers"]) == ["NUTS"]  # emcee's stale row gone

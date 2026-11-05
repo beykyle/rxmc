@@ -34,22 +34,27 @@ GRIDS = {
     "gp": {2: (-12.0, 2.0, 100), 3: (-3.0, 1.0, 100)},
     "hierarchy": {2: (0.0, 6.0, 4000)},
 }
-#: per problem: pocomc runs pooled into the reference, how closely each must
-#: agree with the pool (bias and width, in posterior standard deviations), and
-#: an independent dynesty run that must agree with the pool to the benchmark's
-#: tolerance; it guards against a bias that every pocomc run shares, which on
-#: the GP problems (pocomc is biased on the benchmark's ``gp``) is the risk
-_CORROBORATE = dict(nlive=2000, sample="rwalk", seed=3000)
+#: per problem: pocomc runs pooled into the reference, and how closely each
+#: must agree with the pool (bias and width, in posterior standard
+#: deviations); then dynesty runs, pooled the same way, that check the pool
+#: from an independent algorithm.  One dynesty run is too noisy for that
+#: (0.12 to 0.37 sd on omp), so three are pooled; rslice is the setting of the
+#: sweep that does best on the funnels.  The check is recorded, not enforced
+#: (``CORROBORATION`` has its bars).
 POPULATION = {
     name: dict(
         n_effective=8192,
         n_active=4096,
         seeds=(2000, 2001, 2002),
         agree=0.05,
-        corroborate=_CORROBORATE,
+        corroborate=dict(nlive=1000, sample="rslice", seeds=(3000, 3001, 3002)),
     )
     for name in ("omp", "alpha_gp", "n40ca_gp")
 }
+#: the pooled dynesty runs corroborate the pooled pocomc ones if their log Z
+#: agree within twice the combined error, their mode shares (where a problem
+#: has two modes) within ``share``, and their moments within ``moments`` sd
+CORROBORATION = dict(share=0.03, moments=0.2)
 #: smaller steps than the benchmark's NUTS (target acceptance 0.8), to stay
 #: clear of divergences
 NUTS = dict(chains=4, warmup=1000, draws=3000, seed=1000, target_acceptance_rate=0.95)
@@ -149,30 +154,38 @@ def long_nuts(problem):
     )
 
 
-def long_pocomc(problem, seeds, agree, corroborate=None, **settings):
+def long_pocomc(problem, seeds, agree, corroborate=None, name=None, **settings):
     """pocomc runs at ``settings``, one per seed, pooled with equal weight;
     accepted only if every run is within ``agree`` of the pool.  The
     evidence is the runs' mean, its error their half-spread or the largest
     quoted error, whichever is larger.
 
-    With ``corroborate`` (dynesty settings and a ``seed``), one dynesty run is
-    scored against the pool too.  Its result is recorded either way; if it
-    misses the benchmark's tolerance the reference is marked
-    ``corroborated: False`` (and a warning printed) rather than refused, so
+    With ``corroborate`` (dynesty settings and ``seeds``), dynesty runs are
+    pooled the same way and compared with the pocomc pool (``CORROBORATION``).
+    The comparison is recorded either way, ``corroborated`` true or false, so
     both answers survive for a person to judge.
 
-    On a cluster the parts run as separate jobs (``pocomc_part``,
+    On a cluster every run is a separate task (``pocomc_part``,
     ``dynesty_part``) and ``pool_parts`` assembles them."""
-    runs = [pocomc_part(problem, seed, settings) for seed in seeds]
-    dynesty = dynesty_part(problem, corroborate) if corroborate else None
-    return pool_parts(runs, agree, settings, dynesty)
+    from problems import mode_share
+
+    summary = mode_share(name, problem) if name else None
+    runs = [pocomc_part(problem, seed, settings, summary) for seed in seeds]
+    dynesty = []
+    if corroborate:
+        d_settings = {k: v for k, v in corroborate.items() if k != "seeds"}
+        dynesty = [
+            dynesty_part(problem, seed, d_settings, summary)
+            for seed in corroborate["seeds"]
+        ]
+    return pool_parts(runs, agree, settings, dynesty, names=problem.names)
 
 
-def pocomc_part(problem, seed, settings):
+def pocomc_part(problem, seed, settings, summary=None):
     """One pocomc run of a population reference; logged as it ends."""
     from bench_samplers import run_pocomc
 
-    r = run_pocomc(problem, {}, seed, **settings)
+    r = run_pocomc(problem, {}, seed, summary=summary, **settings)
     r["seed"] = seed
     print(
         f"  pocomc seed {seed}: {r['wall_s']:.0f} s, log Z {r['logz']:.2f}, "
@@ -182,66 +195,96 @@ def pocomc_part(problem, seed, settings):
     return r
 
 
-def dynesty_part(problem, corroborate):
-    """The independent dynesty run that corroborates a population reference."""
+def dynesty_part(problem, seed, settings, summary=None):
+    """One of the dynesty runs that check a population reference."""
     from bench_samplers import run_dynesty
 
-    settings = {k: v for k, v in corroborate.items() if k != "seed"}
-    d = run_dynesty(problem, {}, corroborate["seed"], **settings)
-    d["method"] = f"dynesty {settings}"
-    print(f"  dynesty: {d['wall_s']:.0f} s, log Z {d['logz']:.2f}", flush=True)
+    d = run_dynesty(problem, {}, seed, summary=summary, **settings)
+    d.update(seed=seed, method=f"dynesty {settings}")
+    print(
+        f"  dynesty seed {seed}: {d['wall_s']:.0f} s, log Z {d['logz']:.2f}", flush=True
+    )
     return d
 
 
-def pool_parts(runs, agree, settings, dynesty=None):
-    """The reference from its parts: the pocomc ``runs`` pooled and checked
-    against ``agree``, and ``dynesty`` scored against the pool."""
-    from bench_samplers import TOLERANCE, errors
-
+def _pool(runs):
+    """Equal-weight pool of runs: means, sds (within-run variances plus the
+    spread of the means), log Z and its error (half-spread or the largest
+    quoted error), and the mean mode share where the runs have one."""
     mean = np.mean([r["mean"] for r in runs], axis=0)
-    # the pooled variance: within-run variances plus the spread of the means
     var = np.mean(
         [np.square(r["sd"]) + np.square(np.subtract(r["mean"], mean)) for r in runs],
         axis=0,
     )
-    pool = dict(mean=mean.tolist(), sd=np.sqrt(var).tolist())
-    worst = max(max(errors(r, pool)) for r in runs)
-    if worst > agree:
-        raise RuntimeError(f"reference pocomc: a run is {worst:.3f} sd from the pool")
     logz = np.array([r["logz"] for r in runs])
-    logz_err = max(np.ptp(logz) / 2, max(r["logz_err"] for r in runs))
+    pool = dict(
+        mean=mean.tolist(),
+        sd=np.sqrt(var).tolist(),
+        logz=float(logz.mean()),
+        logz_err=float(max(np.ptp(logz) / 2, max(r["logz_err"] for r in runs))),
+    )
+    if all("mode_share" in r for r in runs):
+        pool["mode_share"] = float(np.mean([r["mode_share"] for r in runs]))
+        pool["mode_share_label"] = runs[0]["mode_share_label"]
+    return pool
+
+
+def _summarised(r):
+    keep = ("seed", "mean", "sd", "logz", "logz_err", "wall_s", "mode_share")
+    return {k: r[k] for k in keep if k in r}
+
+
+def pool_parts(runs, agree, settings, dynesty=(), names=None, strict=True):
+    """The reference from its parts: the pocomc ``runs`` pooled and checked
+    against ``agree``, and the ``dynesty`` runs pooled and compared with it.
+    A run outside ``agree`` raises if ``strict``; otherwise (assembling cluster
+    results) the reference is returned with ``accepted: False``."""
+    from bench_samplers import errors
+
+    pool = _pool(runs)
+    worst = max(max(errors(r, pool)) for r in runs)
+    accepted = worst <= agree
+    if not accepted and strict:
+        raise RuntimeError(f"reference pocomc: a run is {worst:.3f} sd from the pool")
     out = dict(
         method=f"pocomc {settings['n_effective']}/{settings['n_active']}, {len(runs)} runs",
-        mean=pool["mean"],
-        sd=pool["sd"],
-        logz=float(logz.mean()),
-        logz_err=float(logz_err),
+        **pool,
         max_disagreement=float(worst),
-        runs=[
-            dict(mean=r["mean"], sd=r["sd"], logz=r["logz"], wall_s=r["wall_s"])
-            for r in runs
-        ],
+        accepted=bool(accepted),
+        runs=[_summarised(r) for r in runs],
     )
-    if dynesty is not None:
-        bias, width = errors(dynesty, pool)
-        ok = max(bias, width) <= TOLERANCE
+    if names is not None:
+        out["names"] = list(names)
+    if dynesty:
+        d = _pool(dynesty)
+        bias, width = errors(d, pool)
+        combined = float(np.hypot(pool["logz_err"], d["logz_err"]))
+        checks = {
+            "log Z": abs(d["logz"] - pool["logz"]) <= 2 * combined,
+            "moments": max(bias, width) <= CORROBORATION["moments"],
+        }
+        if "mode_share" in d and "mode_share" in pool:
+            share_gap = abs(d["mode_share"] - pool["mode_share"])
+            checks["mode share"] = share_gap <= CORROBORATION["share"]
         out["corroboration"] = dict(
-            method=dynesty.get("method", "dynesty"),
+            method=f"{dynesty[0]['method']}, {len(dynesty)} runs pooled",
+            **d,
             bias=bias,
             width=width,
-            logz=dynesty["logz"],
-            logz_err=dynesty["logz_err"],
-            wall_s=dynesty["wall_s"],
-            mean=dynesty["mean"],
-            sd=dynesty["sd"],
+            logz_combined_err=combined,
+            checks={k: bool(v) for k, v in checks.items()},
+            runs=[_summarised(r) for r in dynesty],
         )
-        out["corroborated"] = bool(ok)
+        out["corroborated"] = all(checks.values())
+        failed = [k for k, v in checks.items() if not v]
         print(
-            f"  dynesty corroboration: bias {bias:.3f}, width {width:.3f}, "
-            f"log Z {dynesty['logz']:.2f}: "
-            + ("agrees" if ok else "WARNING: disagrees"),
+            f"  dynesty pool: bias {bias:.3f}, width {width:.3f}, log Z "
+            f"{d['logz']:.2f} against {pool['logz']:.2f}"
+            + (f", mode share {d['mode_share']:.3f} against {pool['mode_share']:.3f}"
+               if "mode_share" in d and "mode_share" in pool else "")
+            + (": agrees" if not failed else f": WARNING: disagrees on {failed}"),
             flush=True,
-        )
+        )  # fmt: skip
     return out
 
 
@@ -250,5 +293,5 @@ def reference(name, problem):
     if name in GRIDS:
         return conditional_gaussian(problem, GRIDS[name])
     if name in POPULATION:
-        return long_pocomc(problem, **POPULATION[name])
+        return long_pocomc(problem, name=name, **POPULATION[name])
     return long_nuts(problem)

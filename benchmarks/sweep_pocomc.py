@@ -18,36 +18,10 @@ import json
 from pathlib import Path
 
 from bench_samplers import BUDGETS, REFERENCES, TOLERANCE, errors, run_pocomc
-from problems import PROBLEMS
+from problems import PROBLEMS, mode_share
 
 SETTINGS = [(1024, 512), (2048, 1024), (4096, 2048)]
 SEEDS = (100, 101, 102)
-
-
-def mode_share(name, problem):
-    """``summary`` for run_pocomc: the weighted share of draws away from the
-    main mode, where a problem has two (None otherwise)."""
-    cols = {n: i for i, n in enumerate(problem.names)}
-    if name == "omp":  # the island away from the MAP, as local_optical counts it
-
-        def away(t):
-            return (t[:, cols["Rd"]] < 4.37) & (t[:, cols["ad"]] > 0.34)
-
-        label = "share away from the MAP island"
-    elif name == "alpha_gp":  # the deeper family of potentials, as alpha_ca counts it
-
-        def away(t):
-            return t[:, cols["V"]] > 145.0
-
-        label = "share in the deeper family"
-    else:
-        return None
-
-    def summary(theta, weights):
-        w = weights / weights.sum()
-        return {"mode_share": float(w @ away(theta)), "mode_share_label": label}
-
-    return summary
 
 
 def sweep(name, settings=SETTINGS, seeds=SEEDS, out=None):

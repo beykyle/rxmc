@@ -5,7 +5,8 @@
     python benchmarks/hpc/assemble.py
 
 * each problem's reference, whole or pooled from its parts
-  (``reference.pool_parts``), goes into ``results/hpc/references.json``;
+  (``reference.pool_parts``), goes into ``results/hpc/references.json``; a
+  pool that misses its agreement bar is kept, marked ``accepted: false``;
 * the sweep pieces of each problem become ``results/hpc/sweep_<problem>.json``;
 * the seed-check pieces become ``results/hpc/gp_seed_check.json``, with each
   seed set's log Z differences.
@@ -57,9 +58,15 @@ def references():
         dyn = [p["result"] for p in parts if p["part"] == "dynesty"]
         settings = {k: spec[k] for k in ("n_effective", "n_active")}
         print(f"{problem}:")
+        # not strict: a pool that misses its own agreement bar is kept, marked
+        # accepted: false, with every run, rather than lose the other problems
         refs[problem] = pool_parts(
-            runs, spec["agree"], settings, dyn[0] if dyn else None
+            runs, spec["agree"], settings, dyn, names=parts[0]["names"], strict=False
         )
+        if not refs[problem]["accepted"]:
+            print(
+                f"  WARNING: {problem}'s pocomc runs disagree; marked accepted: false"
+            )
         refs[problem]["wall_s"] = sum(r["wall_s"] for r in runs + dyn)
     (OUT / "references.json").write_text(json.dumps(refs, indent=1))
     return refs

@@ -10,8 +10,8 @@
 KIND is
 
 * ``ref``   -- PROBLEM's reference: for a population reference (``omp`` and
-               the GP problems) one part of it, a pocomc seed or the dynesty
-               run that corroborates them (pooled later by assemble.py);
+               the GP problems) one part of it, a pocomc seed or one of the
+               dynesty seeds that check them (pooled later by assemble.py);
                otherwise the whole reference, quadrature or a long NUTS run;
 * ``run``   -- one sampler of the benchmark on PROBLEM;
 * ``sweep`` -- one (setting, seed) of the pocomc resolution sweep;
@@ -44,12 +44,10 @@ def tasks(kind, problem):
         if problem not in POPULATION:
             return [("whole", None)]
         spec = POPULATION[problem]
-        parts = [("pocomc", seed) for seed in spec["seeds"]]
-        return parts + (
-            [("dynesty", spec["corroborate"]["seed"])]
-            if spec.get("corroborate")
-            else []
-        )
+        dyn = spec.get("corroborate", {}).get("seeds", ())
+        return [("pocomc", seed) for seed in spec["seeds"]] + [
+            ("dynesty", seed) for seed in dyn
+        ]
     if kind == "run":
         from bench_samplers import BUDGETS
 
@@ -70,22 +68,31 @@ def run(kind, problem, index):
     out = OUT / kind / problem / f"{index}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     if kind == "ref":
-        from problems import PROBLEMS
+        import time
+
+        from problems import PROBLEMS, mode_share
         from reference import POPULATION, dynesty_part, pocomc_part
 
         spec = POPULATION.get(problem)
         p, _ = PROBLEMS[problem]()
         part, seed = task
+        summary = mode_share(problem, p)
         if part == "whole":
             from reference import reference
 
+            t0 = time.perf_counter()
             result = reference(problem, p)
+            result["wall_s"] = time.perf_counter() - t0
+            result["names"] = p.names
         elif part == "pocomc":
             settings = {k: spec[k] for k in ("n_effective", "n_active")}
-            result = pocomc_part(p, seed, settings)
+            result = pocomc_part(p, seed, settings, summary)
         else:
-            result = dynesty_part(p, spec["corroborate"])
-        out.write_text(json.dumps(dict(problem=problem, part=part, result=result)))
+            settings = {k: v for k, v in spec["corroborate"].items() if k != "seeds"}
+            result = dynesty_part(p, seed, settings, summary)
+        out.write_text(
+            json.dumps(dict(problem=problem, part=part, names=p.names, result=result))
+        )
     elif kind == "run":
         import bench_samplers
 

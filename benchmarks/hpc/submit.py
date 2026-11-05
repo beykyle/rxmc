@@ -2,7 +2,7 @@
 
 ::
 
-    python benchmarks/hpc/submit.py --dry-run                     # everything
+    python benchmarks/hpc/submit.py --all --dry-run               # everything
     python benchmarks/hpc/submit.py --problems omp alpha_gp --kinds ref run
     python benchmarks/hpc/submit.py --problems omp --kinds run --samplers NUTS pocomc
     python benchmarks/hpc/submit.py --problems alpha_gp --kinds sweep --settings 1024/512
@@ -89,7 +89,12 @@ def commands(args):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--problems", nargs="*", help="default: every benchmark problem")
+    from bench_samplers import BUDGETS
+
+    ap.add_argument("--problems", nargs="*", choices=list(BUDGETS))
+    ap.add_argument(
+        "--all", action="store_true", help="every benchmark problem (else --problems)"
+    )
     ap.add_argument(
         "--kinds", nargs="*", default=["ref", "run", "sweep"],
         choices=["ref", "run", "sweep", "seed"],
@@ -101,6 +106,8 @@ def main(argv=None):
     ap.add_argument("--time", help="walltime per task, overriding the table")
     ap.add_argument("--dry-run", action="store_true", help="print, don't submit")
     args = ap.parse_args(argv)
+    if not (args.problems or args.all or args.kinds == ["seed"]):
+        ap.error("name --problems, or --all for every problem")
     (HERE.parent / "results" / "hpc" / "logs").mkdir(parents=True, exist_ok=True)
     for cmd in commands(args):
         print(shlex.join(cmd))

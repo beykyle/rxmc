@@ -4,7 +4,9 @@ On a cluster each job writes a file of its own (``bench_samplers.py --out``
 for samplers, ``--reference --references`` for references), so jobs never
 race on one file.  This merges them::
 
-    python benchmarks/merge_results.py benchmarks/results/hpc/*.json
+    python benchmarks/hpc/assemble.py
+    python benchmarks/merge_results.py benchmarks/results/hpc/references.json \
+        benchmarks/results/hpc/run/*/*.json
 
 A sampler file holds ``{"meta": ..., "problems": {name: {"ndim", "names",
 "samplers": {...}}}}`` and is merged sampler by sampler into
@@ -13,7 +15,10 @@ is merged problem by problem into ``results/references.json``.  Entries from
 the inputs replace the committed ones; two inputs that both carry the same
 sampler on the same problem (or the same reference) are refused, since one
 would silently win.  Problems and samplers no input mentions are left as
-they are.
+they are.  A problem whose parameter names change (a redefined problem)
+loses the sampler rows no input replaces, since they belong to the old
+problem; anything that is neither a sampler file nor a file of references
+(a sweep, say) is refused.
 """
 
 from __future__ import annotations
@@ -40,9 +45,20 @@ def merge(inputs, samplers_path, references_path):
                     name,
                     dict(ndim=entry["ndim"], names=entry.get("names"), samplers={}),
                 )
+                new_names = entry.get("names")
+                if new_names is not None and into.get("names") not in (None, new_names):
+                    # a redefined problem: the old rows belong to the old problem
+                    print(
+                        f"{name}: parameters changed; its old sampler rows are dropped"
+                    )
+                    into["samplers"] = {
+                        s: r
+                        for s, r in into["samplers"].items()
+                        if ("sampler", name, s) in seen
+                    }
                 into["ndim"] = entry["ndim"]
-                if entry.get("names") is not None:
-                    into["names"] = entry["names"]
+                if new_names is not None:
+                    into["names"] = new_names
                 for sampler, row in entry["samplers"].items():
                     key = ("sampler", name, sampler)
                     if key in seen:
@@ -55,6 +71,11 @@ def merge(inputs, samplers_path, references_path):
                 samplers["meta"] = data["meta"]
         else:  # references
             for name, ref in data.items():
+                if not (isinstance(ref, dict) and {"mean", "sd", "method"} <= set(ref)):
+                    raise ValueError(
+                        f"{path}: {name!r} is not a reference (a sweep or seed-check "
+                        "file?); give merge_results.py references and sampler runs only"
+                    )
                 key = ("reference", name)
                 if key in seen:
                     raise ValueError(

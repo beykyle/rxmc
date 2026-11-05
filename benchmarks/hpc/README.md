@@ -20,7 +20,7 @@ The kinds of task:
 
 | kind | problems | tasks per problem |
 |---|---|---|
-| `ref` | any | `omp`, `alpha_gp`, `n40ca_gp`: 4 (three pocomc runs at 8192/4096 and the dynesty run that must agree with their pool); every other problem: 1 (quadrature or a long NUTS run) |
+| `ref` | any | `omp`, `alpha_gp`, `n40ca_gp`: 6 (three pocomc runs at 8192/4096, pooled into the reference, and three dynesty runs, rslice with 1000 live points, pooled into an independent check of it); every other problem: 1 (quadrature or a long NUTS run) |
 | `run` | any | one per sampler the problem runs (4, or 8 for the three optical models) |
 | `sweep` | any | 9: pocomc at 1024/512, 2048/1024 and 4096/2048, three seeds each |
 | `seed` | `gp` only | 9: `gp_discrepancy`'s ladder, one rung at one of three other seed sets |
@@ -31,10 +31,10 @@ needs all of them), and the benchmark times a sampler as a user runs it.
 ## Selecting what to run
 
 ```bash
-# the refresh of the three optical-model problems (72 tasks in 10 arrays)
+# the refresh of the three optical-model problems (78 tasks in 10 arrays)
 python benchmarks/hpc/submit.py --problems omp alpha_gp n40ca_gp --kinds ref run sweep seed
-# everything, every problem (default kinds: ref run sweep)
-python benchmarks/hpc/submit.py
+# every problem (default kinds: ref run sweep)
+python benchmarks/hpc/submit.py --all
 # a subset: two samplers on omp; one sweep setting; one seed set of the gp check
 python benchmarks/hpc/submit.py --problems omp --kinds run --samplers NUTS pocomc
 python benchmarks/hpc/submit.py --problems alpha_gp --kinds sweep --settings 1024/512
@@ -46,7 +46,8 @@ task's array index, so its result lands in the same file whichever subset
 produced it, and a failed task is rerun by selecting it again (or with
 `sbatch --array=<index> ...` from the dry run).  `--time` overrides the
 per-task walltimes in `submit.py`'s `TIME` table, which are about twice an
-8-core laptop's: a population-reference pocomc run 1 to 2 h, a sampler run
+8-core laptop's: a population-reference pocomc run 1 to 2 h, a dynesty run
+about 1 h, a sampler run
 up to about 30 min on `omp` (PyMC is the slowest), a sweep run 5 to 40 min.
 
 ## Steps
@@ -81,6 +82,9 @@ up to about 30 min on `omp` (PyMC is the slowest), a sweep run 5 to 40 min.
    python benchmarks/sweep_pocomc.py --report benchmarks/results/hpc/sweep_alpha_gp.json
    ```
 
-   A population reference whose dynesty check disagrees is saved with
-   `"corroborated": false`; look at it before trusting anything scored
-   against it.
+   A population reference whose dynesty pool disagrees with it, on log Z
+   (beyond twice the combined error), on the mode share (by more than 0.03)
+   or on the moments (by more than 0.2 sd), is saved with
+   `"corroborated": false` and the failed checks named; one whose own pocomc
+   runs disagree is saved with `"accepted": false`.  Look at either before
+   trusting anything scored against it.

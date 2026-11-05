@@ -471,6 +471,33 @@ def n40ca_gp():
     return p, _thetas(p)
 
 
+def mode_share(name, problem):
+    """``summary(theta, weights)`` for the problems with two modes: the
+    weighted share of draws away from the main one, counted as the notebooks
+    count it; None for the other problems."""
+    cols = {n: i for i, n in enumerate(problem.names)}
+    if name == "omp":  # the island away from the MAP, as local_optical counts it
+
+        def away(t):
+            return (t[:, cols["Rd"]] < 4.37) & (t[:, cols["ad"]] > 0.34)
+
+        label = "share away from the MAP island"
+    elif name == "alpha_gp":  # the deeper family, as alpha_ca counts it
+
+        def away(t):
+            return t[:, cols["V"]] > 145.0
+
+        label = "share in the deeper family"
+    else:
+        return None
+
+    def summary(theta, weights):
+        w = weights / weights.sum()
+        return {"mode_share": float(w @ away(theta)), "mode_share_label": label}
+
+    return summary
+
+
 PROBLEMS = {
     "linear": linear,
     "modes": modes,
