@@ -27,7 +27,7 @@ NOTEBOOKS = {
     "normalization_and_covariance_structure": {2, 3, 4, 5, 6, 17, 19, 27},
     "gp_discrepancy": {2, 7, 10, 16, 17, 18, 33, 40},
     "robust_likelihoods": {12, 34, 39},
-    "local_optical_model_calibration": {10, 14, 15, 16, 17, 18, 19, 21, 33, 40, 41},
+    "local_optical_model_calibration": {10, 11, 14, 15, 16, 17, 18, 21, 40},
     "alpha_ca_error_model_comparison": {7, 10, 11, 13, 17, 18, 19, 40},
     "hierarchical_calibration": {11, 17, 22, 24, 30, 35, 38, 40, 41},
     "gradient_based_sampling": {7, 16, 33, 38, 41},
