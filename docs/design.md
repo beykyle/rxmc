@@ -656,7 +656,7 @@ happens.  In order of preference:
    `XLA_PYTHON_CLIENT_PREALLOCATE=false` or pin one device per rank.
 
    ```bash
-   XLA_FLAGS="--xla_cpu_multi_thread_eigen=false intra_op_parallelism_threads=1" OMP_NUM_THREADS=1 mpirun -n 8 python run.py
+   XLA_FLAGS="--xla_cpu_multi_thread_eigen=false" OMP_NUM_THREADS=1 mpirun -n 8 python run.py
    ```
 
 ### Performance
