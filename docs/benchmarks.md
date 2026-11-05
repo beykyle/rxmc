@@ -129,8 +129,8 @@ against a posterior of 0.31 ± 0.04.  The other problems' budgets are in
 `BUDGETS` at the top of the script.
 
 dynesty's and pocomc's settings are the cheapest of a sweep that are
-correct (below) over three seeds: on `elastic` for every problem but `omp`,
-and on `omp` for pocomc there.  Bias / width, the worst over the seeds run:
+correct (below) over three seeds: on `elastic` for every problem but the
+three optical-model ones, and on those for pocomc (4096/2048, further below).  Bias / width, the worst over the seeds run:
 
 | setting | `gp` | `modes` | `elastic` |
 |---|---|---|---|
@@ -145,27 +145,44 @@ and on `omp` for pocomc there.  Bias / width, the worst over the seeds run:
 No setting tried is correct on `gp` and `modes`, whose posteriors are
 funnels (see the discussion); more resolution helps there, but slowly.
 
-`omp` needs much more.  About 85 % of its posterior sits in a narrow
-island about the MAP and the rest in a broader one, and a run that
-under-samples the narrow island puts too much weight on the other: at
-1024/512 pocomc put 37 to 83 % of its draws away from the MAP, and its
-log Z was low by up to 1.8 as a result.  Each seed below is a separate run;
-the rows are scored against the reference (next section):
+The three optical-model problems need much more.  `omp` has two islands,
+about 87 % of its posterior in a narrow one about the MAP and the rest in a
+broader one; `alpha_gp` has two families of potentials, about 74 % of its
+posterior in the deeper one; `n40ca_gp` has one mode.  A run that
+under-samples a narrow island puts too much weight on the other: at
+1024/512 pocomc put 23 to 85 % of its draws away from `omp`'s MAP island,
+and its log Z was low by up to 2.2 as a result.  Each seed below (100, 101,
+102) is a separate run, scored against the reference (next section); the
+share is of `omp`'s minor island (0.131 in the reference) and of
+`alpha_gp`'s deeper family (0.740):
 
-| setting | seeds | bias / width, each seed | wall time |
-|---|---|---|---|
-| dynesty rwalk, 500 | 1 | 0.31 / 0.17 | 563–750 s |
-| dynesty rwalk, 1500 | 2 | 0.37 / 0.27, 0.12 / 0.15 | 1682–2358 s |
-| pocomc 1024/512 | 3 | 1.90 / 0.43, 1.84 / 0.49, 0.78 / 0.42 | 287–425 s |
-| pocomc 2048/1024 | 3 | 0.11 / 0.15, 0.20 / 0.17, 0.94 / 0.44 | 432–475 s |
-| pocomc 4096/2048 | 4 | 0.04 / 0.03, 0.06 / 0.06, 0.06 / 0.07, 0.04 / 0.05 | 741–1064 s |
+| problem | pocomc | bias / width, each seed | share | log Z | wall time |
+|---|---|---|---|---|---|
+| `omp` | 1024/512 | 1.99 / 0.49, 0.34 / 0.20, 1.93 / 0.31 | 0.82, 0.23, 0.85 | −8.86, −6.67, −8.81 | 231–348 s |
+| `omp` | 2048/1024 | 0.19 / 0.06, 0.25 / 0.19, 0.13 / 0.03 | 0.17, 0.20, 0.15 | −6.62, −6.69, −6.68 | 406–477 s |
+| `omp` | 4096/2048 | 0.17 / 0.12, 0.07 / 0.05, 0.04 / 0.05 | 0.16, 0.15, 0.14 | −6.66, −6.64, −6.69 | 824–889 s |
+| `alpha_gp` | 1024/512 | 0.47 / 0.81, 0.11 / 0.05, 0.30 / 0.07 | 0.96, 0.76, 0.66 | −84.75, −84.55, −84.54 | 376–431 s |
+| `alpha_gp` | 2048/1024 | 0.14 / 0.04, 0.10 / 0.07, 0.10 / 0.05 | 0.72, 0.79, 0.75 | −84.53, −84.13, −84.57 | 528–632 s |
+| `alpha_gp` | 4096/2048 | 0.04 / 0.01, 0.02 / 0.01, 0.07 / 0.02 | 0.73, 0.74, 0.71 | −84.50, −84.52, −84.55 | 928–1089 s |
+| `n40ca_gp` | 1024/512 | 0.29 / 0.05, 0.40 / 0.13, 0.16 / 0.14 | | −11.33, −11.40, −11.32 | 129–150 s |
+| `n40ca_gp` | 2048/1024 | 0.05 / 0.09, 0.31 / 0.12, 0.12 / 0.06 | | −11.35, −11.40, −11.36 | 190–206 s |
+| `n40ca_gp` | 4096/2048 | 0.10 / 0.05, 0.03 / 0.08, 0.09 / 0.10 | | −11.36, −11.35, −11.34 | 305–338 s |
 
-4096/2048 is the cheapest setting correct on every seed scored, but it is
-not infallible: a first attempt at the reference pooled three runs at that
-setting, and one was 0.19 from their pool.  A user should run it more than
-once and compare the runs.  dynesty's random walks are not reliable here at
-any setting tried; its evidence is (−6.8 ± 0.29 at 500 live points,
-against −6.63).
+(Wall times on 8 cores of a cluster node; references −6.65, −84.53, −11.34.)
+4096/2048, the benchmark's setting on all three, is correct on every seed
+on `alpha_gp` and `n40ca_gp` and on two of three on `omp`, where seed 100
+is 0.17 / 0.12 off; the benchmarked pocomc run is correct on each problem.
+It is not infallible, and a user should run it more than once and compare
+the runs.  Below it the evidence holds up better than the moments: at
+2048/1024 log Z is within 0.06 of the reference on `omp` and `n40ca_gp`
+while the moments are up to 0.31 sd off.
+
+dynesty is not reliable on the two problems with separated modes at any
+setting tried.  At the benchmark's rwalk with 500 live points it is 0.20 /
+0.12 off on `omp` and 0.30 / 0.26 on `alpha_gp`; even the reference's
+check, rslice with 1000 live points, is 0.07 to 0.21 sd off in its means
+from run to run on `omp` and 0.09 to 0.80 on `alpha_gp`.  On `n40ca_gp`,
+with one mode, the benchmark's dynesty is correct.
 
 ### How they are scored
 
@@ -269,8 +286,6 @@ fifty dynesty runs at these settings to test.
 > earlier run on one local machine: compare wall times within a problem, not
 > across these two groups; calls and ESS per thousand calls do not depend on
 > the machine.
-> The discussion below still quotes the earlier `omp` parametrisation's
-> numbers where it names `omp`, and the `omp` sweep above is of that version.
 
 | problem | sampler | wall time | calls | search | warm-up | sampling | evidence | ms/call | bias | width | min ESS | ESS/s | ESS/1k calls | R-hat | τ (steps) | log Z |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -362,41 +377,93 @@ Which sampler is correct, and fastest among those that are, on each problem:
   MAP, has its means within the tolerance but its widths 0.30 off, and its
   kept chain is 25 τ.
 - **Separated modes defeat the samplers that start at the MAP, and R-hat
-  seldom tells.**  The `omp` posterior has two islands, and the gradient
-  samplers, started from a ball about the MAP, stay in the one they start
-  in: blackjax's NUTS and HMC and PyMC's NUTS are 0.28 to 0.30 sd off in
-  their means and 0.69 to 0.77 in their widths, while their rank-normalised
-  R-hats are 1.004 to 1.006.  Chains that never visit an island agree with
-  one another about it.  PyMC's HMC is the exception: its R-hat of 1.152
-  says its chains disagree (its min ESS is 9), and its errors shrink (its bias to 0.14, about half the others', its width error to
-  0.18, about a quarter) but do not vanish.  Only pocomc, at eight times its default resolution, is correct; at
+  seldom tells.**  On `omp` and `alpha_gp` the gradient samplers, started
+  from a ball about the MAP, stay in the island or family they start in.
+  On `omp`, blackjax's HMC and PyMC's NUTS and HMC are 0.30 to 0.32 sd off
+  in their means and 0.68 to 0.79 in their widths, while their
+  rank-normalised R-hats are 1.005 to 1.007; on `alpha_gp` all four are
+  0.57 to 0.60 off in their means and 1.42 to 1.47 in their widths, with
+  R-hats of 1.002 to 1.014.  Chains that never visit an island agree with
+  one another about it.  blackjax's NUTS on `omp` is the exception: its two
+  chains disagree (R-hat 1.69, min ESS 3), and it is 0.91 off.  Only
+  pocomc, at eight times its default resolution, is correct on both; at
   lower resolutions it weighs the islands differently from seed to seed
-  (the sweep above).  On `elastic`, which has one mode, NUTS, pocomc and
-  dynesty are all correct.
+  (the sweep above).  On the one-mode problems the gradient samplers do
+  well: on `n40ca_gp` blackjax's HMC and PyMC's NUTS and HMC are correct, as
+  are dynesty and pocomc, and blackjax's NUTS misses by a hair (bias 0.101);
+  on `elastic`, NUTS, pocomc and dynesty are all correct.
 - **The ensembles do not converge in these budgets** outside `linear`, where
   emcee needs 12 000 steps for the rank-normalised R-hat to pass (1.019 at
   3000, 1.010 at 6000).  emcee is short of 50 τ everywhere else, and on
-  `omp` and `hierarchy` it is 1.0 and 1.4 sd off, with R-hats of 1.68 and
-  1.50; ptemcee on `omp`, started at the MAP, is 12 τ long with an R-hat of
-  1.56, and is 1.3 sd off, with a log Z of −11.0 ± 2.5 against −6.63.
+  `omp`, `alpha_gp` and `hierarchy` it is 1.3, 1.3 and 1.4 sd off, with
+  R-hats of 1.59, 1.61 and 1.50.  ptemcee, started at the MAP, is 14 and 11 τ
+  long on `omp` and `alpha_gp`, with R-hats of 1.54 and 1.45, and 1.4 sd
+  off on both; its β = 1 walkers have collapsed in one parameter each
+  (`log_sigma_B` on `omp`, `log_A_q` on `alpha_gp`), to an sd 1/1500 and
+  1/2600 of the reference's (width errors of 7.3 and 7.9).  On `n40ca_gp` it does
+  converge (149 τ, R-hat 1.008) and is still 0.14 / 0.15 off, so a
+  converged ensemble is not by that a correct one.
 - **Evidence.**  Against the exact log Z, dynesty is within its error on
   `linear` and `gp` (80.3 ± 0.28 against 80.48) but 4 errors high on
   `hierarchy` (76.2 ± 0.55 against 73.97); pocomc is within its error on
   `hierarchy`, 1.2 errors low on `linear` and 6 errors low on `gp` (80.2 ± 0.04), where its
-  posterior is biased too.  On `omp`, against the reference's −6.63 ± 0.01,
-  pocomc and dynesty are within their errors (−6.6 ± 0.01, −6.8 ± 0.29),
-  dynesty's evidence right even where its posterior is not; ptemcee, which
-  has not converged, is 1.7 errors low.  Like Kish's ESS, pocomc's log Z error leaves out the
-  correlation between its particles.
-- **PyMC against blackjax.**  The same algorithms on the same density, and
-  NUTS gives the same answer on `omp`, wrong in the same way: PyMC's NUTS
-  takes 1.2 times blackjax's wall time, since its call costs 13 ms against 9
-  (the forward pass repeated for the gradient Op, and PyTensor's overhead).
-- **Cost per call.**  A reaction-model call costs 1.8–3.7 ms whatever the
-  sampler, since the solver dominates; a gradient call 6.6 to 8.9 ms in
-  blackjax.  On the cheap densities emcee, which evaluates its walkers in
-  one batch, pays a few hundredths of a millisecond per point (0.015 to
-  0.19 ms); dynesty, which cannot batch, pays 3 to 84 times more, and
-  pocomc more still (0.5 to 5 ms), because its per-call time includes
-  training its normalizing flow.  pocomc spends 62–99 % of its calls
-  tempering from the prior to the posterior.
+  posterior is biased too.  Against the optical-model references (pooled
+  pocomc, checked by dynesty), dynesty's evidence is right even where its
+  posterior is not: −6.42 ± 0.32 against −6.65 on `omp`, −84.61 ± 0.31
+  against −84.53 on `alpha_gp`, though 1.7 errors low on `n40ca_gp`
+  (−11.92 ± 0.34 against −11.34).  ptemcee's thermodynamic integration is
+  2.3, 1.0 and 0.3 errors low on the three (−11.95 ± 2.34, −89.36 ± 4.87,
+  −17.4 ± 21.8), errors too wide to say much.  Like Kish's ESS, pocomc's
+  log Z error leaves out the correlation between its particles.
+- **PyMC against blackjax.**  The same algorithms on the same density give
+  the same answers: on `alpha_gp` NUTS is 0.60 / 1.43 off in blackjax and
+  0.59 / 1.43 in PyMC.  A PyMC call costs more, 5.6 to 5.8 ms against 3.9
+  to 4.0 on `omp` and 1.6 to 1.7 against 1.0 to 1.1 on `n40ca_gp` (the
+  forward pass repeated for the gradient Op, and PyTensor's overhead).
+  PyMC's NUTS on `alpha_gp` is an outlier at 21.6 ms a call, 3037 s against
+  blackjax's 780, where PyMC's HMC on the same problem costs 5.9 ms; one
+  run, not explained.
+- **Cost per call.**  A reaction-model call costs 1.7 to 2.6 ms on `omp`
+  and `alpha_gp` (cluster) and 2.8 to 3.7 ms on `elastic` (the local
+  machine) whatever the sampler, since the solver dominates, and 0.4 to
+  1.2 ms on `n40ca_gp`; a gradient call costs 3.6 to 4.0 ms in blackjax on
+  `omp` and `alpha_gp`, and 6.6 ms on `elastic`.  On the cheap densities
+  emcee, which evaluates its walkers in one batch, pays a few hundredths of
+  a millisecond per point (0.015 to 0.19 ms); dynesty, which cannot batch,
+  pays 3 to 84 times more, and pocomc more still (0.5 to 5 ms), because its
+  per-call time includes training its normalizing flow.  pocomc spends
+  62–99 % of its calls tempering from the prior to the posterior.
+
+## `gp_discrepancy` under other seeds: `gp_seed_check.py`
+
+The notebook fits its three-rung cross-section ladder with pocomc at
+1024/512 and seeds 10, 11 and 12, one run per rung.  `gp_seed_check.py`
+reruns the ladder at the same settings with three other seed sets (20 + i,
+30 + i, 40 + i for rung i) to see how much of what the notebook quotes is
+the seed's (`results/hpc/gp_seed_check.json`):
+
+| seeds | log Z: bare | proportional error | GP, growing amplitude | Δ log Z: proportional − bare | GP − proportional |
+|---|---|---|---|---|---|
+| notebook (10–12) | −467.18 ± 0.01 | 96.73 ± 0.02 | 103.88 ± 0.02 | 563.9 | 7.1 |
+| 20–22 | −467.18 ± 0.01 | 96.71 ± 0.01 | 103.91 ± 0.02 | 563.9 | 7.2 |
+| 30–32 | −467.19 ± 0.01 | 96.73 ± 0.03 | 103.90 ± 0.03 | 563.9 | 7.2 |
+| 40–42 | −467.19 ± 0.01 | 96.73 ± 0.02 | 103.86 ± 0.01 | 563.9 | 7.1 |
+
+The volume parameters' medians, and the notebook's 68 % intervals in
+brackets:
+
+| rung | seeds | V_v | W_v | R_v | a_v |
+|---|---|---|---|---|---|
+| bare | notebook | 26.84 [26.44, 27.23] | 16.64 [16.40, 16.85] | 4.430 [4.410, 4.451] | 0.659 [0.654, 0.665] |
+| bare | 20, 30, 40 | 26.81, 26.81, 26.83 | 16.62, 16.62, 16.63 | 4.432, 4.432, 4.431 | 0.659, 0.659, 0.659 |
+| proportional error | notebook | 38.58 [35.48, 41.93] | 19.49 [18.23, 20.90] | 4.182 [4.028, 4.341] | 0.615 [0.534, 0.680] |
+| proportional error | 20, 30, 40 | 38.46, 38.63, 38.41 | 19.53, 19.60, 19.32 | 4.181, 4.176, 4.193 | 0.616, 0.612, 0.610 |
+| GP, growing amplitude | notebook | 43.91 [42.46, 45.48] | 13.57 [12.58, 14.56] | 4.285 [4.213, 4.348] | 0.488 [0.466, 0.513] |
+| GP, growing amplitude | 20, 30, 40 | 43.79, 43.86, 43.89 | 13.67, 13.64, 13.57 | 4.290, 4.287, 4.285 | 0.487, 0.488, 0.488 |
+
+Every number the notebook quotes holds under other seeds: each rung's log Z
+moves by at most 0.03 from the notebook's (the GP rung's runs spread 0.05,
+a few times their quoted errors), the evidence for the GP over the
+proportional error is 7.1 to 7.2 in every set, and every median moves by a
+small fraction of its 68 % interval (at most 0.12 of the interval's
+half-width, on the proportional rung's W_v).
