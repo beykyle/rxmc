@@ -237,7 +237,7 @@ against −6.63).
 |---|---|---|
 | `linear`, `gp`, `hierarchy` | exact moments and log Z | the log posterior is quadratic in all but a few parameters (none; the GP's log variance and log length scale; the hierarchy's τ).  At each node of a grid over those, one Newton step over the rest lands on the conditional mode, and the Hessian there is the conditional precision, both exact for a quadratic; the conditional normalisers weight the nodes. |
 | `modes`, `elastic` | moments | one long blackjax NUTS run, 4 chains × (1000 warm-up + 3000 draws) at target acceptance 0.95, from a ball about the MAP with a seed of its own, accepted only with a rank-normalised R-hat ≤ 1.01 and no divergences (R-hat 1.001, 1.001; min bulk ESS 2475, 3920).  Chains started from prior draws can stick in a minor mode: on `modes`, one with a log posterior 40 below the main one. |
-| `omp` | moments and log Z | three pocomc runs at 8192/4096, sixteen times its defaults, each with a seed of its own, pooled; accepted only if every run is within 0.05 of the pool (the worst was 0.028).  log Z is their mean, −6.63 ± 0.01.  A NUTS reference cannot work here: its chains stay in the island they start in. |
+| `omp`, `alpha_gp`, `n40ca_gp` | moments and log Z | three pocomc runs at 8192/4096, sixteen times its defaults, each with a seed of its own, pooled; accepted only if every run is within 0.05 of the pool; then checked against three dynesty runs (rslice, 1000 live points), pooled the same way, on log Z (within twice the combined error), the mode share (within 0.03) and the moments (within 0.2 sd).  A NUTS reference cannot work on `omp`: its chains stay in the island they start in.  Pending the cluster refresh; the earlier `omp`'s reference agreed to 0.028, with log Z −6.63 ± 0.01. |
 
 The benchmarked NUTS row on `modes` and `elastic`, and the pocomc row on
 `omp`, are scored against runs that share their algorithm, not their draws.
@@ -250,8 +250,10 @@ within the tolerance.
 ### Results
 
 > `omp` was redefined as the notebook's exact problem, and `alpha_gp` and
-> `n40ca_gp` were added; their rows and references below are pending a
-> cluster run.  The `omp` rows below are of the earlier parametrisation.
+> `n40ca_gp` were added.  Their rows and references are pending a cluster
+> run; the earlier `omp`'s results were removed with it.  Until the refresh,
+> the `omp` numbers quoted in the text (the references, the sweep above and
+> the discussion) are those of the earlier parametrisation.
 
 | problem | sampler | wall time | calls | search | warm-up | sampling | evidence | ms/call | bias | width | min ESS | ESS/s | ESS/1k calls | R-hat | τ (steps) | log Z |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -275,15 +277,6 @@ within the tolerance.
 | hierarchy (33) | pocomc | 3410 s | 663040 | 0% | 92% | 7% | 1% | 5.14 | 0.39 ✗ | 0.21 ✗ | — | — | — | — |  | 73.9 ± 0.17 |
 | hierarchy (33) | NUTS | 41 s | 406667 | 0% | 30% | 70% | 0% | 0.10 | 0.08 | 0.01 | 536 | 13.14 | 1.32 | 1.006 |  |  |
 | hierarchy (33) | reference: quadrature |  |  |  |  |  |  |  |  |  |  |  |  |  |  | 73.97 (exact) |
-| omp (9) | emcee | 181 s | 96930 | 1% | 33% | 66% | 0% | 1.86 | 0.96 ✗ | 0.74 ✗ | — | — | — | 1.677 ✗ | 228 (< 50 τ) |  |
-| omp (9) | dynesty | 563 s | 260909 | 0% | 0% | 100% | 0% | 2.16 | 0.31 ✗ | 0.17 ✗ | — | — | — | — |  | -6.8 ± 0.29 |
-| omp (9) | pocomc | 875 s | 352256 | 0% | 99% | 0% | 1% | 2.48 | 0.04 | 0.03 | 6665 | 7.62 | 18.92 | — |  | -6.6 ± 0.01 |
-| omp (9) | NUTS | 1157 s | 132481 | 1% | 57% | 42% | 0% | 8.73 | 0.30 ✗ | 0.69 ✗ | — | — | — | 1.004 |  |  |
-| omp (9) | ptemcee | 946 s | 512930 | 0% | 33% | 67% | 0% | 1.84 | 1.34 ✗ | 5.85 ✗ | — | — | — | 1.556 ✗ | 112 (< 50 τ) | -11.0 ± 2.55 |
-| omp (9) | HMC | 468 s | 52930 | 2% | 23% | 76% | 0% | 8.85 | 0.29 ✗ | 0.76 ✗ | — | — | — | 1.006 |  |  |
-| omp (9) | PyMC NUTS | 1397 s | 104296 | 1% | 44% | 55% | 0% | 13.39 | 0.28 ✗ | 0.77 ✗ | — | — | — | 1.004 |  |  |
-| omp (9) | PyMC HMC | 1602 s | 119636 | 1% | 79% | 20% | 0% | 13.39 | 0.14 ✗ | 0.18 ✗ | — | — | — | 1.152 ✗ |  |  |
-| omp (9) | reference: pocomc 8192/4096, 3 runs |  |  |  |  |  |  |  |  |  |  |  |  |  |  | -6.63 ± 0.01 |
 | modes (9) | emcee | 10 s | 96478 | 0% | 33% | 66% | 0% | 0.10 | 0.36 ✗ | 0.24 ✗ | — | — | — | 1.319 ✗ | 177 (< 50 τ) |  |
 | modes (9) | dynesty | 92 s | 222314 | 0% | 0% | 100% | 0% | 0.41 | 0.13 ✗ | 0.22 ✗ | — | — | — | — |  | 103.2 ± 0.29 |
 | modes (9) | pocomc | 130 s | 91136 | 0% | 62% | 33% | 4% | 1.43 | 0.59 ✗ | 0.29 ✗ | — | — | — | — |  | 102.7 ± 0.08 |
@@ -299,7 +292,7 @@ Which sampler is correct, and fastest among those that are, on each problem:
 | `modes` | NUTS | NUTS, 61 s |
 | `elastic` | dynesty, pocomc, NUTS | pocomc, 312 s (NUTS 324 s, dynesty 646 s) |
 | `hierarchy` | NUTS | NUTS, 41 s, at 3000 draws per chain |
-| `omp` | pocomc | pocomc, 875 s, at 4096/2048 |
+| `omp` | pending the refresh (earlier parametrisation: pocomc only) | pending (earlier: pocomc, 875 s, at 4096/2048) |
 
 - **Funnels defeat the samplers that start from the prior.**  `gp`, `modes`
   and `hierarchy` each have a scale parameter that, when small, pins the
