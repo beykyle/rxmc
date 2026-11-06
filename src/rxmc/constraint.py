@@ -259,6 +259,20 @@ class Constraint:
         set_(self, "active", active)
         for t in terms:  # eager: every on= resolves here, arrays have the right shape
             rows = self.support(t.on)
+            if t.relative:
+                nonlinear = [
+                    c
+                    for c, o in zip(comps, offsets)
+                    if not c.space.is_identity
+                    and np.isin(rows, np.arange(o.start, o.stop)).any()
+                ]
+                if nonlinear:
+                    raise ValueError(
+                        f"a relative term (proportional_error, normalization) on "
+                        f"{nonlinear[0]!r}: a fraction of the prediction is a relative "
+                        "error only in linear space; in log space use noise() for an "
+                        "uncorrelated relative error and offset() for a normalisation"
+                    )
             if not callable(t.fn) and t.fn.shape != t.expected_shape(len(rows)):
                 raise ValueError(
                     f"{t.kind} term expects shape {t.expected_shape(len(rows))} on "

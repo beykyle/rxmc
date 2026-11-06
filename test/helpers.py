@@ -26,7 +26,6 @@ from rxmc.terms import (
     kernel,
     kernel_params,
     noise,
-    normalization,
     offset,
     proportional_error,
     systematic,
@@ -134,8 +133,8 @@ STUDY_LEGEND = {
     "E0": "fractional noise in linear space: sigma_i = err * ym_i",
     "L1": "noise growing with angle: sigma(theta) = err * exp(slope * u)",
     "L2": "L0 plus one correlated mode proportional to angle: sys * u",
-    "L2n": "L0 plus a free correlated offset mode: sys * 1",
-    "L2y": "L0 plus a free correlated normalisation mode: sys * ym",
+    "L2n": "L0 plus a free correlated offset mode: sys * 1 (in log space, a "
+    "normalisation)",
     "L12": "L1 plus the angle mode of L2",
     "Lgp": "L0 plus a Matérn(5/2) Gaussian process in u with constant amplitude",
     "Lgpn": "L0 plus the Gaussian process with an angle-growing amplitude",
@@ -186,12 +185,6 @@ def study_form(label, x, y, ym, X=np.pi, k=2.7) -> StudyForm:
     if label == "L2n":
         terms = [L0, offset(parameter=log_sys)]
         dense = err**2 * eye + sys**2 * np.ones((n, n))
-        return StudyForm(
-            label, STUDY_LEGEND[label], terms, [(np.log(err),), (np.log(sys),)], dense
-        )
-    if label == "L2y":
-        terms = [L0, normalization(parameter=log_sys)]
-        dense = err**2 * eye + sys**2 * np.outer(ym, ym)
         return StudyForm(
             label, STUDY_LEGEND[label], terms, [(np.log(err),), (np.log(sys),)], dense
         )

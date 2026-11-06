@@ -547,7 +547,7 @@ I want the evidence for each, comparable across comparison spaces.*
 models = {
     "L0": rx.Constraint([comp_log], terms=[T.noise(log_eps)], statistical=False),
     "E0": rx.Constraint([comp_lin], terms=[T.proportional_error(log_eps)], statistical=False),
-    "L2y": rx.Constraint([comp_log], terms=[T.noise(log_eps), T.normalization(log_sys)], statistical=False),
+    "L2n": rx.Constraint([comp_log], terms=[T.noise(log_eps), T.offset(log_sys)], statistical=False),
     "Lgp": rx.Constraint([comp_log], terms=[T.noise(log_eps), gp], statistical=False),
 }
 # the labels are defined in the table below this block
@@ -569,8 +569,7 @@ is the scattering angle in radians and `u = theta / pi`.
 | `E0` | fractional noise in linear space: `sigma_i = err * ym_i` |
 | `L1` | noise growing with angle: `sigma(theta) = err * exp(slope * u)` |
 | `L2` | `L0` plus one correlated mode proportional to angle, `sys * u` |
-| `L2n` | `L0` plus a free correlated offset mode, `sys * 1` |
-| `L2y` | `L0` plus a free correlated normalisation mode, `sys * ym` |
+| `L2n` | `L0` plus a free correlated offset mode, `sys * 1` (in log space, a normalisation) |
 | `L12` | `L1` plus the angle mode of `L2` |
 | `Lgp` | `L0` plus a Matérn(5/2) Gaussian process in `u` with constant amplitude |
 | `Lgpn` | `L0` plus the Gaussian process with an angle-growing amplitude |

@@ -22,7 +22,6 @@ from rxmc.terms import (
     constant_amplitude,
     kernel,
     noise,
-    normalization,
     offset,
     statistical,
 )
@@ -523,7 +522,7 @@ class TestCompile:
             [
                 Constraint(
                     [Comparison(d, line_model(), space=log)],
-                    terms=[normalization(magnitude=0.05)],
+                    terms=[offset(magnitude=0.05)],  # a log-space normalisation
                 )
             ]
         )

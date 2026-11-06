@@ -9,7 +9,8 @@ stated:
 
     L0   constant noise: sigma = err on every point
     E0   fractional noise in linear space: sigma_i = err * ym_i
-    L2y  L0 plus a free correlated normalisation mode, sys * ym
+    L2n  L0 plus a free correlated offset mode, sys * 1 (in log space, a
+         normalisation)
     Lgp  L0 plus a Matern(5/2) Gaussian process in u = theta / pi with a
          constant amplitude
 """
@@ -47,10 +48,8 @@ def error_models(d, model):
         "E0": Constraint(
             [comp_lin], terms=[T.proportional_error(log_eps)], statistical=False
         ),
-        "L2y": Constraint(
-            [comp_log],
-            terms=[T.noise(log_eps), T.normalization(log_sys)],
-            statistical=False,
+        "L2n": Constraint(
+            [comp_log], terms=[T.noise(log_eps), T.offset(log_sys)], statistical=False
         ),
         "Lgp": Constraint([comp_log], terms=[T.noise(log_eps), gp], statistical=False),
     }
@@ -62,7 +61,7 @@ def test_each_problem_compiles_independently_with_shared_parameter_objects():
     problems = {name: Problem([c]) for name, c in models.items()}
     assert problems["L0"].names == ["m", "b", "log_eps"]
     assert problems["E0"].names == ["m", "b", "log_eps"]
-    assert problems["L2y"].names == ["m", "b", "log_eps", "log_sys"]
+    assert problems["L2n"].names == ["m", "b", "log_eps", "log_sys"]
     assert problems["Lgp"].names == [
         "m",
         "b",
@@ -109,7 +108,7 @@ def run_dynesty(p, seed, nlive=100):
 def test_a_normalisation_defect_is_preferred_by_the_model_that_has_one():
     # Data scaled by 30 %.  A line with a free intercept would absorb a scaling
     # into its parameters, so the model here has a known intercept: only the
-    # normalisation mode of L2y can explain the defect.
+    # offset mode of L2n, a normalisation in log space, can explain the defect.
     from dataclasses import replace
 
     d = replace(line_data(err=0.05), y=1.3 * line_data(err=0.05).y)
@@ -117,11 +116,11 @@ def test_a_normalisation_defect_is_preferred_by_the_model_that_has_one():
     slope_only = Model(lambda x, m: m * x + 1.0, [m])
     models = error_models(d, slope_only)
     logz = {}
-    for name in ("L0", "L2y"):
+    for name in ("L0", "L2n"):
         p = Problem([models[name]])
         res = [run_dynesty(p, seed) for seed in (0, 1)]
         logz[name] = logz_summary(
             [r.logz[-1] + p.log_jacobian() for r in res], [r.logzerr[-1] for r in res]
         )
-    verdict = compare_logz(logz["L2y"], logz["L0"])
+    verdict = compare_logz(logz["L2n"], logz["L0"])
     assert verdict["verdict"] == "a" and verdict["dlogZ"] > 1.5, (logz, verdict)

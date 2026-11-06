@@ -263,7 +263,20 @@ kernel_params(names, bounds=None, prefix="discrepancy") -> list[Parameter]
 
 `noise` and `proportional_error` are additive on top of the reported diagonal;
 `Constraint(statistical=False)` makes them replace it.  `normalization`
-reads `c.ym`, never `c.y`.  `kernel` takes a builder `build(*values) ->
+reads `c.ym`, never `c.y`.  `proportional_error` and `normalization` are
+fractions of the prediction, which is a relative error only in linear
+space, so a `Constraint` refuses them on a comparison with another
+`space` (`Term(relative=True)`).  In log space a multiplicative error is
+additive, $\log y(1+\epsilon) \approx \log y + \epsilon$, so the same
+fractional sizes are written directly:
+
+| uncertainty | linear space | log space |
+|---|---|---|
+| uncorrelated, a fraction $\gamma$ of each point | `proportional_error(log_gamma)` | `noise(log_gamma)` |
+| a normalisation, a fraction $\eta$ shared by every point | `normalization(log_eta)` | `offset(log_eta)` |
+| a reported normalisation or offset | `comp.reported_terms()` | `comp.reported_terms()` (delta method) |
+
+`kernel` takes a builder `build(*values) ->
 tinygp kernel` and the parameters it consumes; the builder owns the
 parameterisation (log space, sums and products of kernels, an anisotropic
 metric through `tinygp.transforms.Linear`), and a tinygp kernel object
@@ -599,7 +612,7 @@ gp = T.kernel(lambda le: tinygp.kernels.Matern52(scale=jnp.exp(le)), [log_ell],
 ladder = {
     "L0":  rx.Constraint([comp_log], terms=[T.noise(log_eps)], statistical=False),
     "E0":  rx.Constraint([comp_lin], terms=[T.proportional_error(log_eps)], statistical=False),
-    "L2y": rx.Constraint([comp_log], terms=[T.noise(log_eps), T.normalization(log_eta)], statistical=False),
+    "L2n": rx.Constraint([comp_log], terms=[T.noise(log_eps), T.offset(log_eta)], statistical=False),
     "Lgp": rx.Constraint([comp_log], terms=[T.noise(log_eps), gp], statistical=False),
 }
 logz = {}
@@ -607,7 +620,7 @@ for name, c in ladder.items():
     p = rx.Problem([c])
     res = smc(p)                                      # pocomc on the unit cube, recipe 16
     logz[name] = rx.diagnostics.logz_summary(res.logz + p.log_jacobian(), res.logz_err)
-verdict = rx.diagnostics.compare_logz(logz["Lgp"], logz["L2y"])
+verdict = rx.diagnostics.compare_logz(logz["Lgp"], logz["L2n"])
 
 fit = ladder["Lgp"].masked_where(lambda x: x < np.deg2rad(90))
 p_fit, p_held = rx.Problem([fit]), rx.Problem([fit.complement()])
@@ -618,7 +631,7 @@ score = rx.diagnostics.log_posterior_predictive(lp)
 draws = rx.diagnostics.predictive_draws(p_held, samples, n_rep=4, given=p_fit, return_draws=True)
 ```
 
-The labels `L0`, `E0`, `L2y`, `Lgp` are the error-model ladder of recipe
+The labels `L0`, `E0`, `L2n`, `Lgp` are the error-model ladder of recipe
 18, whose table defines every label.  The same problem runs under emcee
 from `p.sample_prior` and `p.log_posterior`, and under `black-box-bayes`
 from a `dill` pickle and a six-line module that forwards

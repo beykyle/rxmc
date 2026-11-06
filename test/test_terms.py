@@ -560,3 +560,27 @@ class TestKernelTerm:
         # a fixed kernel has no kernel parameters and is constant
         fixed = kernel(tinygp.kernels.ExpSquared(scale=1.0))
         assert fixed.n_kernel == 0 and fixed.is_constant and fixed.params == ()
+
+
+def test_a_relative_term_is_refused_outside_linear_space():
+    """A fraction of the prediction is a relative error only in linear space:
+    in log space it would scale with log(y), so it is refused there."""
+    from scipy import stats
+
+    from rxmc import Comparison, Constraint, Dataset, Model
+    from rxmc import transforms as tf
+
+    x = np.linspace(0.0, 1.0, 5)
+    d = Dataset(x, np.exp(-x), 0.05 * np.exp(-x))
+    a = Parameter("a", prior=stats.norm(1.0, 0.1))
+    model = Model(lambda x, a: a * jnp.exp(-x), [a])
+    eps = Parameter("log_eps", prior=stats.norm(-3.0, 1.0))
+    lin, log = Comparison(d, model), Comparison(d, model, space=tf.log)
+    Constraint([lin], terms=[proportional_error(eps)])  # linear space: fine
+    Constraint([log], terms=[noise(eps)])  # the relative error in log space
+    for term in (proportional_error(eps), normalization(eps)):
+        with pytest.raises(ValueError, match="relative error only in linear space"):
+            Constraint([log], terms=[term])
+    with pytest.raises(ValueError, match="relative"):  # on= picks the log one
+        Constraint([lin, log], terms=[proportional_error(eps, on=log)])
+    Constraint([lin, log], terms=[proportional_error(eps, on=lin)])

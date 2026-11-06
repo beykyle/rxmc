@@ -184,6 +184,12 @@ class Term:
         ``c.x`` and ``c.y`` may be read freely.  A constant term is evaluated
         with ``c.ym is None``, so a mis-declared term fails loudly.  Implied
         for an array ``fn``; an error together with ``params``.
+    relative : bool, optional
+        Declare that ``fn`` is a fraction of the prediction or the data (as
+        :func:`proportional_error` and :func:`normalization` are), which is a
+        relative error only in linear space: a :class:`~rxmc.constraint.Constraint`
+        refuses it on a comparison with any other ``space``.  In log space a
+        relative error is :func:`noise` or :func:`offset` itself.
     """
 
     fn: Any
@@ -192,6 +198,7 @@ class Term:
     on: Any = None
     coords: Any = identity
     constant: bool = False
+    relative: bool = False
     _appended: Any = None  # the coords parameters appended to params last time
 
     def __post_init__(self):
@@ -438,7 +445,17 @@ def _coefficient(parameter, log):
     return (parameter,), (lambda values: values[0])
 
 
-def _scaled_term(kind, parameter, log, basis, basis_params=(), *, on=None, coords=None):
+def _scaled_term(
+    kind,
+    parameter,
+    log,
+    basis,
+    basis_params=(),
+    *,
+    on=None,
+    coords=None,
+    relative=False,
+):
     """``c * basis(ctx, *basis_values)`` as a term of the given kind."""
     cparams, coef = _coefficient(parameter, log)
     basis_params = tuple(basis_params)
@@ -448,7 +465,9 @@ def _scaled_term(kind, parameter, log, basis, basis_params=(), *, on=None, coord
         b = basis(c, *values[nc:]) if callable(basis) else basis
         return coef(values[:nc]) * _full(b, len(c))
 
-    return Term(fn, cparams + basis_params, kind=kind, on=on, coords=coords)
+    return Term(
+        fn, cparams + basis_params, kind=kind, on=on, coords=coords, relative=relative
+    )
 
 
 def statistical(y_err, on=None) -> Term:
@@ -482,7 +501,8 @@ def normalization(parameter=None, magnitude=None, mask=None, log=True, on=None) 
     is a free nuisance (``c = exp(theta)`` when ``log``); with ``magnitude=`` it
     is a fixed fractional normalisation uncertainty.  In both cases the mode scales with the model *prediction* ``ym``,
     never with the data: that is what keeps the fit free of Peelle's Pertinent
-    Puzzle (recipe 27).
+    Puzzle (recipe 27).  Linear comparison space only: in log space a
+    normalisation error is :func:`offset`.
     """
     if magnitude is None and parameter is None:
         raise ValueError("normalization requires a magnitude and/or a parameter")
@@ -491,7 +511,7 @@ def normalization(parameter=None, magnitude=None, mask=None, log=True, on=None) 
     def basis(c):
         return _full(mag, len(c)) * c.ym
 
-    return _scaled_term("mode", parameter, log, basis, on=on)
+    return _scaled_term("mode", parameter, log, basis, on=on, relative=True)
 
 
 def noise(
@@ -527,12 +547,14 @@ def proportional_error(parameter, averaging=False, log=True, on=None) -> Term:
     and ``z = ym``, or ``z = 0.5 * (y + ym)`` when ``averaging`` (KDUQ's
     spelling, which stays finite when ``ym`` is near zero).  Because it scales
     with the prediction, the covariance changes with the model parameters.
+    Linear comparison space only: in log space a relative error is
+    :func:`noise`.
 
     **Additive** on top of the reported statistical diagonal (see :func:`noise`
     for how to get replace-semantics instead).
     """
     basis = _AVERAGING if averaging else ym
-    return _scaled_term("diag", parameter, log, basis, on=on)
+    return _scaled_term("diag", parameter, log, basis, on=on, relative=True)
 
 
 def systematic(
