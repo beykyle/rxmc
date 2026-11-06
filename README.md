@@ -6,14 +6,10 @@ errors are statistical and which are correlated, whether a normalisation is
 inferred or marginalised, whether the model is allowed a discrepancy, which
 points are held out.  A reviewer can read the declaration and write down the
 likelihood.  The library owns no sampler: a compiled problem exposes the
-densities and the prior transform that emcee, dynesty or black-box-bayes
-need.  The densities are written in JAX, so `jax.grad` works through the
+densities and the prior transform that pocomc, emcee, dynesty or
+black-box-bayes need.  The densities are written in JAX, so `jax.grad` works through the
 posterior (the reaction solver included) for HMC, optimisation or a Laplace
 approximation.
-
-##  Documentation
-
-The documentation website, including API reference is https://beykyle.github.io/rxmc/.
 
 ## Quickstart
 
@@ -75,7 +71,9 @@ A jitr optical potential is a `Model` whose solver is built from the
 dataset's kinematics.  EXFOR measurements arrive through
 `from_measurement`, which converts units and keeps the reported systematics
 as inert metadata until asked for.  Optical-model posteriors are correlated
-and sometimes multimodal, so drive them with nested sampling.
+and sometimes multimodal, so drive them with a sampler that starts from the
+prior, pocomc by preference ([benchmarks](docs/benchmarks.md)); the example
+uses dynesty at a toy budget for brevity.
 
 ```python
 from types import SimpleNamespace
@@ -129,7 +127,7 @@ print(problem.names, sampler.results.logz[-1])
   spelling and expected behaviour.  Each recipe is a test under
   `test/recipes/`.
 - [`examples/`](examples/): eight notebooks, the tutorials for the recipes,
-  from a line to an error-model comparison on real α + ⁴⁴Ca data and a
+  from a line to an error-model comparison on real $\alpha$ + $^{44}$Ca data and a
   hierarchical calibration.
 - [`docs/design.md`](docs/design.md): the maintainer's description of the
   library, its rules and its testing tiers.

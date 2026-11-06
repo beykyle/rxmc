@@ -1,6 +1,6 @@
 """The example notebooks name the recipes they teach, and every one listed exists.
 
-Design document section 9 item 8: a notebook must cite at least one recipe;
+Design document section 6: a notebook must cite at least one recipe;
 its first cell carries ``Recipes: N, M, ...`` and every number is a heading
 of ``docs/recipes.md``.  The committed notebooks are full runs (the
 documentation shows them as committed), executed top to bottom.  Nothing
@@ -21,7 +21,7 @@ RECIPES = ROOT / "docs" / "recipes.md"
 # here cannot print it
 BANNER = re.search(r'^BANNER = "(.+)"$', (EXAMPLES / "budget.py").read_text(), re.M)[1]
 
-# design document section 9, item 8: the eight notebooks and their recipes
+# design document section 6: the eight notebooks and their recipes
 NOTEBOOKS = {
     "linear_calibration": {1, 2, 17, 33, 40},
     "normalization_and_covariance_structure": {2, 3, 4, 5, 6, 17, 19, 27, 33, 40, 41},
@@ -61,7 +61,7 @@ def test_each_notebook_exists_and_cites_its_recipes(name):
     missing = cited - _headings()
     assert not missing, f"{name} cites recipe(s) {sorted(missing)} with no heading"
     assert cited == NOTEBOOKS[name], (
-        f"{name} cites {sorted(cited)}; the design's section 9 says "
+        f"{name} cites {sorted(cited)}; the design's section 6 says "
         f"{sorted(NOTEBOOKS[name])} (update both or neither)"
     )
 

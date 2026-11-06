@@ -19,12 +19,10 @@ covariance, the likelihood and the prior's log density, is written in
 needs no derivative stays numpy and scipy: the compile step's bookkeeping,
 the prior transform and prior draws, diagnostics and predictive draws.
 
-This document is the maintainer's description of the library as it is.
-Read it with `recipes.md`, which states every supported use case with its
-spelling and expected behaviour, one test per recipe, and with the
-notebooks in `examples/`, which are the tutorials for the recipes.  The
-plan the rewrite was executed from, including what was harvested from 0.x
-and the milestone history, is `groundup_design.md`.
+This document is the maintainer's description of the library.  Read it
+with `recipes.md`, which states every supported use case with its spelling
+and expected behaviour, one test per recipe, and with the notebooks in
+`examples/`, which are the tutorials for the recipes.
 
 The mechanics rest on one rule:
 
@@ -65,8 +63,8 @@ The review checklist for every change.
    in comparison space: all raised by `Problem`, never mid-chain.
 8. **Nothing is folded into a covariance silently.**  A dataset's reported
    systematics become terms only when asked, through
-   `comparison.reported_terms()`.  The 0.x default that folded them in is
-   pinned as a *difference* in `test/test_regression.py`.
+   `comparison.reported_terms()`; `test/test_regression.py` pins the
+   covariance with both reported terms added.
 9. **A term on several comparisons sees the gathered stack.**  Its
    `TermContext` carries `segments`, `labels` and `split()` so that a basis
    which differentiates or smooths along the grid stays within one
@@ -235,9 +233,9 @@ class KernelTerm(Term):                    # what kernel() returns
 
 | `kind` | `fn` returns | contribution |
 |---|---|---|
-| `"diag"` | standard-deviation vector `v` | `Σ_ii += v_i²` |
-| `"mode"` | vector `v` | `Σ += v vᵀ` |
-| `"matrix"` | symmetric block `M` | `Σ_block += M` |
+| `"diag"` | standard-deviation vector `v` | $\Sigma_{ii} \mathrel{+}= v_i^2$ |
+| `"mode"` | vector `v` | $\Sigma \mathrel{+}= v v^\mathsf{T}$ |
+| `"matrix"` | symmetric block `M` | $\Sigma_\mathrm{block} \mathrel{+}= M$ |
 
 Support is a reference, not integer indices: `on=comp` places the term on
 that comparison, `on=[c1, c2]` spans both (case A), `on=None` is the whole
@@ -302,9 +300,9 @@ class Gaussian(Likelihood)
 class Chi2(Likelihood)             # -d2/2, no log-determinant
 ```
 
-Both are exported from the package (`rx.Gaussian`, `rx.Chi2`).  A
-multivariate t of the whole residual was removed: it is one global error
-scale with a heavy-tailed prior, not a robust likelihood (recipe 9).
+Both are exported from the package (`rx.Gaussian`, `rx.Chi2`).  There
+is no multivariate t: it is one global error scale with a heavy-tailed
+prior, not a robust likelihood (recipe 9).
 
 ### 2.7 `constraint.py`
 
@@ -348,11 +346,11 @@ when the comparison is built.
 
 | stage | space | what enters | parametric |
 |---|---|---|---|
-| 1. `Predictor` | physical | `f(x; θ)` on the data grid | model parameters |
-| 2. mean modifications, composed on the `Model` | physical | `\| scale(ρ)`, `* g(x; φ)`, `+ δ(x; φ)` | ρ, φ |
-| 3. `space` | physical → comparison | `y = space(data.y)`, `ym = space(step 2)`, `y_err = \|space'\| · data.y_err`, `log_jacobian` | none |
+| 1. `Predictor` | physical | $f(x; \alpha)$ on the data grid | model parameters |
+| 2. mean modifications, composed on the `Model` | physical | `\| scale(rho)`, `* g(x, phi)`, `+ delta(x, phi)` | $\rho$, $\phi$ |
+| 3. `space` | physical to comparison | `y = space(data.y)`, `ym = space(step 2)`, `y_err = \|space'\| * data.y_err`, `log_jacobian` | none |
 | 4. `Term`s, seeing `TermContext(x, y, ym)` | comparison | statistical diagonal; experimental terms (noise, reported modes, USU); model-discrepancy terms (kernel, bases) | term parameters, and `ym` |
-| 5. `Likelihood` | comparison | functional of `y − ym` and Σ | none |
+| 5. `Likelihood` | comparison | functional of `y - ym` and $\Sigma$ | none |
 
 Experimental and model-discrepancy terms are one mechanism; the difference
 is what the user means.  A term that reads `ym` sees the prediction after
@@ -455,7 +453,7 @@ z = L⁻¹ r,  W = L⁻¹ U,  S = I + WᵀW
 d2 = zᵀz − (Wᵀz)ᵀ S⁻¹ (Wᵀz),   logdet Σ = Σ_b logdet B_b + logdet S
 ```
 
-at cost `O(Σ_b n_b³ + N r² + r³)`.  Masking slices rows before assembly.
+at cost $O(\sum_b n_b^3 + N r^2 + r^3)$.  Masking slices rows before assembly.
 Constant parts are evaluated once at compile; a constraint whose
 covariance is entirely constant caches its factors.  The layout (each
 entry's active positions, its block, its positions inside the block) is
@@ -466,7 +464,7 @@ definite at some `theta` gives a NaN log-determinant (`chol_logdet`
 substitutes the identity factor and zeroes its tangent, so the gradient
 stays finite), which the compiled constraint reads as `-inf`.  `B` must be positive
 definite: a comparison covered only by modes is singular in `B` even when
-`Σ` is not, and compile says so with the label and the remedies.  A
+$\Sigma$ is not, and compile says so with the label and the remedies.  A
 constraint boundary is about the likelihood functional and the weight, not
 about cost.
 
@@ -508,7 +506,7 @@ A held-out problem built from `complement()` has the *marginal*
 covariance of its rows, which is the right density when no term spans the
 split and `ll(fit) + ll(held) = ll(full)` then holds.  When a term does
 span it (a GP over several experiments), `given=fit_problem` makes both
-functions compute the Gaussian conditional `p(y_held | y_fit, θ)` under
+functions compute the Gaussian conditional $p(y_\mathrm{held} \mid y_\mathrm{fit}, \alpha)$ under
 the full covariance; without a spanning term it equals the marginal.
 
 The three draw functions share one return convention: a percentile band
@@ -535,8 +533,8 @@ comparison space.
 its constraint, rows, comparison space and parameter columns from there;
 unconditioned it is `grid_draws` on that constraint.  A kernel term
 declares a *mean-zero* discrepancy, so the likelihood is the marginal
-`y ~ N(ym(θ), Σ(θ))`; the matching predictive draws whole correlated curves
-`ym(θ) + L(θ) z` from the inferred covariance about the model's own
+$y \sim \mathcal{N}(y_m(\alpha), \Sigma(\alpha))$; the matching predictive draws whole correlated curves
+$y_m(\alpha) + L(\alpha) z$ from the inferred covariance about the model's own
 prediction.  `conditioned=True` instead conditions the discrepancy on the
 residuals with every *other* term of the constraint as the regression noise
 — regression on top of the model rather than a statement about its error.
@@ -586,7 +584,7 @@ hook: that contribution is subtracted from `data.y` as preprocessing
 
 ## 3. Worked example: an error-model comparison
 
-The α+⁴⁴Ca study in its full form: real data without reported errors, one
+The $\alpha$ + $^{44}$Ca study in its full form: real data without reported errors, one
 potential, a ladder of covariances compared by evidence and by held-out
 prediction.  The notebook `examples/alpha_ca_error_model_comparison.ipynb` is
 a shorter cut of it, two Gaussian-process amplitudes on top of the `jitr`
@@ -638,11 +636,12 @@ from a `dill` pickle and a six-line module that forwards
 `starting_location`, `log_posterior`, `log_likelihood` and
 `prior_transform`.  Reaction problems are driven by pocomc by preference:
 affine-invariant ensembles mix poorly on optical-model posteriors, and the
-p + ⁴⁰Ca benchmark posterior has two separated islands, which gradient
-samplers started at the MAP almost never leave (and R-hat seldom notices).  pocomc,
-at eight times its default resolution, is the only benchmarked sampler
-correct there; below that it weighs the islands differently from run to
-run, so run it more than once and compare ([benchmarks](benchmarks.md)).
+p + $^{40}$Ca benchmark posterior has two separated islands, which gradient
+samplers started at the MAP do not leave (and R-hat seldom notices).
+pocomc, at eight times its default resolution, is the only benchmarked
+sampler not shown wrong there, and even it is wrong on one seed of three;
+below that it weighs the islands differently from run to run, so run it
+more than once and compare ([benchmarks](benchmarks.md)).
 With gradients available, HMC/NUTS (blackjax, numpyro) on `log_posterior_unconstrained`,
 or a MAP by `rx.optimize.find_map` followed by a Laplace approximation from
 `p.hessian_log_posterior`, are the alternatives.
@@ -682,13 +681,18 @@ throughput of the cheap densities a hundredfold.
 
 Scored against exact or long-run reference posteriors, no sampler is best
 everywhere.  NUTS is the only one correct on the funnel-shaped `modes` and
-`hierarchy` problems, in about a minute.  On the single-mode `elastic`
-problem pocomc, NUTS and dynesty are all correct, pocomc fastest; on the
-two-island `omp` only pocomc is, at eight times its default resolution, and
-it gives the evidence.  emcee, at 12 000 steps, matches NUTS's time on the line with ten
-times NUTS's effective draws per second, but is short of 50 autocorrelation
-times on everything harder.  Each example notebook uses the sampler that is correct and fastest
-on its benchmark analogue.
+`hierarchy` problems, in about a minute.  On the single-mode reaction
+problems the gradient samplers do well: on `elastic` pocomc, NUTS and
+dynesty are correct, pocomc fastest, and on `n40ca_gp` every converged
+sampler is within its reference's resolution, HMC fastest.  On the
+two-island `omp` and the two-family `alpha_gp` only pocomc is, at eight
+times its default resolution, and it gives the evidence.  emcee, at 12 000
+steps, matches NUTS's time on the line with ten times NUTS's effective
+draws per second, but is short of 50 autocorrelation times on everything
+harder.  Each example notebook uses the fastest sampler that is correct on
+its benchmark analogue, among those that give the evidence where the
+notebook compares evidences; on the GP toys, where none is correct at the
+benchmark's budgets, the notebooks run emcee long and check it.
 
 ## 4. Capability map
 
@@ -737,7 +741,7 @@ test that pins it.  Recipe numbers refer to `recipes.md`.
 | discrepancy on a physical basis | `systematic` modes or `omp + Model(basis_sum)` | recipe 36 |
 | hierarchy: joint block with a sampled hyperparameter | `Problem(priors=[(children + [hyper], obj)])` | test_problem, recipe 24 |
 | classic normal hierarchical model | marginalised, non-centred, centred | recipe 38 |
-| SafeBayes | `replace(c, weight=η)` and prefix masks | recipe 25 |
+| SafeBayes | `replace(c, weight=eta)` and prefix masks | recipe 25 |
 | joint MVN prior; truncated marginals; `prior_transform` | `Problem(priors=[(omp.params, mvn)])`; `Parameter(prior=, bounds=)` | test_problem, recipe 13 |
 | prior family without a JAX translation | `Parameter(prior=dist, logpdf=f)`, `f` in `jax.numpy`; `JAX_LOGPDFS` | test_problem, recipe 13 |
 | gradients: MAP, Laplace | `grad_log_posterior`, `value_and_grad_log_posterior`, `hessian_log_posterior`; `jax.grad(problem.log_posterior)` | test_autodiff, recipe 33 |
@@ -777,7 +781,7 @@ Three index tests keep the documents honest: `test_recipes_index.py`
 (one file per `## NN.` heading, each quoting its recipe; the recipe-18
 legend equal to the tests' legend), `test_notebooks_index.py` (each
 notebook cites the recipes of the design's table, all eight exist), and
-`test_regression.py` (the 0.x pins).  `test/helpers.py` holds the dense
+`test_regression.py` (the regression pins).  `test/helpers.py` holds the dense
 references and `STUDY_LEGEND`, the labelled error-model forms of recipe
 18 built against hand-written matrices.
 
@@ -791,39 +795,20 @@ rerun with `python examples/run.py <name>` before it is committed, and
 and without error, at full budget.  CI only checks that every cell still
 runs: the converged tier sets `RXMC_EXAMPLES_QUICK=1`, which cuts every
 sampler budget wrapped in `examples/budget.py`'s `budget` tenfold and
-caps NUTS's trees at 2⁵ leapfrog steps (`QUICK_NUTS`).
+caps NUTS's trees at $2^5$ leapfrog steps (`QUICK_NUTS`).
 Runtimes are the full runs' wall times on an eight-core laptop, one kernel
-at a time (`examples/run.py`, JAX rxmc on jitr's jax-core branch).
+at a time (`examples/run.py`, rxmc on jitr's jax-core branch).
 
 | notebook | recipes | driver | content | runtime |
 |---|---|---|---|---|
 | `linear_calibration` | 1, 2, 17, 33, 40 | emcee | the whole workflow on a line with an inferred constant noise; prior and posterior predictive on a new grid with `grid_draws`, the model's band against a measurement's, and why reported per-point errors cannot go there; coverage of both | 15 s |
-| `normalization_and_covariance_structure` | 2, 3, 4, 5, 6, 17, 19, 27, 33, 40, 41 | NUTS | where a $\chi^2$ comes from; six treatments of four experiments' normalisations on the 0.x quartic with a free, non-zero constant term, one experiment tightly mis-quoted, scored by the constant term, the width of each band of the curve, and the empirical coverage of each predictive of the data; the prediction-built mode's sign-flipped basin and why the chains start about the MAP; Peelle's puzzle in a two-point case against recipe 27's closed form; a gallery of covariance structures from `matrix(theta)`, including recipe 5's shared magnitude against one shared mode | 318 s |
-| `gp_discrepancy` | 2, 7, 10, 16, 17, 18, 33, 40 | emcee, pocomc | mean-zero discrepancies with amplitudes growing in $x$, priors stated and the growth slope centred on zero: four rungs on a toy line, three on n + $^{40}$Ca missing its surface absorption (pocomc at its single-mode setting), every parameter's pull read; the three predictive objects (model plus discrepancy, plus experimental, and the conditioned regression it does not use), the band split into line and discrepancy, and why pointwise coverage on one correlated realisation says little | 582 s |
-| `robust_likelihoods` | 12, 17, 33, 34, 39, 40 | emcee | four treatments of the same three gross outliers in shared figures: Gaussian, a global error scale (one inferred factor on every reported error, so its centre stays the Gaussian's; a multivariate Student-t is this in disguise), tempering at KDUQ's $k/N$ (the same inflation for a fixed covariance) and the iterative rejection loop (the only one that moves the line, including the round that over-rejects and recovers); tempering a correctly specified 200-point line, with the prior on the corner plot and the predictive coverage | 64 s |
-| `local_optical_model_calibration` | 10, 14, 15, 16, 17, 18, 21, 40 | pocomc | EXFOR C0076002, Gross et al. (1967), p + $^{40}$Ca at 35.8 MeV, measured cross sections with statistical errors and no systematics, read from a plain dict: the unit contract (mb/sr in, a ratio to Rutherford on request); a KD03 sanity check before fitting; log-space residuals with median-one point-to-point and common log-space errors (`noise` and `offset`, after jitr) against linear residuals with the reported errors alone, compared by evidence with the Jacobian, by the model-only and full predictives, and by in-sample coverage curves with a binomial band; a posterior in two islands (about 85 % of the mass about the MAP), which pocomc at eight times its default resolution weighs as the benchmark does on its version of the problem (an earlier parametrisation and prior of the two errors), while the linear model's single narrow mode runs at twice it; why a gradient sampler started at the MAP is no check here (the benchmark's numbers); `n_seeds` for the run-to-run spread; the singular guard | 1332 s |
-| `alpha_ca_error_model_comparison` | 7, 10, 11, 13, 17, 18, 40 | pocomc | real $^{44}$Ca($\alpha,\alpha$) data without reported errors, in log space with median-one point-to-point and common log-space errors (`noise` and `offset`, after jitr); a Matérn GP in angle, its length-scale prior spanning the median point spacing to the full range, with a constant amplitude against one growing as an inferred power of q (uniform on [0, 16]), by evidence; one pocomc run per model, with `n_seeds` for the run-to-run spread and a three-run result quoted; the solver's accuracy checked in the notebook; the error terms, all log-space standard deviations, compared directly, with their posterior correlations; the model only and the full predictive on a fine grid, their coverage with a binomial band and at the 216 angles the fit never saw, and the discrepancy envelope, each draw minus its own potential, that says *where* the potential fails; the weight between the two families of potentials | 1763 s |
+| `normalization_and_covariance_structure` | 2, 3, 4, 5, 6, 17, 19, 27, 33, 40, 41 | NUTS | where a $\chi^2$ comes from; six treatments of four experiments' normalisations on a quartic with a free, non-zero constant term, one experiment tightly mis-quoted, scored by the constant term, the width of each band of the curve, and the empirical coverage of each predictive of the data; the prediction-built mode's sign-flipped basin and why the chains start about the MAP; Peelle's puzzle in a two-point case against recipe 27's closed form; a gallery of covariance structures from `matrix(theta)`, including recipe 5's shared magnitude against one shared mode | 318 s |
+| `gp_discrepancy` | 2, 7, 10, 16, 17, 18, 33, 40 | emcee, pocomc | mean-zero discrepancies with amplitudes growing in $x$, priors stated and the growth slope centred on zero: four rungs on a toy line, three on n + $^{40}$Ca missing its surface absorption (pocomc at eight times its default resolution), every parameter's pull read; the three predictive objects (model plus discrepancy, plus experimental, and the conditioned regression it does not use), the band split into line and discrepancy, and why pointwise coverage on one correlated realisation says little | 582 s |
+| `robust_likelihoods` | 12, 17, 33, 34, 39, 40 | emcee | four treatments of the same three gross outliers in shared figures: Gaussian, a global error scale (one inferred factor on every reported error, so its centre stays the Gaussian's), tempering at KDUQ's $k/N$ (the same inflation for a fixed covariance) and the iterative rejection loop (the only one that moves the line, including the round that over-rejects and recovers); tempering a correctly specified 200-point line, with the prior on the corner plot and the predictive coverage | 64 s |
+| `local_optical_model_calibration` | 10, 14, 15, 16, 17, 18, 21, 40 | pocomc | EXFOR C0076002, Gross et al. (1967), p + $^{40}$Ca at 35.8 MeV, measured cross sections with statistical errors and no systematics, read from a plain dict: the unit contract (mb/sr in, a ratio to Rutherford on request); a KD03 sanity check before fitting; log-space residuals with median-one point-to-point and common log-space errors (`noise` and `offset`, after jitr) against linear residuals with the reported errors alone, compared by evidence with the Jacobian, by the model-only and full predictives, and by in-sample coverage curves with a binomial band; a posterior in two islands (about 85 % of the mass about the MAP), which pocomc at eight times its default resolution weighs as the benchmark's runs of the same problem do; why a gradient sampler started at the MAP is no check here; `n_seeds` for the run-to-run spread; the singular guard | 1332 s |
+| `alpha_ca_error_model_comparison` | 7, 10, 11, 13, 17, 18, 40 | pocomc | real $^{44}$Ca($\alpha,\alpha$) data without reported errors, in log space with median-one point-to-point and common log-space errors (`noise` and `offset`, after jitr); a Matérn GP in angle, its length-scale prior spanning the median point spacing to the full range, with a constant amplitude against one growing as an inferred power of q (uniform on [0, 16]), by evidence; one pocomc run per model, with `n_seeds` for the run-to-run spread, checked against the benchmark's runs of the same problem; the solver's accuracy checked in the notebook; the error terms, all log-space standard deviations, compared directly, with their posterior correlations; the model only and the full predictive on a fine grid, their coverage with a binomial band and at the 216 angles the fit never saw, and the discrepancy envelope, each draw minus its own potential, that says *where* the potential fails; the weight between the two families of potentials | 1763 s |
 | `hierarchical_calibration` | 11, 17, 22, 24, 30, 35, 38, 40, 41 | NUTS | eight schools, with the shrinkage explained rather than assumed; a hierarchy on the physics parameters recovering most of the held-out predictive power a misspecified energy dependence threw away, with the per-dataset coefficients it used drawn against the truth, its conservative over-coverage, and each $\tau_k$ against its prior | 294 s |
-| `gradient_based_sampling` | 7, 16, 33, 38, 41 | NUTS, emcee | the same problems under two samplers, scored by effective draws per second once rank-normalised split R-hat, emcee's autocorrelation time and the divergence count say the run can be trusted: a 33-parameter hierarchy, both samplers started from prior draws, which NUTS samples in about 40 s and emcee has not mixed in $\tau$ and the $\eta_j$ after a minute; a 5-parameter GP discrepancy where NUTS needs a 0.95 target acceptance to stop diverging and emcee, run three times longer than its $50\tau$ rule suggests, is five times faster; a MAP and a Laplace approximation from the exact gradient and Hessian, and the non-Gaussian width Laplace misses | 336 s |
-
-**`hierarchical_calibration` in detail.**  The truth is
-`y = a0(E) + a1(E) x + a2(E) x²`, measured by seven synthetic datasets at
-known energies plus one held-out dataset at an energy bracketed by two of
-them; the true `a_k(E)` are a smooth trend plus non-monotonic bumps.  Three
-fits of the same data: the correct mapping with global `φ`; a misspecified
-linear mapping with global `φ`; the linear mapping plus a per-dataset
-deviation vector `δ_j = τ ⊙ η_j`, non-centred, `η_jk ~ N(0, 1)`, `τ_k`
-half-normal, as marginal priors, sampled with NUTS from prior draws.  One `Model` per comparison closes over
-`E_j`; the held-out comparison is fully masked, so its `η_new` is sampled
-from the prior, driven by `τ`, and `complement()`, `predictive_draws` and
-`heldout_log_predictive` score the new energy with no extra code.  The
-correct mapping covers in sample and, to within what twelve points can
-tell, at the new energy; the misspecified one under-covers both; the
-hierarchy over-covers, conservatively, with bands about four times wider
-at the new energy, $\tau$ posteriors pushed away from zero against their
-prior, and the better held-out score of the misspecified pair.  A hierarchy learns the spread of deviations it has
-seen: holding out an unmodelled peak between its datasets is the
-few-datasets caveat, not a prediction it can make.
+| `gradient_based_sampling` | 7, 16, 33, 38, 41 | NUTS, emcee | the same problems under two samplers, scored by effective draws per second once rank-normalised split R-hat, emcee's autocorrelation time and the divergence count say the run can be trusted: a 33-parameter hierarchy, both samplers started from prior draws, which NUTS samples in about 40 s and emcee has not mixed in $\tau$ and the $\eta_j$ after a minute; a 5-parameter GP discrepancy where NUTS needs a 0.95 target acceptance to stop diverging and emcee, run three times past the length at which its $50\tau$ rule passes, is five times faster; a MAP and a Laplace approximation from the exact gradient and Hessian, and the non-Gaussian width Laplace misses | 336 s |
 
 ## 7. Layout and dependencies
 
@@ -837,7 +822,7 @@ src/rxmc/
 test/               one file per module, the index tests, test_regression.py, helpers.py
 test/recipes/       one file per recipe; common.py, oracle.py
 examples/           the notebooks and plotstyle.py; data/ (committed measurements)
-docs/               this document, recipes.md, examples.rst, api.rst, groundup_design.md (history)
+docs/               this document, recipes.md, benchmarks.md, examples.rst, api.rst
 ```
 
 Runtime dependencies: `numpy`, `scipy`, `jax`, `tinygp`, `jitr` (jax-core
@@ -869,16 +854,9 @@ samplers).  Python 3.12 or later.
   chain-dependent masks, per-point latents, per-point likelihood factors,
   mixture likelihoods) with the size of the addition each would need.
 
-## 9. Release path and history
+## 9. Release path
 
-The repository, its pull-request history and its Pages site are kept.  0.x
-was closed out with tag `v0.1.0` and branch `legacy/0.x`; the rewrite
-happened on `rewrite`, cut from that `main`, in nine milestones (bootstrap;
-parameters, transforms, units, likelihood and terms; data, model and
-constraint; the structured covariance; the problem with the first
-twenty-eight recipe tests; reactions and `from_measurement`; diagnostics
-and predictive; the recipe index; the notebooks) followed by this
-document.  Pre-release tags `v1.0.0a1`, `b1`, `rc1` publish to PyPI
-through trusted publishing on tag push; they were deferred by decision
-and remain available.  The release is a pull request of `rewrite` into
-`main`, the tag `v1.0.0`, a GitHub Release and the Pages rebuild.
+0.x is preserved at tag `v0.1.0` and branch `legacy/0.x`.  Releases are
+tags `vX.Y.Z`, published to PyPI by trusted publishing on tag push, with a
+GitHub Release and a Pages rebuild.  1.0 is published once jitr's JAX
+release is on PyPI, since PyPI does not accept a git dependency.

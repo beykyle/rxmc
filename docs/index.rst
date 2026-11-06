@@ -14,10 +14,8 @@ and, with JAX gradients, by HMC or optimisers.
   :doc:`benchmarks` says how fast it is and how the samplers compare.
 - :doc:`api` is the reference.
 
-This is ``rxmc`` 1.0, a rewrite that does not run 0.x code.  The 0.x package
-is preserved at tag `v0.1.0 <https://github.com/beykyle/rxmc/tree/v0.1.0>`_
-and on branch `legacy/0.x <https://github.com/beykyle/rxmc/tree/legacy/0.x>`_;
-:doc:`installation` says how to pin it.
+This is ``rxmc`` 1.0, a rewrite that does not run 0.x code;
+:doc:`installation` says how to pin 0.x.
 
 .. toctree::
    :maxdepth: 1

@@ -2,12 +2,9 @@
 
 Short user stories for `rxmc`, whose design is described in `design.md`.
 Each recipe says what a user wants, how it is spelled, and what behaviour
-they should expect.  Together they are the minimal set of use cases the
-rewrite must support; every one of them is backed by a notebook or a test
-in the current repository, or by a design decision recorded in the design
-document.  Every recipe is also a test: `test/recipes/test_recipe_NN_<slug>.py`
+they should expect.  Every recipe is also a test: `test/recipes/test_recipe_NN_<slug>.py`
 asserts its *Expected behaviour* bullets, and the richest recipes are
-tutorial notebooks (design document §7 and §9).  Snippets assume:
+tutorial notebooks (design document §6).  Snippets assume:
 
 ```python
 import numpy as np, jax.numpy as jnp, jax.scipy.stats as jst, tinygp, rxmc as rx
@@ -82,8 +79,8 @@ Expected behaviour:
   prediction-scaled normalisation mode.  Zero magnitudes yield no term.
 - Without the call, neither systematic enters the covariance.  Nothing is
   folded in silently.
-- Re-adding both terms reproduces the pre-0.1 auto-folded covariance to
-  the last digit (`test_regression`, log-likelihood `1.195784087817536`).
+- Adding both terms reproduces the regression pin to the last digit
+  (`test_regression`, log-likelihood `1.195784087817536`).
 - Under `space=tf.log` the modes are propagated by the delta method: the
   offset at the data, the normalisation at the prediction.
 
@@ -219,7 +216,7 @@ Expected behaviour:
   half of the cross section's grid), and on a model with missing physics some
   parameters can stay confidently wrong.
 - The kernel declares a **mean-zero** discrepancy, so the likelihood is the
-  marginal `y ~ N(ym(θ), Σ(θ))` and `θ` is inferred with the discrepancy
+  marginal $y \sim \mathcal{N}(y_m(\alpha), \Sigma(\alpha))$ and $\alpha$ is inferred with the discrepancy
   integrated out.  `grid_draws` with the kernel among its `terms` matches
   that: whole correlated curves drawn from the inferred covariance about the model's own
   prediction, one per posterior row.  That is a statement about where and by
@@ -234,7 +231,7 @@ Expected behaviour:
   (`physical=True` maps back), and `return_draws=True` gives the
   draws themselves, which is what a functional summary (a simultaneous band,
   an extremum, an integral) needs — well posed only because the draw is joint.
-- Every error-model form of the α+Ca study reproduces a hand-built dense
+- Every error-model form of the $\alpha$ + Ca study reproduces a hand-built dense
   matrix (`TestStudyForms`).
 
 ## 8. Sample a mean discrepancy explicitly
@@ -350,7 +347,8 @@ Expected behaviour:
 - The log-likelihood of that constraint is multiplied by `weight`; the
   prior is never touched.  One knob, honoured by every driver.
 - Empirical coverage of the posterior predictive (recipe 17) moves toward
-  the nominal level as the weight decreases (`overconfidence`).
+  the nominal level as the weight decreases, for an overconfident
+  predictive (`overconfidence`).
 
 ## 13. Declare priors
 
@@ -483,7 +481,7 @@ Expected behaviour:
 - pocomc samples a prior of its own; given the unit cube and the likelihood
   of `prior_transform(u)` it samples the problem's prior exactly, whatever
   its marginals, and its evidence is the problem's.  It is the sampler the
-  reaction notebooks use: on the p + ⁴⁰Ca optical model, whose posterior has
+  reaction notebooks use: on the p + $^{40}$Ca optical model, whose posterior has
   two separated islands, it is the only benchmarked sampler to reach the
   reference posterior, at eight times its default `n_effective` and
   `n_active`.  Below that, how it weighs the islands changes from run to
@@ -540,7 +538,7 @@ Expected behaviour:
 
 ## 18. Compare error models by evidence
 
-*The α+Ca study: several error models for data without reported errors.
+*The $\alpha$ + Ca study: several error models for data without reported errors.
 I want the evidence for each, comparable across comparison spaces.*
 
 ```python
@@ -702,7 +700,7 @@ Expected behaviour:
 ## 23. A discrepancy correlated across energies and angles
 
 *I believe the model's defect varies smoothly in both energy and angle.  I
-want one GP over (E, θ) that correlates the datasets at different
+want one GP over $(E, \theta)$ that correlates the datasets at different
 energies.*
 
 ```python
@@ -730,7 +728,7 @@ Expected behaviour:
   one-dimensional kernels is the factorised form.  There is no Kronecker
   speed-up because datasets share no angle grid.
 - The dense matrix equals the hand-built product kernel on the stacked
-  `(E, θ)` inputs.
+  $(E, \theta)$ inputs.
 
 ## 24. Per-dataset parameters drawn from a sampled hyperprior
 
@@ -769,9 +767,9 @@ Expected behaviour:
 
 ## 25. SafeBayes: learn the tempering exponent
 
-*I suspect my model is misspecified and want the tempering exponent η
+*I suspect my model is misspecified and want the tempering exponent $\eta$
 chosen by the data rather than by hand, following Grünwald's SafeBayes
-(arXiv:1412.3730): minimise the prequential log-loss of the η-generalised
+(arXiv:1412.3730): minimise the prequential log-loss of the $\eta$-generalised
 posterior over prefixes of the data.*
 
 ```python
@@ -797,20 +795,20 @@ final = rx.Problem([replace(c, weight=eta_hat)], priors)
 Expected behaviour:
 
 - `replace(c, weight=eta)` and `c.masked(...)` share every comparison, term and
-  parameter with `c`, so no workspace is rebuilt across the `n × |η|`
+  parameter with `c`, so no workspace is rebuilt across the $n \times |\eta|$
   problems and every problem has the same `names`.
-- `after.log_likelihood(θ) − before.log_likelihood(θ)` is
-  `log p(y_i | y_<i, θ)` exactly, also under a correlated covariance.  For
+- `after.log_likelihood(theta) - before.log_likelihood(theta)` is
+  $\log p(y_i \mid y_{<i}, \alpha)$ exactly, also under a correlated covariance.  For
   a diagonal covariance it reduces to the single-point marginal, which is
   the paper's setting.
-- With dynesty one nested run per prefix serves every η: the η-posterior
-  weights over the same samples are `logvol + η·logl`.  The cost is then
-  `n` runs, not `n × |η|`.
-- `weight` is a float by type.  Putting a prior on η and sampling it is
-  not SafeBayes and is not coherent, since `p(D|θ)^η` is not a normalised
-  likelihood in η; the design refuses it.
-- The same loop at fixed η with the held-out score of recipe 11 is the
-  cheaper "choose η by held-out predictive"; SafeBayes is its principled
+- With dynesty one nested run per prefix serves every $\eta$: the $\eta$-posterior
+  weights over the same samples are `logvol + eta * logl`.  The cost is then
+  `n` runs, not $n \times |\eta|$.
+- `weight` is a float by type.  Putting a prior on $\eta$ and sampling it is
+  not SafeBayes and is not coherent, since $p(D \mid \alpha)^\eta$ is not a normalised
+  likelihood in $\eta$; the design refuses it.
+- The same loop at fixed $\eta$ with the held-out score of recipe 11 is the
+  cheaper "choose $\eta$ by held-out predictive"; SafeBayes is its principled
   form.
 
 ---
@@ -848,13 +846,13 @@ Expected behaviour:
 
 - One `delta_t` column per type in `problem.names`, shared by every comparison of
   that type through the same `Parameter` object.
-- `Σ_ii = y_err_i² + (δ_T (y_i + ym_i) / 2)²`.  Because the term scales
+- $\Sigma_{ii} = \sigma_i^2 + (\delta_T (y_i + y_{m,i}) / 2)^2$.  Because the term scales
   with the prediction it changes with the model parameters; that is
   allowed.
 - The democratic and federal variants are `Constraint(weight=)`.  The
   published text describes them as a rescaling of the covariance, which
-  would also change `logdet`; the authors have confirmed that what was
-  actually done is a scaling of the whole log-likelihood by `k/N`, which
+  would also change `logdet`; what was done (the authors, private
+  communication) is a scaling of the whole log-likelihood by `k/N`, which
   is tempering.  The federal form is one constraint per data type, holding
   every comparison of that type, with its own weight; each `delta_t` lives in
   its type's constraint, and only the potential parameters are common to
@@ -886,10 +884,10 @@ c_t0 = rx.Constraint([comp], terms=[rx.Term(d.norm_err * comp.space(t0), kind="m
 Expected behaviour:
 
 - With the data-built mode, a fit of a constant `t` to `n` points with
-  statistical error `σ` and fractional normalisation error `s` has the
-  exact closed form `t = ȳ / (1 + (s/σ)² Σ(yᵢ − ȳ)²)`: the fluctuations
+  statistical error $\sigma$ and fractional normalisation error $s$ has the
+  exact closed form $t = \bar y / (1 + (s/\sigma)^2 \sum_i (y_i - \bar y)^2)$: the fluctuations
   feed back into the covariance and pull the estimate low, by
-  `1 / (1 + (n − 1) s²)` in leading-order expectation, independent of `σ`
+  $1 / (1 + (n - 1) s^2)$ in leading-order expectation, independent of $\sigma$
   (two points at 1.5 and 1.0 with `s = 0.2` fit *below both*).  This is
   D'Agostini's bias and the origin of Peelle's Pertinent Puzzle.  The
   prediction-built mode removes that bias; what remains is a smaller pull
@@ -1285,9 +1283,9 @@ Pertinent Puzzle*, Nucl. Data Sheets 118, 364 (2014).
 ## 38. The classic normal hierarchical model (eight schools)
 
 *Several groups each report an estimate `y_j` with a known standard error
-`σ_j`.  I believe the group effects `θ_j` are drawn from a common
-distribution `N(μ, τ²)` and want to learn `μ`, `τ`, and the shrunken
-`θ_j`.*
+$\sigma_j$.  I believe the group effects $\theta_j$ are drawn from a common
+distribution $\mathcal{N}(\mu, \tau^2)$ and want to learn $\mu$, $\tau$, and the shrunken
+$\theta_j$.*
 
 ```python
 d = rx.Dataset(x=np.arange(J), y=estimates, y_err=std_errors)          # x is the group index
@@ -1333,7 +1331,7 @@ Expected behaviour:
   prediction-scaled `diag` term is expressible but is not the book's
   model.
 
-The notebook `hierarchical_calibration` (design document §7) is the
+The notebook `hierarchical_calibration` (design document §6) is the
 parameter-space version of this hierarchy: per-dataset deviation vectors on
 the physics parameters with a hyperprior on their spread, used to repair a
 misspecified energy dependence.
@@ -1382,7 +1380,7 @@ Expected behaviour:
 Reference: Pruitt, Escher, Rahman, *Uncertainty-quantified phenomenological
 optical potentials for single-nucleon scattering*, Phys. Rev. C 107, 014602
 (2023), [arXiv:2211.07741](https://arxiv.org/abs/2211.07741), which rejects
-points more than 3σ from the current model between rounds.
+points more than $3\sigma$ from the current model between rounds.
 
 ## 40. Predict on a new grid, error model included
 
@@ -1500,13 +1498,13 @@ the size of the addition that would lift it.
   the user makes explicitly.  Addition refused by design: the library would be
   inventing the error of a measurement nobody made.
 - **Non-elliptical likelihoods.**  Poisson counts, censored points and upper
-  limits, and two-component good/bad mixtures `(1 − β) N + β t` (Hanson
+  limits, and two-component good/bad mixtures $(1 - \beta) \mathcal{N} + \beta t$ (Hanson
   2007) are not functionals of `(d2, logdet, n)`.  Workaround: none that is
   faithful.  Addition: a `Likelihood` that receives the residual and the
   factor, plus a second evaluation path in `CompiledConstraint`; about 100
   lines.
 - **Chain-dependent masks.**  KDUQ's iterative rejection of points more
-  than 3σ from the current model, updated during the walk, needs a mask
+  than $3\sigma$ from the current model, updated during the walk, needs a mask
   that depends on chain state.  Masks are compiled.  Workaround: an outer
   loop of problems with the mask refit between runs, which is recipe 39.
   Addition refused by design: it is mutable state inside a spec.
@@ -1522,11 +1520,11 @@ the size of the addition that would lift it.
   lines.
 - **Input-dependent mixture likelihoods.**  Bayesian model mixing with a
   per-point two-component Gaussian likelihood (Semposki et al. 2022).  Mean
-  mixing is a `Model` (`w(x; θ) f1 + (1 − w) f2`); the likelihood form is the first bullet.
+  mixing is a `Model` ($w(x; \alpha) f_1 + (1 - w) f_2$); the likelihood form is the first bullet.
 - **Correlation across constraints.**  By construction.  Merge the
   constraints.
 - **A sampled tempering exponent.**  `weight` is a float by type; a
-  sampled `η` is not a coherent posterior.  SafeBayes chooses it outside the
+  sampled $\eta$ is not a coherent posterior.  SafeBayes chooses it outside the
   sampler (recipe 25).
 - **Nonlinear, non-pointwise comparison maps.**  `space` is pointwise so
   the delta method and the log-Jacobian stay exact.  A linear projection is
