@@ -1,31 +1,29 @@
 rxmc
 ====
 
-``rxmc`` is an orchestration layer for Bayesian calibration of reaction models
-to large data sets with flexible, composable covariance modeling.
+``rxmc`` calibrates reaction models to experimental data by Bayesian
+inference, with the error model, statistical and systematic, experimental
+and theoretical, declared explicitly as part of the problem, and the
+calibration driven by external samplers (pocomc, emcee, dynesty, black-box-bayes)
+and, with JAX gradients, by HMC or optimisers.
 
-It is built around two complementary workflows:
+- :doc:`recipes` states every supported use case with its spelling and the
+  behaviour to expect; each recipe is a test.
+- :doc:`examples` are the tutorials for the recipes.
+- :doc:`design` is the maintainer's description of the library, and
+  :doc:`benchmarks` says how fast it is and how the samplers compare.
+- :doc:`api` is the reference.
 
-1. **External-sampler orchestration** via :class:`~rxmc.config.CalibrationConfig`
-   for drivers such as `black-box-bayes <https://github.com/beykyle/black-box-bayes/>`_.
-2. **In-package end-to-end prototyping** via :class:`~rxmc.walker.Walker`
-   for smaller problems where you want to run the full MCMC workflow locally.
-
-The package composes curated experimental data (:class:`~rxmc.observation.Observation`),
-model predictions (:class:`~rxmc.physical_model.PhysicalModel`), uncertainty
-declared as additive covariance :class:`~rxmc.covariance.Term` s (statistical,
-systematic, unknown-noise, and Gaussian-process discrepancy modes), maximal
-blocks of mutually-correlated data (:class:`~rxmc.constraint.Constraint`), and
-full calibration problems (:class:`~rxmc.evidence.Evidence`).
+This is ``rxmc`` 1.0, a rewrite that does not run 0.x code;
+:doc:`installation` says how to pin 0.x.
 
 .. toctree::
    :maxdepth: 1
    :caption: Contents
 
    installation
-   design
-   groundup_design
    recipes
-   bugs_found
-   api
    examples
+   design
+   benchmarks
+   api

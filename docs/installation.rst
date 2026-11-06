@@ -1,59 +1,42 @@
 Installation
 ============
 
-Requirements
-------------
-
-``rxmc`` requires Python 3.10 or later. Core dependencies are listed in
-``requirements.txt`` and are installed automatically.
-
-Development / local use
------------------------
+``rxmc`` requires Python 3.12 or later.  The runtime dependencies are
+``numpy``, ``scipy``, ``jax``, ``tinygp``, ``jitr`` and ``exfor-tools``,
+installed automatically.  ``jitr`` is taken from its ``jax-core`` branch, the
+JAX solver of the next jitr release, until that release is on PyPI; the rxmc
+1.0 pre-releases wait on it too, since PyPI does not accept a git dependency.
+Importing ``rxmc`` turns on JAX's 64-bit mode for the process.  For a GPU,
+install a CUDA build of ``jax`` first (see the JAX installation guide).
+Install from GitHub:
 
 .. code-block:: bash
 
    git clone git@github.com:beykyle/rxmc.git
    cd rxmc
-   pip install -ve .
+   python -m venv .venv && source .venv/bin/activate
+   pip install -e '.[examples]'
 
-It is strongly recommended to use an isolated environment.
+Extras:
 
-``venv``
---------
+===============  =============================================================
+``examples``     emcee, dynesty, pocomc, blackjax, corner, matplotlib, dill,
+                 jupyter: everything the notebooks use (pocomc brings torch;
+                 with ``uv`` it comes from PyTorch's CPU wheels, with ``pip``
+                 install ``torch`` from ``--index-url
+                 https://download.pytorch.org/whl/cpu`` first)
+``validation``   ``examples`` plus pytest, nbmake, nbqa, ruff, black, isort,
+                 and scikit-learn (a reference for the kernel tests)
+``docs``         sphinx, the pydata theme, myst-nb
+``samplers``     ptemcee and PyMC: the extra samplers of
+                 ``benchmarks/bench_samplers.py`` (:doc:`benchmarks`)
+===============  =============================================================
 
-.. code-block:: bash
-
-   python -m venv .rxmc
-   source .rxmc/bin/activate
-   pip install -r requirements.txt
-   pip install -ve .
-
-``uv``
-------
-
-.. code-block:: bash
-
-   uv env create
-   uv env use python
-   uv install -e .
-
-Optional extras
----------------
-
-Install example notebook runtime dependencies:
+The 0.x package, which 1.0 replaces without backwards compatibility, is
+preserved at tag `v0.1.0 <https://github.com/beykyle/rxmc/tree/v0.1.0>`_ and
+on branch `legacy/0.x <https://github.com/beykyle/rxmc/tree/legacy/0.x>`_.
+Pin it with:
 
 .. code-block:: bash
 
-   pip install -ve '.[examples]'
-
-Install the full validation toolchain (formatting, linting, testing):
-
-.. code-block:: bash
-
-   pip install -ve '.[validation]'
-
-Install documentation build dependencies:
-
-.. code-block:: bash
-
-   pip install -ve '.[docs]'
+   pip install git+https://github.com/beykyle/rxmc@v0.1.0

@@ -8,7 +8,7 @@ help:
 	@$(SPHINXBUILD) -M help $(SOURCEDIR) $(BUILDDIR) $(SPHINXOPTS) $(O)
 
 html:
-	test -L examples || ln -sf ../examples examples
+	if [ -d ../examples ]; then test -L examples || ln -sf ../examples examples; fi
 	$(SPHINXBUILD) -b html $(SOURCEDIR) $(BUILDDIR)/html $(SPHINXOPTS) $(O)
 	@echo
 	@echo "Build finished. Open $(BUILDDIR)/html/index.html to view."

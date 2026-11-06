@@ -47,6 +47,9 @@ autodoc_default_options = {
 
 # myst-nb — notebooks are pre-executed; never re-run them during the build
 nb_execution_mode = "off"
+# $...$, $$...$$ and amsmath environments in Markdown and notebooks become
+# math nodes, so MathJax loads and renders them
+myst_enable_extensions = ["dollarmath", "amsmath"]
 
 # MathJax — enable $...$ inline and \[...\] display delimiters used in docstrings
 mathjax3_config = {

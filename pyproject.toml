@@ -35,18 +35,24 @@ docs = [
   "sphinx-copybutton>=0.5",
 ]
 examples = [
+  "blackjax>=1.2",
   "corner>=2.2",
+  "dill>=0.3",
   "dynesty>=2.1",
   "emcee>=3.1",
   "ipykernel>=6.0",
   "jupyter>=1.0",
   "matplotlib>=3.8",
+  "pocomc>=1.2",
+  "torch",  # for pocomc; listed so tool.uv.sources can point it at the CPU wheels
   "tqdm>=4.66",
 ]
 validation = [
   "black>=24.0",
+  "blackjax>=1.2",
   "build>=1.2",
   "corner>=2.2",
+  "dill>=0.3",
   "dynesty>=2.1",
   "emcee>=3.1",
   "ipykernel>=6.0",
@@ -55,9 +61,18 @@ validation = [
   "matplotlib>=3.8",
   "nbmake>=1.5",
   "nbqa>=1.9",
+  "pocomc>=1.2",
   "pytest>=8.0",
   "ruff>=0.6",
+  "scikit-learn>=1.0",
+  "torch",
   "tqdm>=4.66",
+]
+# the sampler benchmark's extra samplers (benchmarks/bench_samplers.py, which
+# also needs the examples extra)
+samplers = [
+  "ptemcee @ git+https://github.com/NuclearTalent/ptemcee_2025@modernize",
+  "pymc>=5.0",
 ]
 
 [tool.setuptools.packages.find]
@@ -71,16 +86,16 @@ write_to = "src/rxmc/__version__.py"
 
 [tool.black]
 line-length = 88
-target-version = ["py310"]
+target-version = ["py312"]
 
 [tool.isort]
 profile = "black"
 line_length = 88
-src_paths = ["src", "test"]
+src_paths = ["src", "test", "test/recipes"]
 
 [tool.ruff]
 line-length = 88
-target-version = "py310"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["F", "I"]
@@ -88,9 +103,24 @@ select = ["F", "I"]
 [tool.ruff.lint.isort]
 # match isort's src_paths = ["src", "test"]: the shared test helpers module is
 # first-party too, so the two sorters agree
-known-first-party = ["rxmc", "helpers"]
+known-first-party = ["rxmc", "helpers", "common", "oracle"]
 
 [tool.pytest.ini_options]
-# bare `pytest` runs the unit suite only; the notebooks are executed in CI via
-# `pytest -n 4 --nbmake --nbmake-timeout=1200 examples`
+# bare `pytest` runs the fast tier: unit tests plus the sampler-free and
+# short-chain assertions of every recipe test.  The converged tier is marked
+# `slow` and runs with `pytest -m slow`, together with a quick run of the
+# notebooks (`RXMC_EXAMPLES_QUICK=1 pytest --nbmake examples`), in the
+# "Converged tier" workflow required on pushes and pull requests to main.  See docs/design.md section 5.
 testpaths = ["test"]
+addopts = "-m 'not slow'"
+markers = [
+  "slow: converged-chain tier; deselected by default, run with -m slow on pushes and PRs to main",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }

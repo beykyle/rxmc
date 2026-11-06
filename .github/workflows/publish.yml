@@ -1,0 +1,53 @@
+name: Publish to PyPI
+
+# Trusted publishing: no token in the repository.  Register the pending
+# publisher on pypi.org (project rxmc, owner beykyle, repository rxmc,
+# workflow publish.yml, environment pypi) before the first tag.  Only 1.x and
+# later tags publish (0.x lives on tag v0.1.0 and branch legacy/0.x), and the
+# build refuses a tag that does not name the version setuptools_scm builds.
+on:
+  push:
+    tags: ["v[1-9]*"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+      - name: Check the tag names the built version
+        run: |
+          python - <<'EOF'
+          import glob, os
+          from packaging.version import Version
+          tag = os.environ["GITHUB_REF_NAME"].removeprefix("v")
+          built = os.path.basename(glob.glob("dist/*.whl")[0]).split("-")[1]
+          if Version(tag) != Version(built):
+              raise SystemExit(f"tag v{tag} builds version {built}: not publishing")
+          print(f"publishing {built}")
+          EOF
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

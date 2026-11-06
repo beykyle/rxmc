@@ -1,20 +1,21 @@
 # Recipes
 
-Short user stories for the ground-up `rxmc` described in `groundup_design.md`.
+Short user stories for `rxmc`, whose design is described in `design.md`.
 Each recipe says what a user wants, how it is spelled, and what behaviour
-they should expect.  Together they are the minimal set of use cases the
-rewrite must support; every one of them is backed by a notebook or a test
-in the current repository, or by a design decision recorded in the design
-document.  Every recipe is also a test: `test/recipes/test_recipe_NN_<slug>.py`
+they should expect.  Every recipe is also a test: `test/recipes/test_recipe_NN_<slug>.py`
 asserts its *Expected behaviour* bullets, and the richest recipes are
-tutorial notebooks (design document §7 and §9).  Snippets assume:
+tutorial notebooks (design document §6).  Snippets assume:
 
 ```python
-import numpy as np, rxmc as rx
+import numpy as np, jax.numpy as jnp, jax.scipy.stats as jst, tinygp, rxmc as rx
 from rxmc import terms as T, transforms as tf
 from scipy import stats
-from sklearn.gaussian_process.kernels import Matern, RBF
 ```
+
+Models, terms, transforms and custom priors are callables written with
+`jax.numpy` (`jnp.exp`, not `np.exp`): the densities are JAX, so gradients
+flow through every piece of the declaration.  `np` is fine for constants
+built outside those callables.
 
 ---
 
@@ -36,7 +37,7 @@ Expected behaviour:
   equals `sum(((y - ym) / y_err)**2)` exactly.
 - `problem.ndim == 2`, `problem.names == ["m", "b"]`, in declaration order.
 - `problem.log_posterior`, `problem.sample_prior(n)`, `problem.prior_transform`
-  are all that emcee or dynesty need (recipe 16).
+  are all that emcee, dynesty or pocomc need (recipe 16).
 
 ## 2. Infer an unknown noise level
 
@@ -46,8 +47,8 @@ infer the noise magnitude alongside the model.*
 ```python
 log_eps = rx.Parameter("log_eps", prior=stats.norm(-2, 2))
 c = rx.Constraint([rx.Comparison(d, line)], terms=[T.noise(log_eps)], statistical=False)
-# or fractional noise:  T.noise_fraction(log_eps)
-# or model error on the average of data and prediction:  T.model_error(log_gamma)
+# or an error proportional to the prediction:  T.proportional_error(log_eps)
+# or proportional to the average of data and prediction:  T.proportional_error(log_gamma, averaging=True)
 # or noise growing along x:  T.noise(log_eps, basis=T.exp_growth(np.pi), basis_params=(slope,))
 ```
 
@@ -55,9 +56,9 @@ Expected behaviour:
 
 - With `statistical=False` the inferred noise *replaces* the reported
   errors; with the default `statistical=True` it is *added* to them.
-- The posterior of `log_eps` reflects the residual scatter.  In the
-  `sampling_algos` scenario its truth is recovered.
-- `noise_fraction` and `model_error` scale with the prediction, so the
+- The posterior of `log_eps` reflects the residual scatter; in
+  `linear_calibration` it recovers the truth.
+- `proportional_error` scales with the prediction, so the
   covariance changes with the model parameters.  That is allowed and costs
   nothing extra.
 
@@ -78,8 +79,8 @@ Expected behaviour:
   prediction-scaled normalisation mode.  Zero magnitudes yield no term.
 - Without the call, neither systematic enters the covariance.  Nothing is
   folded in silently.
-- Re-adding both terms reproduces the pre-0.1 auto-folded covariance to
-  the last digit (`test_regression`, log-likelihood `1.195784087817536`).
+- Adding both terms reproduces the regression pin to the last digit
+  (`test_regression`, log-likelihood `1.195784087817536`).
 - Under `space=tf.log` the modes are propagated by the delta method: the
   offset at the data, the normalisation at the prediction.
 
@@ -93,6 +94,11 @@ log_eta = rx.Parameter("log_eta", prior=stats.norm(-3, 1))
 c = rx.Constraint([comp], terms=[T.normalization(parameter=log_eta)])
 # absolute offset instead:  T.offset(parameter=log_omega)
 # a mode with any shape:     T.systematic(log_s, basis=T.x_basis(np.pi))
+
+# one magnitude per dataset: a parameter and a comparison-local mode each
+etas = [rx.Parameter(f"log_eta_{i}", prior=stats.norm(-3, 1)) for i in range(len(comps))]
+c_each = rx.Constraint(comps, terms=[T.normalization(parameter=e, on=cmp)
+                                     for e, cmp in zip(etas, comps)])
 ```
 
 Expected behaviour:
@@ -100,6 +106,13 @@ Expected behaviour:
 - One rank-one mode `exp(log_eta)**2 * outer(ym, ym)` is added.
 - The model parameters decorrelate from the overall scale of the data; the
   data's normalisation pull moves into `log_eta`.
+- One magnitude per dataset is the same spelling with one parameter and one
+  `on=` per comparison: each mode stays inside its own block, so the
+  datasets remain independent, and each `log_eta_i` is inferred from its own
+  dataset's scatter about the prediction.  This is what to do when an
+  experiment reports no systematic uncertainty at all; recipe 5 shares one
+  magnitude between datasets instead, and recipe 6 puts the scale on the
+  *mean* rather than in the covariance.
 
 ## 5. Share an error model between datasets, or couple them
 
@@ -126,7 +139,7 @@ Expected behaviour:
 - All three spellings have exactly one nuisance parameter.
 - Case B's covariance is block diagonal; case A's has a non-zero
   off-diagonal block.  The two likelihoods differ, and treating case A
-  data as case B is overconfident (`correlated_observations`).
+  data as case B is overconfident.
 - Sharing is by object: two `Parameter("log_eta")` objects would be two
   parameters and a compile error for the duplicate name.
 - Case A costs no more than case B: the cross-comparison mode goes through the
@@ -150,10 +163,12 @@ Expected behaviour:
   parameters follow the model's in `problem.names`.
 - A masked or held-out view of the comparison keeps the same `rho_i` because
   the comparison, not the data, carries the model.
-- Fitting the ρᵢ recovers the true normalisations by MAP
-  (`normalization_inference`); folding the reported σ_sys in as fixed
-  normalisation modes (recipe 3) gives statistically the same model
-  posterior.
+- Fitting the $\rho_i$ recovers normalisations that are consistent with
+  their quoted widths; one tightly mis-quoted dataset sets the overall scale
+  through its prior and biases them all
+  (`normalization_and_covariance_structure`).  Folding the reported
+  $\sigma_\text{sys}$ in as fixed normalisation modes (recipe 3) gives nearly
+  the same model posterior.
 
 ## 7. Absorb model deficiency with a Gaussian process
 
@@ -162,25 +177,61 @@ angle or in momentum transfer, learned from the residuals.*
 
 ```python
 log_A = rx.Parameter("log_A", prior=stats.norm(0, 2))
-gp = T.kernel(Matern(1.0, nu=2.5), on=comp, coords=lambda x: x / np.pi,
+log_ell = T.kernel_params(["length_scale"], [(np.log(1e-5), np.log(1e5))])
+gp = T.kernel(lambda le: tinygp.kernels.Matern52(scale=jnp.exp(le)), log_ell,
+              on=comp, coords=lambda x: x / np.pi,
               amplitude=T.constant_amplitude, amplitude_params=(log_A,))
 # in momentum transfer with amplitude A q^(r/2):
 q = lambda x: rx.reactions.momentum_transfer(x, d.meta["k"])
-gp_q = T.kernel(RBF(1.0), on=comp, coords=q, amplitude=lambda c, lA, r: np.exp(lA) * c.x ** (r / 2),
+gp_q = T.kernel(lambda le: tinygp.kernels.ExpSquared(scale=jnp.exp(le)), log_ell,
+                on=comp, coords=q, amplitude=lambda c, lA, r: jnp.exp(lA) * c.x ** (r / 2),
                 amplitude_params=(log_A, r))
-c = rx.Constraint([comp], terms=[gp])
-band = rx.predictive.total_predictive_band(problem, gp, omp.bind(x_fine, d.meta), x_fine, samples)
+eps = T.noise(rx.Parameter("log_eps", prior=stats.norm(-3, 1)))
+c = rx.Constraint([comp], terms=[eps, gp])
+pred = omp.bind(x_fine, d.meta)
+# the model's own prediction with correlated draws from the inferred covariance
+band = rx.predictive.grid_draws(problem, pred, x_fine, samples, terms=[gp])
+# what a measurement would show: the experimental terms too (recipe 40)
+full = rx.predictive.grid_draws(problem, pred, x_fine, samples, terms=[gp, eps])
+# GP regression on the residuals instead
+fit = rx.predictive.gp_predictive_draws(problem, gp, pred, x_fine, samples, terms=[gp],
+                                        conditioned=True)
 ```
 
 Expected behaviour:
 
-- One parameter per free kernel hyperparameter element, named
-  `discrepancy_<hyperparameter>`, sampled in sklearn's log-theta space.
+- The kernel is a tinygp kernel built from the sampled values by the
+  builder passed to `kernel()`; the builder owns the parameterisation (here
+  a log length scale), so sums, products and anisotropic metrics are one
+  lambda.  The hyperparameters are declared: `kernel_params(names,
+  bounds)` gives `discrepancy_<name>` with a uniform prior on the bounds,
+  or pass any `Parameter` objects.  A tinygp kernel object itself is a
+  fixed kernel.
+- `kernel()` returns a `KernelTerm`, a `Term` that also carries its builder,
+  so the predictive band can be built from the term alone.
 - The model parameters relax from their biased values toward the truth
-  (`gp_discrepancy`); the learned discrepancy tracks the true defect.
-- `total_predictive_band` finds the kernel's columns from the term itself;
-  no column arithmetic.
-- Every error-model form of the α+Ca study reproduces a hand-built dense
+  (`gp_discrepancy`, on the toy).  The mean-zero envelope describes how far
+  the model may stray; it is not a fit to the defect and need not contain it
+  (in `gp_discrepancy` it does over most of the toy's data range and over
+  half of the cross section's grid), and on a model with missing physics some
+  parameters can stay confidently wrong.
+- The kernel declares a **mean-zero** discrepancy, so the likelihood is the
+  marginal $y \sim \mathcal{N}(y_m(\alpha), \Sigma(\alpha))$ and $\alpha$ is inferred with the discrepancy
+  integrated out.  `grid_draws` with the kernel among its `terms` matches
+  that: whole correlated curves drawn from the inferred covariance about the model's own
+  prediction, one per posterior row.  That is a statement about where and by
+  how much *the model* fails.
+- `gp_predictive_draws(..., conditioned=True)` gives the other object, the GP posterior mean given the
+  residuals — data-driven regression on top of the model, which interpolates
+  the residuals rather than describing the model's error.
+  `gp_posterior_predictive` is the same conditioning on bare arrays.
+- `gp_predictive_draws` finds the kernel's constraint, rows and columns
+  from the term itself; no column arithmetic.  Unconditioned it is exactly
+  `grid_draws` on that constraint.  Both predict in the comparison space
+  (`physical=True` maps back), and `return_draws=True` gives the
+  draws themselves, which is what a functional summary (a simultaneous band,
+  an extremum, an integral) needs — well posed only because the draw is joint.
+- Every error-model form of the $\alpha$ + Ca study reproduces a hand-built dense
   matrix (`TestStudyForms`).
 
 ## 8. Sample a mean discrepancy explicitly
@@ -205,26 +256,30 @@ Expected behaviour:
   its constant special case.
 - The GP of recipe 7 may be used alongside it.
 
-## 9. Heavy tails
+## 9. Choose the likelihood functional
 
-*A few points are gross outliers.  I do not want them to drag the fit; I
-want a likelihood that widens instead of breaking.*
+*I want the same covariance under a different functional of the residual:
+the Gaussian, or a pure chi-squared objective.*
 
 ```python
-nu = rx.Parameter("nu", bounds=(1.0, 100.0))          # uniform on the bounds
-c = rx.Constraint([comp], likelihood=rx.StudentT(nu=nu))
+c = rx.Constraint([comp])                                 # rx.Gaussian(), the default
+c_chi2 = rx.Constraint([comp], likelihood=rx.Chi2())      # drops the log-determinant
 ```
 
 Expected behaviour:
 
-- Same covariance, different functional.  The Gaussian version puts the
-  truth at several σ; the Student-t version covers it
-  (`robust_likelihoods`), and the posterior of `nu` is small.
-- The multivariate t applies one radial tail to the whole stacked residual
-  of the constraint.  A comparison that needs Gaussian tails goes in its own
-  constraint.
-- `rx.Chi2()` drops the log-determinant for a pure chi-squared objective.
-- The Student-t value is pinned to its closed form (`test_likelihood`).
+- Same covariance, different functional.  A likelihood is a functional of
+  the Mahalanobis distance, the log-determinant and the number of points,
+  and has no parameters of its own.
+- `rx.Chi2()` is `-chi2 / 2`: it ignores the log-determinant, so it is only
+  right when nothing in the covariance is inferred.  With an inferred error
+  term it rewards inflating the errors without limit.
+- rxmc has no heavy-tailed likelihood.  For outliers, reject them (recipe
+  39); to widen every error bar, infer a global error scale (recipe 34) or
+  temper the likelihood (recipe 12).  A multivariate t of the whole residual
+  is exactly a global error scale with a heavy-tailed prior, so it does not
+  down-weight individual points.
+- Both values are pinned to their closed forms (`test_likelihood`).
 
 ## 10. Compare in log space
 
@@ -269,7 +324,12 @@ Expected behaviour:
 - `fit` and `held` share every `Comparison`, `Term`, and `Parameter`; the two
   problems have identical `names`, so a chain from one scores the other.
 - Active sets are disjoint, their union is every point, and
-  `ll(fit) + ll(held) == ll(full)` for a block-local covariance.
+  `ll(fit) + ll(held) == ll(full)` for a block-local covariance.  When a term
+  spans the split (a GP over several experiments), the held-out problem's
+  own likelihood is the *marginal* of its rows; pass the fitted problem as
+  `given=` to `heldout_log_predictive` / `predictive_draws` for the
+  conditional `p(y_held | y_fit, theta)` under the full covariance (recipes
+  28 and 30).
 - Terms are authored once over all points; masking selects rows, it never
   rebuilds anything.
 
@@ -287,7 +347,8 @@ Expected behaviour:
 - The log-likelihood of that constraint is multiplied by `weight`; the
   prior is never touched.  One knob, honoured by every driver.
 - Empirical coverage of the posterior predictive (recipe 17) moves toward
-  the nominal level as the weight decreases (`overconfidence`).
+  the nominal level as the weight decreases, for an overconfident
+  predictive (`overconfidence`).
 
 ## 13. Declare priors
 
@@ -297,7 +358,7 @@ to work with nested sampling.*
 
 ```python
 log_eps = rx.Parameter("log_eps", prior=stats.halfnorm(scale=1))            # marginal
-nu      = rx.Parameter("nu", bounds=(1, 100))                               # uniform on bounds
+width   = rx.Parameter("width", bounds=(1, 100))                            # uniform on bounds
 V       = rx.Parameter("V", prior=stats.norm(50, 5), bounds=(30, 70))       # truncated marginal
 problem = rx.Problem([c], priors=[(omp.params, stats.multivariate_normal(mu, cov))])   # joint block
 ```
@@ -311,6 +372,12 @@ Expected behaviour:
   `u = 0` and `u = 1`.
 - `problem.sample_prior(n)` gives an `(n, ndim)` array suitable as emcee's
   starting positions.
+- The log density is JAX.  Scipy marginals of the families in
+  `rx.problem.JAX_LOGPDFS` (norm, uniform, truncnorm, gamma, beta, lognorm,
+  halfnorm, cauchy, halfcauchy, t, expon, laplace, logistic, invgamma) are
+  translated; any other family needs `Parameter(..., logpdf=f)` with `f`
+  written in `jax.numpy`, or compile names the parameter.  A custom joint's
+  `logpdf` must be `jax.numpy` too, and is checked at compile.
 
 ## 14. From an EXFOR measurement to a dataset
 
@@ -321,6 +388,10 @@ units with nothing lost.*
 ```python
 d = rx.from_measurement(m, reaction=reaction, quantity="dXS/dA")      # or "dXS/dRuth", "Ay"
 d_ias = rx.from_measurement(m, reaction=reaction, ExIAS=Ex)           # (p,n) IAS channel
+d_dict = rx.from_measurement({"x": deg, "y": y, "statistical_err": dy, "Einc": E,
+                              "quantity": "dXS/dRuth", "y_units": "no-dim",
+                              "systematic_norm_err": 0.0, "systematic_offset_err": 0.0},
+                             reaction=reaction)                       # or a plain dict
 ```
 
 Expected behaviour:
@@ -335,6 +406,10 @@ Expected behaviour:
   is everything a reaction model needs to bind.
 - Incompatible units, or a quantity the measurement cannot be converted
   to, raise at conversion time.
+- Angles must be in the CM frame: a measurement whose `x_units` is
+  `LAB-degrees` raises; convert it to CM first.
+- Any object with the `Distribution` field names works, and so does a
+  `dict` with those keys; a missing field raises, naming it.
 
 ## 15. Evaluate a reaction model on any grid
 
@@ -345,9 +420,10 @@ grid for plotting, with the solver set up once per grid.*
 omp = rx.reactions.ElasticXS("dXS/dA", central, spin_orbit, args_from_params, params,
                              lmax=20, wavelengths_beyond_range=2.0, zeros_per_node=5)
 comp = rx.Comparison(d, omp)                                   # bound to d.x, d.meta
-fine = omp.bind(np.deg2rad(np.linspace(0.5, 179.5, 200)), d.meta)
-ys = [fine(*s[problem.columns(omp.params)]) for s in samples[::50]]
-band = rx.predictive.predictive_band(ys, levels=(5, 50, 95))
+x_fine = np.deg2rad(np.linspace(0.5, 179.5, 200))
+fine = omp.bind(x_fine, d.meta)
+band = rx.predictive.grid_draws(problem, fine, x_fine, samples[::50], model_only=True,
+                                levels=(5, 50, 95))
 ```
 
 Expected behaviour:
@@ -362,10 +438,20 @@ Expected behaviour:
 
 ## 16. Drive the calibration with an external sampler
 
-*I want to use emcee, dynesty, or the `black-box-bayes` CLI, and read the
-chain back without positional arithmetic.*
+*I want to use pocomc, emcee, dynesty, or the `black-box-bayes` CLI, and
+read the chain back without positional arithmetic.*
 
 ```python
+# pocomc: sample the unit cube, so the evidence is the problem's own
+def log_likelihood(u):                               # rows of the unit cube
+    return problem.log_likelihood_batch(problem.prior_transform_batch(u))
+smc = pocomc.Sampler(pocomc.Prior([stats.uniform(0, 1)] * problem.ndim),
+                     log_likelihood, vectorize=True,
+                     n_effective=4096, n_active=2048)  # 8x the defaults
+smc.run(); u, _, _ = smc.posterior(resample=True)
+samples = problem.prior_transform_batch(u)
+logz = rx.diagnostics.logz_summary(*smc.evidence())
+
 # emcee
 p0 = problem.sample_prior(32)
 sampler = emcee.EnsembleSampler(32, problem.ndim, problem.log_posterior)
@@ -382,10 +468,32 @@ dill.dump(problem, open("problem.pkl", "wb"))        # posterior.py delegates si
 
 Expected behaviour:
 
-- Chains from all three are `(n, ndim)` arrays in `problem.names` order.
+- Chains from all of them are `(n, ndim)` arrays in `problem.names` order.
   Every analysis function takes `(problem, samples)`.
-- `log_posterior` evaluates the prior first and never calls the forward
-  model when the prior is `-inf`.
+- `log_posterior` evaluates the prior first and never runs the forward
+  model when the prior is `-inf` (a `lax.cond` inside the compiled density).
+- On a concrete `theta` the densities return Python floats; they are
+  compiled with `jax.jit` once per problem, and `grad_log_posterior`,
+  `value_and_grad_log_posterior` and `hessian_log_posterior` serve
+  gradient-based samplers (HMC/NUTS in blackjax or numpyro) and optimisers.
+- Gradient samplers (HMC/NUTS in blackjax or numpyro) take
+  `log_posterior_unconstrained`: recipe 41.
+- pocomc samples a prior of its own; given the unit cube and the likelihood
+  of `prior_transform(u)` it samples the problem's prior exactly, whatever
+  its marginals, and its evidence is the problem's.  It is the sampler the
+  reaction notebooks use: on the p + $^{40}$Ca optical model, whose posterior has
+  two separated islands, it is the only benchmarked sampler not shown wrong
+  against the reference, at eight times its default `n_effective` and
+  `n_active`, and even there it is wrong on one seed of three.  Below that,
+  how it weighs the islands changes from run to run, so run it more than
+  once and compare ([benchmarks](benchmarks.md)).
+- Parallelism: `log_posterior_batch` with emcee's `vectorize=True` needs no
+  pool, and `log_prior_batch`, `log_likelihood_batch` and
+  `prior_transform_batch` serve other vectorised samplers (pocomc above;
+  ptemcee through its `mapper`), the densities each one `jax.vmap` call
+  over the rows.  dynesty cannot batch its calls (each live point's walk
+  is sequential); for process pools and MPI see the design document,
+  "Parallel sampling" (fork-started pools can deadlock under JAX).
 - `dill.loads(dill.dumps(problem)).log_posterior(theta)` equals
   `problem.log_posterior(theta)`, workspaces included.
 - `problem.NDIM`, `problem.parameter_names`, `problem.starting_location`,
@@ -397,16 +505,32 @@ Expected behaviour:
 contain 68 % of the points, and how wide are they?*
 
 ```python
-draws = rx.diagnostics.predictive_draws(problem, samples, constraint=0, n_rep=4)
+band = rx.diagnostics.predictive_draws(problem, samples, constraint=0, n_rep=4)   # (16, 50, 84) %
+phys = rx.diagnostics.predictive_draws(problem, samples, n_rep=4, physical=True) # in the data's units
+draws = rx.diagnostics.predictive_draws(problem, samples, n_rep=4, return_draws=True)
 cov = rx.diagnostics.coverage_curve(draws, problem.constraints[0].y[problem.constraints[0].active])
 err = rx.diagnostics.coverage_error(draws, y_active)
 width = rx.diagnostics.sharpness(draws, transform=np.exp)      # widths in physical space for a log fit
+# the model plus its discrepancy alone, without the experimental uncertainty
+model_side = rx.diagnostics.predictive_draws(problem, samples, terms=[gp], statistical=False)
 ```
 
 Expected behaviour:
 
 - Draws are `ym(theta) + L z` on the active points in comparison space;
   `model_only=True` returns `ym(theta)` and assembles no covariance.
+- The return is a percentile band by default, the draws with
+  `return_draws=True` — the convention `grid_draws` and
+  `gp_predictive_draws` share.  Coverage and sharpness need the draws.
+  At points that were never measured, use `grid_draws` (recipe 40).
+- `terms=` and `statistical=` choose which pieces of the error model a draw
+  carries; the default is all of them.  Model plus discrepancy and model plus
+  discrepancy plus experimental uncertainty are different objects, and only
+  the second is what measured data should be compared against — so a coverage
+  or sharpness check always uses the default.  The first answers a different
+  question: what the fit says about the *model's* prediction.  The same two
+  arguments select on `constraints[i].matrix(theta)`; `given=` conditions
+  under the full covariance and cannot be combined with a selection.
 - Coverage is near nominal for a correct error model and clearly below
   it for an overconfident one.
 - `logz_summary` reports the max of the replicate half-range and the
@@ -415,17 +539,17 @@ Expected behaviour:
 
 ## 18. Compare error models by evidence
 
-*The α+Ca study: several error models for data without reported errors.
+*The $\alpha$ + Ca study: several error models for data without reported errors.
 I want the evidence for each, comparable across comparison spaces.*
 
 ```python
 models = {
     "L0": rx.Constraint([comp_log], terms=[T.noise(log_eps)], statistical=False),
-    "E0": rx.Constraint([comp_lin], terms=[T.noise_fraction(log_eps)], statistical=False),
-    "L2y": rx.Constraint([comp_log], terms=[T.noise(log_eps), T.normalization(log_sys)], statistical=False),
+    "E0": rx.Constraint([comp_lin], terms=[T.proportional_error(log_eps)], statistical=False),
+    "L2n": rx.Constraint([comp_log], terms=[T.noise(log_eps), T.offset(log_sys)], statistical=False),
     "Lgp": rx.Constraint([comp_log], terms=[T.noise(log_eps), gp], statistical=False),
-    "L0t": rx.Constraint([comp_log], terms=[T.noise(log_eps)], statistical=False, likelihood=rx.StudentT()),
 }
+# the labels are defined in the table below this block
 logz = {}
 for name, c in models.items():
     p = rx.Problem([c.masked_where(lambda x: x < cut)], priors=priors)
@@ -433,6 +557,26 @@ for name, c in models.items():
     logz[name] = rx.diagnostics.logz_summary(res.logz[-1] + p.log_jacobian(), res.logzerr[-1])
 verdict = rx.diagnostics.compare_logz(logz["Lgp"], logz["L0"])
 ```
+
+The error-model ladder of the study, in the words a reader needs.  All
+forms are covariances of the residual in log space unless stated; `theta`
+is the scattering angle in radians and `u = theta / pi`.
+
+| label | error model |
+|---|---|
+| `L0` | constant noise: `sigma = err` on every point |
+| `E0` | fractional noise in linear space: `sigma_i = err * ym_i` |
+| `L1` | noise growing with angle: `sigma(theta) = err * exp(slope * u)` |
+| `L2` | `L0` plus one correlated mode proportional to angle, `sys * u` |
+| `L2n` | `L0` plus a free correlated offset mode, `sys * 1` (in log space, a normalisation) |
+| `L12` | `L1` plus the angle mode of `L2` |
+| `Lgp` | `L0` plus a Matérn(5/2) Gaussian process in `u` with constant amplitude |
+| `Lgpn` | `L0` plus the Gaussian process with an angle-growing amplitude |
+| `LKp` | noise, an offset mode, and an RBF Gaussian process in momentum transfer `q = 2 k sin(theta/2)` with amplitude `A q^(r/2)` |
+
+The test suite builds every covariance row of this table against a
+hand-built dense matrix, and a test compares the table above with the
+legend the tests carry, so the two cannot drift.
 
 Expected behaviour:
 
@@ -451,7 +595,7 @@ model no helper expresses.*
 ```python
 fixed = rx.Term(C, on=comp)                                       # any symmetric PD matrix
 stat  = rx.Term(sig, kind="diag", on=comp)                        # a fixed std-dev vector
-custom = rx.Term(lambda c, e, l: np.exp(e) * np.exp(l * c.x / np.pi), (log_e, slope), kind="diag")
+custom = rx.Term(lambda c, e, l: jnp.exp(e) * jnp.exp(l * c.x / np.pi), (log_e, slope), kind="diag")
 ```
 
 Expected behaviour:
@@ -459,10 +603,13 @@ Expected behaviour:
 - A plain array is a fixed contribution, factored once.  Shape and
   symmetry are checked at construction against the term's `on`.
 - A callable sees a `TermContext` with `x` (through `coords`), `y`, `ym`,
-  and `len(c)`; it returns a vector for `diag`/`mode` or a matrix.
+  `len(c)`, per-point `c.meta(key)`, and, for a term spanning several
+  comparisons, `c.segments`/`c.labels`/`c.split(a)` giving the rows of
+  each comparison in the gathered stack; it returns a vector for
+  `diag`/`mode` or a matrix.
 - Fitting correlated data with the correct `Term(C)` instead of its
   diagonal is the difference between an honest and an overconfident
-  posterior (`normalization_inference` gallery).
+  posterior (`normalization_and_covariance_structure` gallery).
 
 ## 20. Preprocess instead of asking for a feature
 
@@ -529,8 +676,9 @@ log_A0 = rx.Parameter("log_A0", prior=stats.norm(0, 2))
 p      = rx.Parameter("p", prior=stats.norm(0, 1))
 ell    = rx.Parameter("gp_length", prior=stats.norm(0, 1))
 
-amp = lambda c, lA, p: np.exp(lA) * (c.meta("Elab") / 50.0) ** p
-terms = [T.kernel(Matern(1.0, nu=2.5), on=comp, params=[ell],
+amp = lambda c, lA, p: jnp.exp(lA) * (c.meta("Elab") / 50.0) ** p
+matern52 = lambda le: tinygp.kernels.Matern52(scale=jnp.exp(le))
+terms = [T.kernel(matern52, [ell], on=comp,
                   amplitude=amp, amplitude_params=(log_A0, p)) for comp in comps]
 c = rx.Constraint(comps, terms=terms)
 ```
@@ -543,26 +691,28 @@ Expected behaviour:
 - `c.meta("Elab")` is the comparison's energy broadcast to every point of the
   support, so the amplitude function is written once and works on any
   comparison.  On a term spanning comparisons it is the per-point concatenation.
-- Without `params=[ell]`, each `kernel` call would derive its own length
-  scale, one per dataset.  That is also a legitimate model; it is just not
-  this one.
+- With one `kernel_params(["length_scale"], [(-3, 1)], prefix=f"gp{i}")` per call,
+  each dataset has its own length scale.  That is also a legitimate model;
+  it is just not this one.  Two calls declaring the same name with distinct
+  objects fail compile on the duplicate name.
 - The comparisons stay uncorrelated, so the constraint is on the structured
   path.
 
 ## 23. A discrepancy correlated across energies and angles
 
 *I believe the model's defect varies smoothly in both energy and angle.  I
-want one GP over (E, θ) that correlates the datasets at different
+want one GP over $(E, \theta)$ that correlates the datasets at different
 energies.*
 
 ```python
-kE, kθ = RBF(10.0), Matern(0.3, nu=2.5)
 lE, lθ, log_A = (rx.Parameter(n, prior=stats.norm(0, 1)) for n in ("log_lE", "log_ltheta", "log_A"))
 
 def fn(c, lE, lθ, lA):
     E, θ = c.meta("Elab")[:, None], c.x[:, None]
-    K = kE.clone_with_theta([lE])(E) * kθ.clone_with_theta([lθ])(θ)     # separable product
-    return np.exp(2 * lA) * K + 1e-10 * np.eye(len(c))
+    kE = tinygp.kernels.ExpSquared(scale=jnp.exp(lE))
+    kθ = tinygp.kernels.Matern52(scale=jnp.exp(lθ))
+    K = kE(E, E) * kθ(θ, θ)                                         # separable product
+    return jnp.exp(2 * lA) * K + 1e-10 * jnp.eye(len(c))
 
 md = rx.Term(fn, (lE, lθ, log_A), kind="matrix", on=comps)
 c = rx.Constraint(comps, terms=[md])
@@ -579,7 +729,7 @@ Expected behaviour:
   one-dimensional kernels is the factorised form.  There is no Kronecker
   speed-up because datasets share no angle grid.
 - The dense matrix equals the hand-built product kernel on the stacked
-  `(E, θ)` inputs.
+  $(E, \theta)$ inputs.
 
 ## 24. Per-dataset parameters drawn from a sampled hyperprior
 
@@ -591,10 +741,11 @@ rhos = [rx.Parameter(f"log_rho_{i}") for i in range(len(comps))]    # no margina
 log_tau = rx.Parameter("log_tau")
 
 class RhoHierarchy:
-    def logpdf(self, v):                       # v ordered as (rhos..., log_tau)
+    def logpdf(self, v):                       # v ordered as (rhos..., log_tau); jax.numpy
         *r, lt = v
-        return (stats.norm(0, np.exp(lt)).logpdf(r).sum()
-                + stats.halfnorm(scale=0.3).logpdf(np.exp(lt)) + lt)    # hyperprior on tau, with Jacobian
+        tau = jnp.exp(lt)
+        return (jst.norm.logpdf(jnp.stack(r), scale=tau).sum()           # jst = jax.scipy.stats
+                + jnp.log(2.0) + jst.norm.logpdf(tau, scale=0.3) + lt)  # half-normal hyperprior, Jacobian
     def prior_transform(self, u):              # hyperparameter first, children given it
         lt = np.log(stats.halfnorm(scale=0.3).ppf(u[-1]))
         return np.append(stats.norm(0, np.exp(lt)).ppf(u[:-1]), lt)
@@ -617,9 +768,9 @@ Expected behaviour:
 
 ## 25. SafeBayes: learn the tempering exponent
 
-*I suspect my model is misspecified and want the tempering exponent η
+*I suspect my model is misspecified and want the tempering exponent $\eta$
 chosen by the data rather than by hand, following Grünwald's SafeBayes
-(arXiv:1412.3730): minimise the prequential log-loss of the η-generalised
+(arXiv:1412.3730): minimise the prequential log-loss of the $\eta$-generalised
 posterior over prefixes of the data.*
 
 ```python
@@ -645,20 +796,20 @@ final = rx.Problem([replace(c, weight=eta_hat)], priors)
 Expected behaviour:
 
 - `replace(c, weight=eta)` and `c.masked(...)` share every comparison, term and
-  parameter with `c`, so no workspace is rebuilt across the `n × |η|`
+  parameter with `c`, so no workspace is rebuilt across the $n \times |\eta|$
   problems and every problem has the same `names`.
-- `after.log_likelihood(θ) − before.log_likelihood(θ)` is
-  `log p(y_i | y_<i, θ)` exactly, also under a correlated covariance.  For
+- `after.log_likelihood(theta) - before.log_likelihood(theta)` is
+  $\log p(y_i \mid y_{<i}, \alpha)$ exactly, also under a correlated covariance.  For
   a diagonal covariance it reduces to the single-point marginal, which is
   the paper's setting.
-- With dynesty one nested run per prefix serves every η: the η-posterior
-  weights over the same samples are `logvol + η·logl`.  The cost is then
-  `n` runs, not `n × |η|`.
-- `weight` is a float by type.  Putting a prior on η and sampling it is
-  not SafeBayes and is not coherent, since `p(D|θ)^η` is not a normalised
-  likelihood in η; the design refuses it.
-- The same loop at fixed η with the held-out score of recipe 11 is the
-  cheaper "choose η by held-out predictive"; SafeBayes is its principled
+- With dynesty one nested run per prefix serves every $\eta$: the $\eta$-posterior
+  weights over the same samples are `logvol + eta * logl`.  The cost is then
+  `n` runs, not $n \times |\eta|$.
+- `weight` is a float by type.  Putting a prior on $\eta$ and sampling it is
+  not SafeBayes and is not coherent, since $p(D \mid \alpha)^\eta$ is not a normalised
+  likelihood in $\eta$; the design refuses it.
+- The same loop at fixed $\eta$ with the held-out score of recipe 11 is the
+  cheaper "choose $\eta$ by held-out predictive"; SafeBayes is its principled
   form.
 
 ---
@@ -679,7 +830,8 @@ errors and scaled with the average of datum and prediction.*
 ```python
 delta = {t: rx.Parameter(f"delta_{t}", prior=stats.halfnorm(scale=s0[t])) for t in ("dxs", "ay", "sig_tot")}
 comps = [rx.Comparison(d, omp_for(d)) for d in datasets]
-terms = [T.model_error(delta[d.meta["type"]], averaging=True, on=comp) for d, comp in zip(datasets, comps)]
+terms = [T.proportional_error(delta[d.meta["type"]], averaging=True, log=False, on=comp)
+         for d, comp in zip(datasets, comps)]   # log=False: delta is the fraction itself
 c = rx.Constraint(comps, terms=terms)          # statistical=True: reported errors are a floor
 
 # KDUQ additionally scales the whole log-likelihood by k/N ("democratic"), or
@@ -695,13 +847,13 @@ Expected behaviour:
 
 - One `delta_t` column per type in `problem.names`, shared by every comparison of
   that type through the same `Parameter` object.
-- `Σ_ii = y_err_i² + (δ_T (y_i + ym_i) / 2)²`.  Because the term scales
+- $\Sigma_{ii} = \sigma_i^2 + (\delta_T (y_i + y_{m,i}) / 2)^2$.  Because the term scales
   with the prediction it changes with the model parameters; that is
   allowed.
 - The democratic and federal variants are `Constraint(weight=)`.  The
   published text describes them as a rescaling of the covariance, which
-  would also change `logdet`; the authors have confirmed that what was
-  actually done is a scaling of the whole log-likelihood by `k/N`, which
+  would also change `logdet`; what was done (the authors, private
+  communication) is a scaling of the whole log-likelihood by `k/N`, which
   is tempering.  The federal form is one constraint per data type, holding
   every comparison of that type, with its own weight; each `delta_t` lives in
   its type's constraint, and only the potential parameters are common to
@@ -732,11 +884,17 @@ c_t0 = rx.Constraint([comp], terms=[rx.Term(d.norm_err * comp.space(t0), kind="m
 
 Expected behaviour:
 
-- With the data-built mode, a fit of a constant to `n` points with fractional
-  normalisation error `s` is biased low by the factor `1 / (1 + n s²)`,
-  growing without bound in `n`.  This is D'Agostini's bias and the origin of
-  Peelle's Pertinent Puzzle.  With the prediction-built mode the estimate is
-  unbiased; an additive offset mode has no such bias either way.
+- With the data-built mode, a fit of a constant `t` to `n` points with
+  statistical error $\sigma$ and fractional normalisation error $s$ has the
+  exact closed form $t = \bar y / (1 + (s/\sigma)^2 \sum_i (y_i - \bar y)^2)$: the fluctuations
+  feed back into the covariance and pull the estimate low, by
+  $1 / (1 + (n - 1) s^2)$ in leading-order expectation, independent of $\sigma$
+  (two points at 1.5 and 1.0 with `s = 0.2` fit *below both*).  This is
+  D'Agostini's bias and the origin of Peelle's Pertinent Puzzle.  The
+  prediction-built mode removes that bias; what remains is a smaller pull
+  from the log-determinant, which grows with the fitted value, and the
+  `t0` refit removes that too.  An additive offset mode has no such bias
+  either way.
 - `normalization()` reads `c.ym`, so the default spelling is the safe one.
   A free `log_eta` (recipe 4) also multiplies the prediction.
 - The `t0` mode makes the covariance constant, so it is factored once;
@@ -771,7 +929,8 @@ w = maximise(lambda w: np.sum(logsumexp(np.log(w)[:, None] + S, axis=0)), simple
 Expected behaviour:
 
 - Held-out log densities are joint over the held-out comparison and exact
-  under a correlated covariance; PSIS-LOO per point is not available
+  under a correlated covariance (`given=fit` when a term spans the fitted
+  and the held-out comparisons); PSIS-LOO per point is not available
   without per-point likelihood factors (closing section).
 - Stacking weights need not sum to the evidence weights; in the M-open
   setting they are the ones to prefer.
@@ -835,7 +994,7 @@ for i, comp in enumerate(comps):
     p    = rx.Problem([fit], priors)
     s    = run(p)
     held = rx.Problem([fit.complement()], priors)
-    draws = rx.diagnostics.predictive_draws(held, s, n_rep=4)
+    draws = rx.diagnostics.predictive_draws(held, s, n_rep=4, given=p)   # conditional on the fit
     tol = np.percentile(np.abs(draws - draws.mean(0)), 90, axis=0)      # tolerance bound per point
     cov = rx.diagnostics.coverage_curve(draws, held.constraints[0].y[held.constraints[0].active])
 ```
@@ -844,7 +1003,9 @@ Expected behaviour:
 
 - The held-out comparison's covariance terms are the same objects as in the fit;
   a GP discrepancy conditioned on the other experiments carries into the
-  prediction through `predictive_draws`.
+  prediction through `predictive_draws(..., given=p)`, which draws from
+  `p(y_held | y_fit, theta)` under the full covariance.  Without `given=` the
+  draws use the marginal block, which forgets what the fit taught the GP.
 - Coverage on the held-out experiment is the honest check; in-sample
   coverage is not.
 - Tolerance bounds are empirical percentiles of the draws, componentwise.
@@ -862,8 +1023,8 @@ model.*
 ```python
 ranks = []
 for theta0 in problem.sample_prior(n_sims, rng):
-    y_sim = rx.diagnostics.predictive_draws(problem, theta0[None], n_rep=1)[0]
-    d_sim = dataclasses.replace(d, y=comp.space.inverse(y_sim))            # back to physical units
+    y_sim = rx.diagnostics.predictive_draws(problem, theta0[None], n_rep=1, return_draws=True, physical=True)[0]
+    d_sim = dataclasses.replace(d, y=y_sim)                                # already in physical units
     p_sim = rx.Problem([rx.Constraint([rx.Comparison(d_sim, model)], terms=terms)], priors)
     s = run(p_sim)[::thin][:L]
     ranks.append((s < theta0).sum(0))                                 # one rank per column
@@ -877,6 +1038,9 @@ Expected behaviour:
   bias.
 - Chains must be thinned to roughly independent draws first, or spurious
   boundary spikes appear.
+- `comp.space.inverse` is defined for every built-in parameter-free space
+  (`identity`, `log`, `exp`), so the simulated data go back to physical
+  units regardless of the comparison space.
 - SBC validates the computation under the assumed model; it says nothing
   about whether the model fits real data; that is the posterior predictive
   coverage check of recipe 17.
@@ -893,12 +1057,14 @@ in the likelihood.*
 
 ```python
 emu = rx.Model(lambda x, *theta: emulator.mean(theta), params)             # x ignored: the grid is the design's
-emu_var = rx.Term(lambda c, *theta: np.sqrt(emulator.var(theta)), params, kind="diag", on=comp)
+emu_var = rx.Term(lambda c, *theta: jnp.sqrt(emulator.var(theta)), params, kind="diag", on=comp)
 c = rx.Constraint([rx.Comparison(d, emu)], terms=[emu_var, T.noise(log_eps)])
 ```
 
 Expected behaviour:
 
+- The emulator's `mean` and `var` must be written in `jax.numpy` (a GP
+  emulator in tinygp is), so the chain can differentiate through them.
 - The term declares the *same* `Parameter` objects as the model, so it
   receives the current `theta` and can evaluate the emulator variance
   there.  No special mechanism.
@@ -920,11 +1086,11 @@ et al., Technometrics 49, 138 (2007).
 it is good enough.*
 
 ```python
-from scipy.optimize import minimize
-res = minimize(lambda t: -problem.log_posterior(t), problem.sample_prior(1)[0], method="L-BFGS-B",
-               bounds=problem.bounds)
-H = numerical_hessian(lambda t: -problem.log_posterior(t), res.x)
+fit = rx.optimize.find_map(problem, n_starts=8, rng=0)   # L-BFGS-B, exact gradient, from 8 prior draws
+H = -problem.hessian_log_posterior(fit.x)                # exact, by automatic differentiation
 cov = np.linalg.inv(H)                                   # Laplace covariance
+print(fit.ends)                                          # log posterior at each search's end: local modes?
+mle = rx.optimize.find_mle(problem, rng=0)               # the likelihood's maximum, the same way
 ```
 
 Expected behaviour:
@@ -935,7 +1101,15 @@ Expected behaviour:
   not; compare against a chain before reporting.
 - This is the dominant uncertainty-propagation practice in nuclear DFT
   (inverse Hessian at the optimum, propagated linearly).
-- `problem.bounds` feeds the optimiser; the prior handles the rest.
+- `find_map` searches inside `problem.support`, the bounds narrowed by the
+  priors' supports, and keeps the best of its starts; `fit.ends` shows
+  whether the others stopped in other modes.  `find_mle` has the same
+  signature and return, maximising the likelihood.  A hierarchy's
+  likelihood has a ridge of maxima rather than one, so its MLE is one point
+  of many; start samplers from the MAP or from prior draws instead.
+- A search is never silently wrong: `fit.n_success` counts the starts that
+  converged, and a `RuntimeWarning` quotes scipy's message when the best one
+  did not.  `options=` reaches scipy (e.g. `{"maxiter": 500}`).
 
 References: Pruitt, Lovell, Hebborn, Nunes, *The role of the likelihood for
 elastic scattering uncertainty quantification*, arXiv:2403.00753; Schunck
@@ -949,7 +1123,7 @@ component per experimental technique.*
 
 ```python
 log_s = rx.Parameter("log_s", prior=stats.norm(0, 0.5))
-scaled = rx.Term(lambda c, ls: np.exp(ls) * comp.y_err, (log_s,), kind="diag", on=comp)   # closes over the comparison's errors
+scaled = rx.Term(lambda c, ls: jnp.exp(ls) * comp.y_err, (log_s,), kind="diag", on=comp)   # closes over the comparison's errors
 c = rx.Constraint([comp], terms=[scaled], statistical=False)               # s multiplies every stated error
 
 # USU: one unknown, fully correlated component per technique, shared across its datasets
@@ -960,8 +1134,6 @@ usu = [T.offset(parameter=log_delta[tech], on=[comp for comp in comps if comp.da
 
 Expected behaviour:
 
-- Under a Student-t likelihood only a modest scale is needed where least
-  squares needs a large one, because the tail absorbs the outliers.
 - A global Birge-type rescaling inflates every point equally and is judged
   poor evaluation practice; the targeted USU component is preferred, added
   only when other explanations are exhausted.
@@ -1035,39 +1207,86 @@ Expected behaviour:
 Reference: Higdon, Gattiker, Williams, Rightley, J. Am. Stat. Assoc. 103,
 570 (2008).
 
-## 37. Correlated systematics between observables of one measurement
+## 37. Correlated normalisations between quantities of one experiment
 
-*One experiment reports both a cross section and an analysing power, and
-they share a normalisation or an angle calibration.*
+*One experiment reports several physical quantities, each measured one or
+more times, all multiplied by normalisations that were themselves measured
+with correlated uncertainties.  I want the covariance across the quantities
+built so that it does not bias the evaluation.*
+
+This is the two-and-more-dimensional Peelle's Pertinent Puzzle of Neudecker,
+Frühwirth, Kawano and Leeb (reference below).  Quantity `i` is
+`rho_i = alpha_i * eta_i`; `alpha_i` is measured as `q_i` (once or several
+times, independent errors `sigma_i`) and `eta_i` as `N_i`, the `N_i` sharing
+a covariance `B` with correlation `c`.  The reported data are the products
+`r_i = q_i N_i`.
 
 ```python
-comp_xs = rx.Comparison(d_xs, rx.reactions.ElasticXS("dXS/dA", *pot, params=p))
-comp_ay = rx.Comparison(d_ay, rx.reactions.ElasticXS("Ay", *pot, params=p))
-log_eta = rx.Parameter("log_eta", prior=stats.norm(-3, 1))
-c = rx.Constraint([comp_xs, comp_ay], terms=[T.normalization(log_eta, on=comp_xs),        # the ratio is unaffected
-                                       T.systematic(log_dtheta, basis=dydtheta, on=[comp_xs, comp_ay])])
+# one comparison per quantity; the model is the quantity itself
+rhos = [rx.Parameter(f"rho_{i}", prior=stats.norm(r_i.mean(), 10.0)) for i in range(n)]
+comps = [rx.Comparison(rx.Dataset(np.full(len(r_i), i), r_i, N_i * sigma_i, label=f"q{i}"),
+                       rx.Model(lambda x, rho: jnp.full(len(x), rho), [rho_i]))
+         for i, (r_i, rho_i) in enumerate(zip(products, rhos))]
+frac = sigma_N / N                                  # fractional normalisation errors
+corr = np.array([[1, c], [c, 1]])                   # the correlation matrix of the N_i
+
+def normalisations(c):                              # C_I: built from the prediction
+    u = jnp.concatenate([f * ym for f, ym in zip(frac, c.split(c.ym))])
+    which = np.concatenate([np.full(s.stop - s.start, k) for k, s in enumerate(c.segments)])
+    return jnp.outer(u, u) * corr[np.ix_(which, which)]
+
+c_I = rx.Constraint(comps, terms=[rx.Term(normalisations, kind="matrix", on=comps)])
+c_F = rx.Constraint(comps, terms=[rx.Term(normalisations_from(y), kind="matrix", on=comps)])  # Peelle: from the data
 ```
 
 Expected behaviour:
 
-- Two datasets, two comparisons, one constraint; the shared systematic is a
-  mode spanning both comparisons (case A of recipe 5).
-- A normalisation error affects the cross section and not a ratio
-  observable; an angle-calibration error affects both through their
-  angular derivatives, which the basis supplies from `c.ym` and `c.x`.
-- The multi-quantity extension of the Peelle treatment applies: build the
-  mode from predictions, not data.
+- One `Constraint`, one `matrix` term spanning every comparison.  A
+  spanning term sees the gathered stack, so the term reads its per-quantity
+  pieces through `c.segments` / `c.split` and pairs them with the
+  normalisation correlation matrix.
+- With the covariance built from the *data* (`C_F`, eq. 11 of the
+  reference) the posterior mean under a flat prior is the generalised
+  least-squares solution and is biased low: `<rho_1>_F = qbar_1 N_1 / (1 +
+  xi)` with `xi = (q_1 - q_1')^2 sigma_N1^2 var(alpha_1) / (N_1^2 sigma_1^2
+  sigma_1'^2)`, and `<rho_2>_F` is pulled down through `c` even though
+  `alpha_2` was measured once; the variances and the covariance are
+  deflated in their normalisation parts (eqs. 13-17).  The fast tier pins
+  these closed forms exactly.
+- With the covariance built from the *estimate* (`C_I`, eq. 12: the
+  weighted means, in rxmc a constant term built from a first estimate and
+  refit, recipe 27) the means are `qbar_i N_i` and the variances
+  `var(alpha_i) N_i^2 + sigma_Ni^2 qbar_i^2`, with covariance
+  `c qbar_1 qbar_2 sigma_N1 sigma_N2` (eqs. 18-22): no puzzle.
+- The *live* term reading `c.ym` is the generative model's marginal
+  likelihood, not `C_I`: its covariance grows with the prediction, so the
+  log-determinant pulls the mode below the exact values (5 % in the
+  two-quantity case, 9 % in the five-quantity one, against 23 % and about
+  30 % for `C_F`), and under a flat prior the `1 / rho` tail pulls the mean
+  above them.  A proper prior on the quantities, or the refit, removes the pull.
+- The five-quantity numerical study of the reference (its Table I: `q_i`
+  = {1.0, 1.5}, {1.8}, {2.2, 2.4}, {1.9, 1.5}, {1.4, 1.2}; `N_i` = 1, 1.1,
+  1.25, 1.15, 1.05; `sigma_i = 0.1 q_i`, `sigma_Ni = 0.2 N_i`, `c = 0.8`)
+  reproduces its Fig. 1: `C_F` gives lower means and smaller standard
+  deviations on every lattice point, `C_I` agrees with the exact values
+  (both exact in the fast tier, being generalised least squares).
+- Analysing powers are *not* an instance of this recipe: a ratio of cross
+  sections has a fixed normalisation, so nothing correlated can be inferred
+  for it.  The real-data case of the reference (`237Np(n,f)` measured
+  relative to `235U(n,f)` by three experiments, converted with the standard
+  and its covariance) has the same structure with the standard's covariance
+  as `B`.
 
 Reference: Neudecker, Frühwirth, Kawano, Leeb, *Adequate treatment of
-correlated experimental data in nuclear data evaluations*, Nucl. Data Sheets
-118, 364 (2014).
+correlated experimental data in nuclear data evaluations avoiding Peelle's
+Pertinent Puzzle*, Nucl. Data Sheets 118, 364 (2014).
 
 ## 38. The classic normal hierarchical model (eight schools)
 
 *Several groups each report an estimate `y_j` with a known standard error
-`σ_j`.  I believe the group effects `θ_j` are drawn from a common
-distribution `N(μ, τ²)` and want to learn `μ`, `τ`, and the shrunken
-`θ_j`.*
+$\sigma_j$.  I believe the group effects $\theta_j$ are drawn from a common
+distribution $\mathcal{N}(\mu, \tau^2)$ and want to learn $\mu$, $\tau$, and the shrunken
+$\theta_j$.*
 
 ```python
 d = rx.Dataset(x=np.arange(J), y=estimates, y_err=std_errors)          # x is the group index
@@ -1075,19 +1294,19 @@ mu      = rx.Parameter("mu", prior=stats.norm(0, 25))
 log_tau = rx.Parameter("log_tau", prior=stats.norm(1, 1))
 
 # 1. marginalised: integrate the theta_j out; y_j ~ N(mu, sigma_j^2 + tau^2)
-c_marg = rx.Constraint([rx.Comparison(d, rx.Model(lambda x, mu: np.full(len(x), mu), [mu]))],
+c_marg = rx.Constraint([rx.Comparison(d, rx.Model(lambda x, mu: jnp.full(len(x), mu), [mu]))],
                        terms=[T.noise(log_tau)])
 # theta_j afterwards, from the conditional normal at each draw (mu, tau):
 #   mean = (y_j / s_j^2 + mu / tau^2) / (1 / s_j^2 + 1 / tau^2), var = 1 / (1 / s_j^2 + 1 / tau^2)
 
 # 2. non-centred: theta_j = mu + tau * eta_j, eta_j ~ N(0, 1); marginal priors only
 etas = [rx.Parameter(f"eta_{j}", prior=stats.norm(0, 1)) for j in range(J)]
-school = rx.Model(lambda x, mu, lt, *eta: mu + np.exp(lt) * np.asarray(eta), [mu, log_tau, *etas])
+school = rx.Model(lambda x, mu, lt, *eta: mu + jnp.exp(lt) * jnp.stack(eta), [mu, log_tau, *etas])
 c_nc = rx.Constraint([rx.Comparison(d, school)])
 
 # 3. centred: theta_j as parameters, hyperprior as a joint block including mu, tau (recipe 24)
 thetas = [rx.Parameter(f"theta_{j}") for j in range(J)]
-c_c = rx.Constraint([rx.Comparison(d, rx.Model(lambda x, *th: np.asarray(th), thetas))])
+c_c = rx.Constraint([rx.Comparison(d, rx.Model(lambda x, *th: jnp.stack(th), thetas))])
 problem_c = rx.Problem([c_c], priors=[(thetas + [mu, log_tau], SchoolHierarchy())])
 ```
 
@@ -1113,7 +1332,7 @@ Expected behaviour:
   prediction-scaled `diag` term is expressible but is not the book's
   model.
 
-The notebook `hierarchical_calibration` (design document §7) is the
+The notebook `hierarchical_calibration` (design document §6) is the
 parameter-space version of this hierarchy: per-dataset deviation vectors on
 the physics parameters with a hyperprior on their spread, used to repair a
 misspecified energy dependence.
@@ -1123,22 +1342,173 @@ Analysis*, 3rd ed., CRC Press (2013), Chapter 5.
 
 ---
 
+## 39. Iterative outlier rejection
+
+*A few points are gross outliers.  I want to reject them and refit, the way
+KDUQ does, rather than widen every error bar to accommodate them.*
+
+```python
+mask = np.ones(d.n, dtype=bool)
+for _ in range(max_rounds):                  # an outer loop of problems
+    p = rx.Problem([c.masked([mask])])
+    theta = map_estimate(p)                  # or a chain, and its posterior mean
+    pull = np.abs(d.y - p.constraints[0].ym(theta)) / d.y_err
+    keep = pull < 3.0
+    if np.array_equal(keep, mask):
+        break                                # the mask has stopped moving
+    mask = keep
+rejected = c.masked([mask]).complement()     # what went, for the record
+```
+
+Expected behaviour:
+
+- Masks are compiled, so rejection is an *outer* loop: every round is a new
+  `Problem` over the same `Comparison`, `Term` and `Parameter` objects, and
+  the parameters keep their columns (recipe 11).  A mask that moved inside
+  the chain would be mutable state inside a spec, which the design refuses
+  (*What this API does not express*).
+- The loop either reaches a fixed point or cycles between two masks; cap the
+  rounds, and report which points went and after how many rounds.  Given the
+  starting mask and a deterministic fit it is reproducible.
+- Rejection and inflation are different answers to the same question.  A
+  global error scale (recipe 34) or tempering (recipe 12) keeps every point
+  and widens; rejection commits to a subset and fits it tightly.  Score them the same way, by holding out
+  (recipe 11) or by evidence (recipe 18), and note that the evidence of a
+  fit to a subset is not comparable with the evidence of a fit to all of it.
+- Nothing is deleted: the rejected points stay in the declaration and
+  `complement()` names them, so a later round can take them back.
+
+Reference: Pruitt, Escher, Rahman, *Uncertainty-quantified phenomenological
+optical potentials for single-nucleon scattering*, Phys. Rev. C 107, 014602
+(2023), [arXiv:2211.07741](https://arxiv.org/abs/2211.07741), which rejects
+points more than $3\sigma$ from the current model between rounds.
+
+## 40. Predict on a new grid, error model included
+
+*I have a posterior, and I want predictions at `x` I never measured — a fine
+plotting grid, an extrapolation — carrying the uncertainty my error model
+declares, not only the spread of the model curves.*
+
+```python
+log_sigma = rx.Parameter("log_sigma", prior=stats.norm(np.log(0.2), 1.0))
+c = rx.Constraint([comp], terms=[T.noise(log_sigma)], statistical=False)
+problem = rx.Problem([c])
+pred = line.bind(x_fine)
+model_band = rx.predictive.grid_draws(problem, pred, x_fine, samples, model_only=True)
+full_band = rx.predictive.grid_draws(problem, pred, x_fine, samples, n_rep=2)
+draws = rx.predictive.grid_draws(problem, pred, x_fine, samples, return_draws=True)
+# several experiments in one constraint: say which one the grid stands for
+band_a = rx.predictive.grid_draws(problem_ab, pred, x_fine, samples, comparison=comp_a)
+```
+
+Expected behaviour:
+
+- For each row the model is evaluated on the grid and every selected term is
+  re-evaluated there from its own definition, with the model's prediction
+  standing in for `c.y` and the predictor's `meta` for `c.meta`; one
+  correlated draw is taken from the sum.  At the measured points with
+  every term a function, it draws from the same distribution as
+  `predictive_draws`.
+- Any term that is a function of the `TermContext` travels: `noise`,
+  `proportional_error`, `normalization`/`offset`/`systematic` with
+  a parameter or a scalar magnitude, a `kernel`, a user's
+  `Term(fn, params, kind="matrix")`, and the normalisation mode
+  `reported_terms()` builds from a scalar `norm_err`.
+- A term that is an array has no value at a new `x`: the reported
+  statistical errors (`statistical=True`), a fixed `Term(array)`, a per-point
+  `magnitude=`, a function closing over the measured rows.  Drawing it would
+  invent the error of a measurement nobody made, so `grid_draws` raises and
+  names the term.  The remedies are `predictive_draws` at the data, an
+  explicit `terms=[...]` (`model_only=True` for the model alone), or an error
+  model that is a function of `x`, as above.  Interpolating reported errors is
+  a modelling choice, and is written as such a function.
+- `model_only=True` and the default are different objects: the uncertainty of
+  the *curve* and the uncertainty of a *measurement* at that `x`.  At the data
+  the first under-covers and the second is calibrated (recipe 17).  A
+  discrepancy (recipe 7) is a third source, between the two.
+- With several comparisons in the constraint, `terms=None` needs
+  `comparison=`: a term belonging to one experiment, drawn on a grid, means a
+  future measurement by that experiment.
+- The band is the default return, `(len(levels), len(x_pred))`, as for
+  `predictive_draws` and `gp_predictive_draws`; `return_draws=True` gives the
+  draws, whole correlated curves, so a functional summary is well posed.
+
+## 41. Sample with gradients (HMC/NUTS)
+
+*My problem has many parameters, or a sampler that walks without gradients
+mixes slowly on it.  I want the No-U-Turn sampler, driven by the exact
+gradient of the posterior.*
+
+```python
+import blackjax, jax
+
+logdensity = problem.log_posterior_unconstrained       # the posterior on R^ndim
+z0 = problem.to_unconstrained(rx.optimize.find_map(problem, rng=0).x)   # start at the MAP
+warmup = blackjax.window_adaptation(blackjax.nuts, logdensity)
+(state, tuned), _ = warmup.run(jax.random.key(0), z0, num_steps=1000)
+step = jax.jit(blackjax.nuts(logdensity, **tuned).step)
+
+def one_step(state, key):
+    state, info = step(key, state)
+    return state, (state.position, info.is_divergent)
+
+_, (zs, divergent) = jax.lax.scan(one_step, state, jax.random.split(jax.random.key(1), 1000))
+samples = jax.vmap(problem.to_theta)(zs)                # rows in problem.names order
+```
+
+Expected behaviour:
+
+- `log_posterior_unconstrained(z)` is `log_posterior(to_theta(z))` plus the
+  log-Jacobian of the map.  A parameter's support is its bounds narrowed by
+  its prior's (a uniform or half-normal prior bounds it without `bounds=`);
+  with one finite end it is sampled as the log of its distance from it, with
+  two as the logit of its position between them, unbounded as itself.  It is finite, with a
+  finite gradient, on all of `R^ndim`, so a trajectory never meets the
+  `-inf` wall `log_posterior` has at a bound, and `to_theta` maps every
+  draw back inside the bounds.
+- The density is compiled once per problem; blackjax traces it once more
+  inside its own `jit`, and the gradient is the exact one through the
+  models, the covariance and the reaction solver.
+- The chain is read back by name, like any other: `samples[:,
+  problem.columns(V)]`.  Divergences are blackjax's `info.is_divergent`;
+  a few are a warning that the step size is too large for the geometry, many
+  are a funnel (a scale parameter near zero) the parametrisation should
+  remove.
+- rxmc owns no sampler: this is blackjax's API, and numpyro's NUTS takes the
+  same density as `potential_fn=lambda z: -logdensity(z)`.  Which sampler to
+  use is a question of the problem: NUTS for many parameters and a smooth,
+  unimodal posterior (a hierarchy, recipe 38, started from prior draws
+  rather than the MAP: a non-centred hierarchy's mode trades small
+  deviations for a large spread, away from the bulk of the posterior);
+  emcee for a few; pocomc for
+  an optical model, whose posterior is correlated and may have several
+  modes; dynesty or pocomc for the evidence (recipes 16, 18).
+  The notebook `gradient_based_sampling` compares NUTS and emcee, and the
+  [benchmarks](benchmarks.md) page every sampler on the same problems.
+
 ## What this API does not express
 
 Each item names the assumption that breaks, the nearest workaround, and
 the size of the addition that would lift it.
 
+- **Reported point-by-point errors at a new `x`.**  A statistical error
+  quoted for each measured point has no value where nothing was measured, so
+  `grid_draws` refuses to carry it (recipe 40).  Workaround: an error model
+  that is a function of `x` — inferred noise, or an interpolation of the
+  reported errors written as a `Term` of `c.x` — which is a modelling choice
+  the user makes explicitly.  Addition refused by design: the library would be
+  inventing the error of a measurement nobody made.
 - **Non-elliptical likelihoods.**  Poisson counts, censored points and upper
-  limits, and two-component good/bad mixtures `(1 − β) N + β t` (Hanson
+  limits, and two-component good/bad mixtures $(1 - \beta) \mathcal{N} + \beta t$ (Hanson
   2007) are not functionals of `(d2, logdet, n)`.  Workaround: none that is
   faithful.  Addition: a `Likelihood` that receives the residual and the
   factor, plus a second evaluation path in `CompiledConstraint`; about 100
   lines.
 - **Chain-dependent masks.**  KDUQ's iterative rejection of points more
-  than 3σ from the current model, updated during the walk, needs a mask
+  than $3\sigma$ from the current model, updated during the walk, needs a mask
   that depends on chain state.  Masks are compiled.  Workaround: an outer
-  loop of problems with the mask refit between runs.  Addition refused by
-  design: it is mutable state inside a spec.
+  loop of problems with the mask refit between runs, which is recipe 39.
+  Addition refused by design: it is mutable state inside a spec.
 - **Per-point latent variables.**  Errors-in-variables in `x` (Berkson),
   explicit latent function values on a mesh (Schnabel et al. 2021), or a
   sampled per-point scale in a scale mixture.  Expressible in principle as
@@ -1151,11 +1521,11 @@ the size of the addition that would lift it.
   lines.
 - **Input-dependent mixture likelihoods.**  Bayesian model mixing with a
   per-point two-component Gaussian likelihood (Semposki et al. 2022).  Mean
-  mixing is a `Model` (`w(x; θ) f1 + (1 − w) f2`); the likelihood form is the first bullet.
+  mixing is a `Model` ($w(x; \alpha) f_1 + (1 - w) f_2$); the likelihood form is the first bullet.
 - **Correlation across constraints.**  By construction.  Merge the
   constraints.
 - **A sampled tempering exponent.**  `weight` is a float by type; a
-  sampled `η` is not a coherent posterior.  SafeBayes chooses it outside the
+  sampled $\eta$ is not a coherent posterior.  SafeBayes chooses it outside the
   sampler (recipe 25).
 - **Nonlinear, non-pointwise comparison maps.**  `space` is pointwise so
   the delta method and the log-Jacobian stay exact.  A linear projection is
