@@ -19,11 +19,12 @@ from pathlib import Path
 
 from bench_samplers import (
     BUDGETS,
+    MARK,
     REFERENCES,
-    TOLERANCE,
     errors,
     run_pocomc,
     usable_reference,
+    verdict,
 )
 from problems import PROBLEMS, mode_share
 
@@ -84,8 +85,7 @@ def report(saved, refs):
         else:
             pairs = [errors(r, ref) for r in rs]
             scores = ", ".join(
-                f"{b:.2f} / {w:.2f}" + ("" if max(b, w) <= TOLERANCE else " ✗")
-                for b, w in pairs
+                f"{b:.2f} / {w:.2f}" + MARK[verdict(max(b, w), ref)] for b, w in pairs
             )
         share = ", ".join(f"{r['mode_share']:.2f}" for r in rs if "mode_share" in r)
         logz = ", ".join(f"{r['logz']:.2f}" for r in rs)

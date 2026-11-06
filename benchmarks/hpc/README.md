@@ -31,7 +31,7 @@ needs all of them), and the benchmark times a sampler as a user runs it.
 ## Selecting what to run
 
 ```bash
-# the refresh of the three optical-model problems (84 tasks in 10 arrays)
+# the three optical-model problems, every kind (84 tasks in 10 arrays)
 python benchmarks/hpc/submit.py --problems omp alpha_gp n40ca_gp --kinds ref run sweep seed
 # every problem (default kinds: ref run sweep)
 python benchmarks/hpc/submit.py --all

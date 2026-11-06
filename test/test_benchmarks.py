@@ -229,7 +229,7 @@ def test_a_reference_of_other_parameters_is_refused_and_a_doubtful_one_flagged(
     with pytest.raises(ValueError, match="does not name"):
         bench_samplers.usable_reference("p", ["x"], dict(mean=[0.0], sd=[1.0]))
     bench_samplers.usable_reference("p", ["x"], dict(ref, corroborated=False))
-    assert "not corroborated" in capsys.readouterr().out
+    assert "not corroborated" in capsys.readouterr().err
 
 
 def test_merge_drops_the_reference_of_a_redefined_problem(tmp_path):
@@ -249,3 +249,18 @@ def test_seed_tasks_refuse_any_problem_but_gp():
 
     with pytest.raises(ValueError, match="'gp'"):
         task.run("seed", "omp", 0)
+
+
+def test_a_verdict_within_the_references_resolution_is_unresolved():
+    import bench_samplers as b
+
+    exact = dict(mean=[0.0], sd=[1.0], method="quadrature")
+    assert [b.verdict(e, exact) for e in (0.09, 0.11)] == ["ok", "wrong"]
+    checked = dict(exact, corroboration=dict(bias=0.05, width=0.02))
+    assert b.resolution(checked) == 0.05
+    assert [b.verdict(e, checked) for e in (0.04, 0.06, 0.14, 0.16)] == [
+        "ok",
+        "unresolved",
+        "unresolved",
+        "wrong",
+    ]

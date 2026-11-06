@@ -68,6 +68,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
 from pathlib import Path
 
@@ -119,10 +120,10 @@ BUDGETS["n40ca_gp"] = dict(BUDGETS["omp"])
 RHAT_MAX = 1.01
 #: largest bias and width error, in reference standard deviations
 TOLERANCE = 0.1
-#: the settings of the samplers that start from the prior: the cheapest that
-#: are correct on ``elastic`` over three seeds (the defaults are not, and no
-#: setting tried is correct on the funnels gp and modes; docs/benchmarks.md).
-#: ``omp`` sets its own pocomc resolution in ``BUDGETS``
+#: the settings of the samplers that start from the prior: every setting
+#: swept is correct on ``elastic`` and none on both funnels, gp and modes
+#: (docs/benchmarks.md).  The optical-model problems set their own pocomc
+#: resolution in ``BUDGETS``
 DYNESTY = dict(nlive=500, sample="rwalk")
 POCOMC = dict(n_effective=1024, n_active=512)
 
@@ -524,9 +525,34 @@ def errors(r, ref):
     return float(bias.max()), float(np.abs(np.log(np.divide(r["sd"], sd))).max())
 
 
+def resolution(ref):
+    """How far the reference itself may be off, in its standard deviations:
+    the larger of the bias and width gaps between it and its independent
+    check (the pooled dynesty runs), or 0 for an exact or uncorroborated
+    reference."""
+    check = (ref or {}).get("corroboration")
+    return max(check["bias"], check["width"]) if check else 0.0
+
+
+def verdict(e, ref):
+    """``"ok"``, ``"wrong"`` or ``"unresolved"`` for an error ``e`` against
+    ``TOLERANCE``: within the reference's :func:`resolution` of the tolerance
+    on either side, the reference cannot tell."""
+    r = resolution(ref)
+    if e > TOLERANCE + r:
+        return "wrong"
+    return "ok" if e <= TOLERANCE - r else "unresolved"
+
+
+MARK = {"ok": "", "wrong": " ✗", "unresolved": " ?"}
+
+
 def correct(r, ref):
-    """Converged, and (given a reference) within ``TOLERANCE`` of it."""
-    return converged(r) and (ref is None or max(errors(r, ref)) <= TOLERANCE)
+    """Converged, and (given a reference) not shown wrong by it: within
+    ``TOLERANCE``, or within the reference's resolution of it."""
+    return converged(r) and (
+        ref is None or verdict(max(errors(r, ref)), ref) != "wrong"
+    )
 
 
 PHASES = ("search", "warmup", "sampling", "evidence")
@@ -547,8 +573,8 @@ def _row(v, ref):
     bias = width = "—"
     if ref is not None:
         b, w = errors(v, ref)
-        bias = f"{b:.2f}" + ("" if b <= TOLERANCE else " ✗")
-        width = f"{w:.2f}" + ("" if w <= TOLERANCE else " ✗")
+        bias = f"{b:.2f}" + MARK[verdict(b, ref)]
+        width = f"{w:.2f}" + MARK[verdict(w, ref)]
     total = sum(v["calls"].values())
     share = [f"{100 * v['calls'][k] / total:.0f}%" for k in PHASES]
     rhat = v.get("max_rhat")
@@ -597,7 +623,10 @@ def usable_reference(name, names, ref):
         ("corroborated", "the dynesty check disagrees"),
     ):
         if ref.get(flag) is False:
-            print(f"WARNING: {name}'s reference is not {flag}: {meaning}")
+            print(
+                f"WARNING: {name}'s reference is not {flag}: {meaning}",
+                file=sys.stderr,
+            )
     return ref
 
 
