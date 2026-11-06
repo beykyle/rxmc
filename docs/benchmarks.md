@@ -132,22 +132,29 @@ against a posterior of $0.31 \pm 0.04$.  The other problems' budgets are in
 dynesty runs rwalk with 500 live points, and pocomc 1024/512, on every
 problem but the three optical-model ones, where pocomc runs at 4096/2048
 (below).  Every setting of this sweep, the defaults included, is correct on
-`elastic`; none is correct on both funnels, `gp` and `modes`.  Bias /
-width, the worst over three seeds, from a run on one local machine whose
-files are not in `results/`:
+`elastic`; none is correct on the funnels, `gp` and `modes`, on more than
+one seed of three.  Bias / width, the worst over seeds 100, 101 and 102
+(`sweep_pocomc.py --grid` on `benchmarks/results/hpc/sweep_{gp,modes,elastic}.json`,
+run on the cluster):
 
 | setting | `gp` | `modes` | `elastic` |
 |---|---|---|---|
-| dynesty rwalk, 200 live points (default) | 0.54 / 0.45 | | 0.02 / 0.04 |
-| dynesty rwalk, 500 | 0.21 / 0.11 | 0.13 / 0.22 | 0.04 / 0.02 |
-| dynesty rslice, 250 | 0.08 / 0.09 | 0.22 / 0.19 | 0.02 / 0.03 |
-| dynesty rslice, 500 | 0.12 / 0.07 | 0.13 / 0.08 | 0.05 / 0.03 |
-| pocomc 512/256 (default) | 0.63 / 0.51 | | 0.02 / 0.02 |
-| pocomc 1024/512 | 0.61 / 0.42 | 0.59 / 0.30 | 0.02 / 0.03 |
-| pocomc 2048/1024 | 0.35 / 0.13 | 0.16 / 0.08 | 0.02 / 0.01 |
+| dynesty rwalk, 200 live points (default) | 0.26 / 0.41 ✗ | 0.70 / 0.45 ✗ | 0.04 / 0.07 |
+| dynesty rwalk, 500 | 0.42 / 0.38 ✗ | 0.22 / 0.17 ✗ | 0.04 / 0.02 |
+| dynesty rslice, 250 | 0.35 / 0.39 ✗ | 0.30 / 0.34 ✗ | 0.06 / 0.04 |
+| dynesty rslice, 500 | 0.36 / 0.29 ✗ | 0.15 / 0.14 ✗ | 0.06 / 0.04 |
+| pocomc 512/256 (default) | 0.69 / 0.59 ✗ | 0.53 / 0.30 ✗ | 0.03 / 0.02 |
+| pocomc 1024/512 | 0.81 / 0.51 ✗ | 0.42 / 0.25 ✗ | 0.02 / 0.02 |
+| pocomc 2048/1024 | 0.53 / 0.58 ✗ | 0.17 / 0.11 ✗ | 0.03 / 0.02 |
 
-rslice with 250 live points is correct on `gp` alone; more resolution
-helps on the funnels, but slowly (see the discussion).
+On the funnels a run's error scatters from seed to seed as much as from
+setting to setting: dynesty rslice with 250 live points is 0.35 / 0.39,
+0.19 / 0.16 and 0.06 / 0.29 on `gp`, so one run says little about a
+setting.  (An earlier sweep on one local machine, whose files were not
+kept, found that setting correct on `gp`; these seeds do not reproduce it.)
+More resolution helps on `modes`, where pocomc 2048/1024 is correct on
+one seed (0.09 / 0.06) and dynesty rslice's worst halves from 250 to 500
+live points, but not visibly on `gp` (see the discussion).
 
 The three optical-model problems need much more.  `omp` has two islands,
 about 87 % of its posterior in a narrow one about the MAP and the rest in a
@@ -167,7 +174,7 @@ island (0.131 in the reference) and of `alpha_gp`'s deeper family (0.740):
 | `omp` | 4096/2048 | 0.17 / 0.12 ✗, 0.07 / 0.05 ?, 0.04 / 0.05 ? | 0.16, 0.15, 0.14 | -6.66, -6.64, -6.69 | 824–889 s |
 | `alpha_gp` | 1024/512 | 0.47 / 0.81 ✗, 0.11 / 0.05 ?, 0.30 / 0.07 ✗ | 0.96, 0.76, 0.66 | -84.75, -84.55, -84.54 | 376–431 s |
 | `alpha_gp` | 2048/1024 | 0.14 / 0.04 ?, 0.10 / 0.07 ?, 0.10 / 0.05 ? | 0.72, 0.79, 0.75 | -84.53, -84.13, -84.57 | 528–632 s |
-| `alpha_gp` | 4096/2048 | 0.04 / 0.01 ?, 0.02 / 0.01 ?, 0.07 / 0.02 ? | 0.73, 0.74, 0.71 | -84.50, -84.52, -84.55 | 928–1089 s |
+| `alpha_gp` | 4096/2048 | 0.04 / 0.01, 0.02 / 0.01, 0.07 / 0.02 ? | 0.73, 0.74, 0.71 | -84.50, -84.52, -84.55 | 928–1089 s |
 | `n40ca_gp` | 1024/512 | 0.29 / 0.05 ✗, 0.40 / 0.13 ✗, 0.16 / 0.14 ? |  | -11.33, -11.40, -11.32 | 129–150 s |
 | `n40ca_gp` | 2048/1024 | 0.05 / 0.09 ?, 0.31 / 0.12 ✗, 0.12 / 0.06 ? |  | -11.35, -11.40, -11.36 | 190–206 s |
 | `n40ca_gp` | 4096/2048 | 0.10 / 0.05 ?, 0.03 / 0.08 ?, 0.09 / 0.10 ? |  | -11.36, -11.35, -11.34 | 305–338 s |
@@ -234,7 +241,7 @@ reference's resolution.
   resolution $r$, the larger of the bias and width gaps between the two: an
   error more than $r$ above the tolerance is marked ✗, and one within $r$ of
   it, on either side, ? (the reference cannot tell).  $r$ is 0 for the
-  exact and NUTS references, 0.07 on `omp`, 0.16 on `alpha_gp` and 0.15 on
+  exact and NUTS references, 0.07 on `omp`, 0.05 on `alpha_gp` and 0.12 on
   `n40ca_gp`.
 - **The ESS of weighted draws is optimistic.**  For dynesty and pocomc it is
   [Kish's](https://en.wikipedia.org/wiki/Effective_sample_size) ESS of the
@@ -263,7 +270,7 @@ reference's resolution.
 |---|---|---|
 | `linear`, `gp`, `hierarchy` | exact moments and log Z | the log posterior is quadratic in all but a few parameters (none; the GP's log variance and log length scale; the hierarchy's $\tau$).  At each node of a grid over those, one Newton step over the rest lands on the conditional mode, and the Hessian there is the conditional precision, both exact for a quadratic; the conditional normalisers weight the nodes. |
 | `modes`, `elastic` | moments | one long blackjax NUTS run, 4 chains $\times$ (1000 warm-up + 3000 draws) at target acceptance 0.95, from a ball about the MAP with a seed of its own, accepted only with a rank-normalised R-hat $\le$ 1.01 and no divergences (R-hat 1.001, 1.001; min bulk ESS 2475, 3920).  Chains started from prior draws can stick in a minor mode: on `modes`, one with a log posterior 40 below the main one. |
-| `omp`, `alpha_gp`, `n40ca_gp` | moments and log Z | three pocomc runs at 8192/4096, sixteen times its defaults, each with a seed of its own, pooled; accepted only if every run is within 0.05 of the pool; then checked against three dynesty runs (rslice, 1000 live points; nine on `alpha_gp`), pooled the same way (log Z's error is half the runs' range or the largest quoted error, whichever is larger), on log Z (within twice the combined error), the mode share (within 0.03) and the moments (within 0.2 sd).  A NUTS reference cannot work on `omp`: its chains stay in the island they start in.  All three are accepted (their pocomc runs agree to 0.018, 0.012 and 0.042); `omp` and `n40ca_gp` are corroborated, `alpha_gp` is not (below). |
+| `omp`, `alpha_gp`, `n40ca_gp` | moments and log Z | three pocomc runs at 8192/4096, sixteen times its defaults, each with a seed of its own, pooled; accepted only if every run is within 0.05 of the pool; then checked against dynesty runs (rslice, 1000 live points; three on `omp`, fifty on `alpha_gp` and `n40ca_gp`), pooled the same way (log Z's error is half the runs' range or the largest quoted error, whichever is larger), on log Z (within twice the combined error), the mode share (within 0.03) and the moments (within 0.2 sd).  A NUTS reference cannot work on `omp`: its chains stay in the island they start in.  All three are accepted (their pocomc runs agree to 0.018, 0.012 and 0.042); all three are corroborated (below). |
 
 The benchmarked NUTS rows on `modes` and `elastic`, and the pocomc rows on
 the three optical-model problems, are scored against runs that share their
@@ -275,20 +282,25 @@ moment gaps is the reference's resolution $r$:
 | problem | log Z, pocomc / dynesty | moments, bias / width | mode share, pocomc / dynesty | corroborated |
 |---|---|---|---|---|
 | `omp` | -6.65 ± 0.04 / -6.40 ± 0.25 | 0.04 / 0.07 | 0.131 / 0.121 away from the MAP island | yes |
-| `alpha_gp` | -84.53 ± 0.01 / -84.58 ± 0.59 | 0.16 / 0.03 | 0.740 / 0.787 in the deeper family | **no**: the share, by 0.047 |
-| `n40ca_gp` | -11.34 ± 0.01 / -11.84 ± 0.28 | 0.15 / 0.09 | (one mode) | yes |
+| `alpha_gp` | -84.53 ± 0.01 / -84.50 ± 0.82 | 0.05 / 0.02 | 0.740 / 0.756 in the deeper family | yes |
+| `n40ca_gp` | -11.34 ± 0.01 / -11.53 ± 0.87 | 0.07 / 0.12 | (one mode) | yes |
 
-`alpha_gp`'s reference is kept, marked `corroborated: false` (the tables
-say so), because the share's disagreement is within dynesty's noise as far
-as can be told: single dynesty runs put 0.55 to 0.90 of the mass in the
-deeper family, so even nine pooled carry a standard error of 0.035 on the
-share, and the gap is 1.3 of those.  The pocomc runs agree on 0.739 to
-0.743, and the sweep's 4096/2048 runs on 0.71 to 0.74.  log Z agrees within
-its error; the moments agree within the check's 0.2 sd but not within the
-tolerance (0.16, in $V$), so every `alpha_gp` verdict within 0.16 of the
-tolerance is ?.  What the check does not rule out is a bias pocomc shares
-across its own runs; the 0.03 bar on the share would take about fifty
-dynesty runs at these settings to test.
+`alpha_gp` needed fifty dynesty runs.  Single runs put 0.46 to 0.91 of the
+mass in the deeper family, so nine pooled (0.787) carried a standard error
+of 0.035 on the share and could not test the 0.03 bar; fifty carry 0.015,
+and their 0.756 is 0.016 from pocomc's 0.740 (whose three runs agree on
+0.739 to 0.743, and the sweep's 4096/2048 runs on 0.71 to 0.74).  The
+moment gap fell with it, from 0.16 at nine runs to 0.05: it was dynesty's
+noise, not pocomc's bias.  `n40ca_gp` has fifty too, which move its gap
+from 0.15 / 0.09 at three runs to 0.07 / 0.12.
+
+The log Z check is looser than it looks at fifty runs: a pool's error is
+half the runs' range, which grows with their number (0.82 and 0.87 above).
+Against the standard error of the fifty runs' mean, dynesty agrees on
+`alpha_gp` (-84.50 ± 0.05 against -84.53) but not on `n40ca_gp`, where it is
+0.18 below pocomc (-11.53 ± 0.06 against -11.34), about three standard
+errors; the benchmark's dynesty run is low there too.  The moments and the
+share are unaffected.
 
 ### Results
 
@@ -327,13 +339,13 @@ dynesty runs at these settings to test.
 | modes (9) | reference: NUTS, 4 x 3000 draws |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
 | alpha_gp (9) | emcee | 166 s | 97744 | 2% | 33% | 65% | 0% | 1.70 | 1.32 ✗ | 1.48 ✗ | — | — | — | 1.605 ✗ | 164 (< 50 τ) |  |
 | alpha_gp (9) | dynesty | 584 s | 274264 | 0% | 0% | 100% | 0% | 2.13 | 0.30 ✗ | 0.26 ✗ | — | — | — | — |  | -84.6 ± 0.31 |
-| alpha_gp (9) | pocomc | 1048 s | 442368 | 0% | 99% | 0% | 1% | 2.37 | 0.03 ? | 0.01 ? | 7625 | 7.27 | 17.24 | — |  | -84.5 ± 0.01 |
+| alpha_gp (9) | pocomc | 1048 s | 442368 | 0% | 99% | 0% | 1% | 2.37 | 0.03 | 0.01 | 7625 | 7.27 | 17.24 | — |  | -84.5 ± 0.01 |
 | alpha_gp (9) | NUTS | 780 s | 219832 | 1% | 49% | 50% | 0% | 3.55 | 0.60 ✗ | 1.43 ✗ | — | — | — | 1.008 |  |  |
 | alpha_gp (9) | ptemcee | 859 s | 513744 | 0% | 33% | 66% | 0% | 1.67 | 1.39 ✗ | 7.85 ✗ | — | — | — | 1.447 ✗ | 121 (< 50 τ) | -89.4 ± 4.87 |
 | alpha_gp (9) | HMC | 203 s | 53744 | 3% | 22% | 74% | 0% | 3.78 | 0.57 ✗ | 1.42 ✗ | — | — | — | 1.014 ✗ |  |  |
 | alpha_gp (9) | PyMC NUTS | 3037 s | 140769 | 1% | 43% | 55% | 0% | 21.58 | 0.59 ✗ | 1.43 ✗ | — | — | — | 1.009 |  |  |
 | alpha_gp (9) | PyMC HMC | 868 s | 148213 | 1% | 71% | 28% | 0% | 5.85 | 0.58 ✗ | 1.47 ✗ | — | — | — | 1.002 |  |  |
-| alpha_gp (9) | reference: pocomc 8192/4096, 3 runs (NOT CORROBORATED) |  |  |  |  |  |  |  |  |  |  |  |  |  |  | -84.53 ± 0.01 |
+| alpha_gp (9) | reference: pocomc 8192/4096, 3 runs |  |  |  |  |  |  |  |  |  |  |  |  |  |  | -84.53 ± 0.01 |
 | n40ca_gp (7) | emcee | 41 s | 96778 | 1% | 33% | 66% | 0% | 0.42 | 0.05 ? | 0.09 ? | — | — | — | 1.045 ✗ | 65 (< 50 τ) |  |
 | n40ca_gp (7) | dynesty | 284 s | 278094 | 0% | 0% | 100% | 0% | 1.02 | 0.06 ? | 0.08 ? | 3843 | 13.55 | 13.82 | — |  | -11.9 ± 0.34 |
 | n40ca_gp (7) | pocomc | 336 s | 280576 | 0% | 99% | 0% | 1% | 1.20 | 0.02 ? | 0.03 ? | 7180 | 21.37 | 25.59 | — |  | -11.4 ± 0.01 |
@@ -364,7 +376,7 @@ on each problem:
 | `elastic` | dynesty, pocomc, NUTS | pocomc, 312 s (NUTS 324 s, dynesty 646 s) |
 | `hierarchy` | NUTS | NUTS, 41 s, at 3000 draws per chain |
 | `omp` | pocomc (?) | pocomc, 807 s, at 4096/2048 |
-| `alpha_gp` | pocomc (?, against a reference not corroborated on its mode share) | pocomc, 1048 s, at 4096/2048 |
+| `alpha_gp` | pocomc | pocomc, 1048 s, at 4096/2048 |
 | `n40ca_gp` | all but emcee, each within the reference's resolution (?) | HMC, 56 s (NUTS 94 s, PyMC HMC 106 s, PyMC NUTS 139 s, ptemcee 225 s, dynesty 284 s, pocomc 336 s); with log Z, pocomc (dynesty's is 1.7 errors low) |
 
 - **Funnels defeat the samplers that start from the prior.**  `gp`, `modes`
