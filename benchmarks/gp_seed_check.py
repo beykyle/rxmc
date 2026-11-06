@@ -1,9 +1,8 @@
 """gp_discrepancy's cross-section ladder under other seeds.
 
-The notebook fits its three rungs with pocomc at 1024/512 and seeds 10, 11
-and 12, and its prose checks that against an earlier run at 4096/2048 with
-the same seeds.  This reruns the ladder at the notebook's settings with
-three other sets of seeds and records what the notebook quotes: each rung's
+The notebook fits its three rungs with pocomc at 4096/2048 and seeds 10, 11
+and 12.  This reruns the ladder at the notebook's settings with three other
+sets of seeds and records what the notebook quotes: each rung's
 log Z, the differences between rungs, and the medians and 68 % intervals of
 the four volume parameters::
 
@@ -21,7 +20,7 @@ from bench_samplers import run_pocomc
 from problems import RUNGS, n40ca_ladder
 
 #: the notebook's resolution for the ladder
-SETTINGS = dict(n_effective=1024, n_active=512)
+SETTINGS = dict(n_effective=4096, n_active=2048)
 #: the notebook uses 10 + rung; these are three other sets
 SEED_SETS = (20, 30, 40)
 VOLUME = ("Vv", "Wv", "Rv", "av")

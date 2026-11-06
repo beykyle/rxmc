@@ -462,7 +462,7 @@ def n40ca_ladder(rungs=RUNGS):
     )
     terms = {
         "bare": [],
-        "proportional error": [T.proportional_error(gamma, averaging=True)],
+        "proportional error": [T.noise(gamma)],  # relative, in log space
         "GP, growing amplitude": [gp],
     }
     return {r: Problem([Constraint([comp], terms=terms[r])]) for r in rungs}
