@@ -33,8 +33,8 @@ against the JAX one: `results/numpy-jitr3.json`, `results/jax-jitr4.json`).
 | file | what it does |
 |---|---|
 | `bench_samplers.py` | runs the samplers (emcee, dynesty, pocomc and NUTS everywhere; ptemcee, HMC and PyMC on the optical models) at the budgets in `BUDGETS`, scores them against the references, and prints the tables (`--report ... --markdown`); `--reference` computes references |
-| `reference.py` | the reference posteriors: exact quadrature (`linear`, `gp`, `hierarchy`), a long NUTS run (`modes`, `elastic`), or three pooled pocomc runs checked against pooled dynesty runs, three or nine (`omp`, `alpha_gp`, `n40ca_gp`) |
-| `sweep_pocomc.py` | pocomc's resolution swept on a problem, several seeds per setting, and the table of it |
+| `reference.py` | the reference posteriors: exact quadrature (`linear`, `gp`, `hierarchy`), a long NUTS run (`modes`, `elastic`), or three pooled pocomc runs checked against pooled dynesty runs, three on `omp` and fifty on `alpha_gp` and `n40ca_gp` |
+| `sweep_pocomc.py` | sampler settings swept on a problem, several seeds per setting (pocomc's resolution; dynesty's settings too on `gp`, `modes` and `elastic`), and their tables (`--report`, `--grid`) |
 | `gp_seed_check.py` | `gp_discrepancy`'s ladder rerun with other seeds |
 | `merge_results.py` | merges per-job result files into `results/samplers.json` and `results/references.json` |
 | `results/` | the committed results the docs are built from |

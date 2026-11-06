@@ -51,9 +51,13 @@ POPULATION = {
     )
     for name in ("omp", "alpha_gp", "n40ca_gp")
 }
-# alpha_gp's single dynesty runs scatter in the share of the deeper family
-# (0.55 to 0.90; the bar is 0.03), so it pools nine
-POPULATION["alpha_gp"]["corroborate"]["seeds"] = tuple(range(3000, 3009))
+# alpha_gp's and n40ca_gp's single dynesty runs scatter too much for three to
+# check the pool: alpha_gp's in the share of the deeper family (0.55 to 0.90,
+# about 0.1 sd, against a bar of 0.03), and both in their moments (the pools'
+# gaps of 0.16 and 0.15 sd set those references' resolution).  Fifty pooled
+# put the share's standard error near 0.015
+for _name in ("alpha_gp", "n40ca_gp"):
+    POPULATION[_name]["corroborate"]["seeds"] = tuple(range(3000, 3050))
 #: the pooled dynesty runs corroborate the pooled pocomc ones if their log Z
 #: agree within twice the combined error, their mode shares (where a problem
 #: has two modes) within ``share``, and their moments within ``moments`` sd

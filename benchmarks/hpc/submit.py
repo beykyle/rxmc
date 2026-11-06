@@ -7,6 +7,7 @@
     python benchmarks/hpc/submit.py --problems omp --kinds run --samplers NUTS pocomc
     python benchmarks/hpc/submit.py --problems alpha_gp --kinds sweep --settings 1024/512
     python benchmarks/hpc/submit.py --kinds seed --seed-sets 20
+    python benchmarks/hpc/submit.py --problems alpha_gp --kinds ref --indices 12-52
 
 One array job per (kind, problem), whose tasks are the selected entries of
 ``task.py KIND PROBLEM --list``; selecting samplers, settings, seeds or seed
@@ -45,7 +46,7 @@ from task import tasks  # noqa: E402
 #: walltime per task, about twice the 8-core-laptop estimates; problems not
 #: listed take the kind's default
 TIME = {
-    "ref": {"omp": "4:00:00", "alpha_gp": "6:00:00", "n40ca_gp": "2:00:00",
+    "ref": {"omp": "4:00:00", "alpha_gp": "2:00:00", "n40ca_gp": "1:00:00",
             "hierarchy": "3:00:00", "elastic": "2:00:00", "default": "1:00:00"},
     "run": {"omp": "2:00:00", "alpha_gp": "3:00:00", "n40ca_gp": "1:00:00",
             "hierarchy": "3:00:00", "default": "1:00:00"},
@@ -59,8 +60,11 @@ def _selected(kind, entry, args):
     if kind == "run":
         return not args.samplers or entry in args.samplers
     if kind == "sweep":
-        (ne, na), seed = entry
-        return (not args.settings or f"{ne}/{na}" in args.settings) and (
+        from sweep_pocomc import label
+
+        s, seed = entry
+        wanted = {label(w) for w in args.settings or ()}
+        return (not wanted or label(s) in wanted) and (
             not args.seeds or seed in args.seeds
         )
     if kind == "seed":
@@ -81,6 +85,15 @@ def site_options(args):
     return opts + list(getattr(args, "sbatch", None) or [])
 
 
+def indices(spec):
+    """Array indices from ``"3,5,12-52"``."""
+    out = set()
+    for part in spec.split(","):
+        lo, _, hi = part.partition("-")
+        out.update(range(int(lo), int(hi or lo) + 1))
+    return out
+
+
 def commands(args):
     """The sbatch command lines for the selection, one per array job."""
     from bench_samplers import BUDGETS
@@ -92,6 +105,7 @@ def commands(args):
                 i
                 for i, e in enumerate(tasks(kind, problem))
                 if _selected(kind, e, args)
+                and (not getattr(args, "indices", None) or i in args.indices)
             ]
             if not indices:
                 continue
@@ -129,9 +143,17 @@ def parse_args(argv=None):
         choices=["ref", "run", "sweep", "seed"],
     )  # fmt: skip
     ap.add_argument("--samplers", nargs="*", help="run: these samplers only")
-    ap.add_argument("--settings", nargs="*", help="sweep: n_effective/n_active pairs")
+    ap.add_argument(
+        "--settings", nargs="*",
+        help="sweep: these settings only, by label ('pocomc 1024/512' or 1024/512, "
+        "'dynesty rslice 250')",
+    )  # fmt: skip
     ap.add_argument("--seeds", type=int, nargs="*", help="sweep: these seeds only")
     ap.add_argument("--seed-sets", type=int, nargs="*", help="seed: these sets only")
+    ap.add_argument(
+        "--indices", type=indices,
+        help="these array indices only, of every job selected (e.g. 12-52)",
+    )  # fmt: skip
     ap.add_argument("--time", help="walltime per task, overriding the table")
     site = ap.add_argument_group("site settings (or put them in an @file)")
     site.add_argument("--account", help="sbatch --account")

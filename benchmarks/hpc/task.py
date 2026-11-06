@@ -14,7 +14,8 @@ KIND is
                dynesty seeds that check them (pooled later by assemble.py);
                otherwise the whole reference, quadrature or a long NUTS run;
 * ``run``   -- one sampler of the benchmark on PROBLEM;
-* ``sweep`` -- one (setting, seed) of the pocomc resolution sweep;
+* ``sweep`` -- one (setting, seed) of the settings sweep (pocomc's
+               resolution; dynesty's settings too on gp, modes and elastic);
 * ``seed``  -- one (seed set, rung) of gp_discrepancy's ladder (PROBLEM is
                always ``gp``).
 
@@ -53,9 +54,9 @@ def tasks(kind, problem):
 
         return list(BUDGETS[problem]["samplers"])
     if kind == "sweep":
-        from sweep_pocomc import SEEDS, SETTINGS
+        from sweep_pocomc import SEEDS, settings_for
 
-        return [(s, seed) for s in SETTINGS for seed in SEEDS]
+        return [(s, seed) for s in settings_for(problem) for seed in SEEDS]
     if kind == "seed":
         from gp_seed_check import SEED_SETS
 

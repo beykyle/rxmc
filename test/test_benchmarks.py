@@ -97,6 +97,65 @@ def test_the_sweep_runs_end_to_end(tmp_path):
     sweep_pocomc.report(saved, {})
 
 
+@pytest.mark.slow
+def test_a_dynesty_setting_sweeps_end_to_end(tmp_path):
+    import sweep_pocomc
+
+    out = tmp_path / "sweep.json"
+    saved = sweep_pocomc.sweep("linear", ["dynesty rwalk 50"], (0,), out)
+    (r,) = saved["runs"]
+    assert (r["sampler"], r["setting"], r["nlive"]) == (
+        "dynesty",
+        "dynesty rwalk 50",
+        50,
+    )
+    sweep_pocomc.report(saved, {})
+
+
+def test_sweep_settings_read_labels_pairs_and_saved_runs():
+    import sweep_pocomc as sp
+
+    assert (
+        sp.setting("1024/512")
+        == sp.setting("pocomc 1024/512")
+        == sp.setting((1024, 512))
+    )
+    assert sp.label(("dynesty", dict(sample="rslice", nlive=250))) == (
+        "dynesty rslice 250"
+    )
+    assert sp.run_label(dict(n_effective=4096, n_active=2048)) == "pocomc 4096/2048"
+    with pytest.raises(ValueError):
+        sp.setting("emcee 3000")
+
+
+def test_the_grid_reports_the_worst_seed_per_problem(capsys):
+    import sweep_pocomc
+
+    ref = dict(mean=[0.0], sd=[1.0], method="m", names=["x"])
+    run = dict(setting="dynesty rwalk 500", sd=[1.0])
+    saved = [
+        dict(
+            problem="a",
+            names=["x"],
+            runs=[dict(run, mean=[0.05]), dict(run, mean=[0.3])],
+        ),
+        dict(problem="b", names=["x"], runs=[dict(run, mean=[0.02])]),
+    ]
+    sweep_pocomc.grid(saved, dict(a=ref, b=ref))
+    row = capsys.readouterr().out.splitlines()[-1]
+    assert row == "| dynesty rwalk 500 | 0.30 / 0.00 ✗ | 0.02 / 0.00 |"
+
+
+def test_submit_selects_array_indices():
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "benchmarks" / "hpc"))
+    import submit
+
+    assert submit.indices("3,5,12-14") == {3, 5, 12, 13, 14}
+    argv = ["--problems", "alpha_gp", "--kinds", "ref", "--indices", "12-13"]
+    (cmd,) = submit.commands(submit.parse_args(argv))
+    assert cmd[1] == "--array=12,13"
+
+
 def test_the_seed_check_summarises_as_the_notebook_quotes():
     import gp_seed_check
 
@@ -118,8 +177,10 @@ def test_every_array_job_maps_its_indices_to_runs():
         for k in ("ref", "run", "sweep")
         for p in ("omp", "alpha_gp", "n40ca_gp")
     }
-    assert set(counts.values()) == {6, 8, 9, 12}
-    assert counts["ref", "alpha_gp"] == 12  # nine dynesty runs check it
+    assert set(counts.values()) == {6, 8, 9, 53}
+    assert counts["ref", "alpha_gp"] == counts["ref", "n40ca_gp"] == 53  # 50 dynesty
+    assert task.tasks("ref", "alpha_gp")[11] == ("dynesty", 3008)  # indices kept
+    assert len(task.tasks("sweep", "gp")) == 21  # dynesty's settings too
     assert len(task.tasks("seed", "gp")) == 9
     assert task.tasks("ref", "omp")[-1][0] == "dynesty"
 
@@ -129,16 +190,16 @@ def test_assemble_pools_reference_parts_and_joins_pieces(tmp_path, monkeypatch):
     import assemble
 
     monkeypatch.setattr(assemble, "OUT", tmp_path)
-    ref_dir = tmp_path / "ref" / "n40ca_gp"
+    ref_dir = tmp_path / "ref" / "omp"
     ref_dir.mkdir(parents=True)
     run = dict(mean=[1.0, 2.0], sd=[1.0, 1.0], logz=-3.0, logz_err=0.1, wall_s=5.0)
     dyn = dict(run, mean=[1.02, 2.0], method="dynesty")
     for i, (part, result) in enumerate([("pocomc", run)] * 3 + [("dynesty", dyn)] * 3):
-        piece = dict(problem="n40ca_gp", part=part, names=["a", "b"], result=result)
+        piece = dict(problem="omp", part=part, names=["a", "b"], result=result)
         (ref_dir / f"{i}.json").write_text(json.dumps(piece))
     refs = assemble.references()  # the other problems have no pieces: skipped
-    assert list(refs) == ["n40ca_gp"]
-    ref = refs["n40ca_gp"]
+    assert list(refs) == ["omp"]
+    ref = refs["omp"]
     assert ref["corroborated"] and ref["accepted"] and ref["logz"] == -3.0
     assert ref["names"] == ["a", "b"] and len(ref["corroboration"]["runs"]) == 3
     seed_dir = tmp_path / "seed" / "gp"
