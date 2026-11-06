@@ -110,7 +110,7 @@ known-first-party = ["rxmc", "helpers", "common", "oracle"]
 # short-chain assertions of every recipe test.  The converged tier is marked
 # `slow` and runs with `pytest -m slow`, together with a quick run of the
 # notebooks (`RXMC_EXAMPLES_QUICK=1 pytest --nbmake examples`), in the
-# "Converged tier" workflow required on pushes and pull requests to main.  See docs/groundup_design.md section 9.
+# "Converged tier" workflow required on pushes and pull requests to main.  See docs/design.md section 5.
 testpaths = ["test"]
 addopts = "-m 'not slow'"
 markers = [

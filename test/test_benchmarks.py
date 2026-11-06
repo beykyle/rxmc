@@ -255,7 +255,11 @@ def test_a_verdict_within_the_references_resolution_is_unresolved():
     import bench_samplers as b
 
     exact = dict(mean=[0.0], sd=[1.0], method="quadrature")
-    assert [b.verdict(e, exact) for e in (0.09, 0.11)] == ["ok", "wrong"]
+    assert [b.verdict(e, exact) for e in (0.09, 0.11, float("nan"))] == [
+        "ok",
+        "wrong",
+        "wrong",
+    ]
     checked = dict(exact, corroboration=dict(bias=0.05, width=0.02))
     assert b.resolution(checked) == 0.05
     assert [b.verdict(e, checked) for e in (0.04, 0.06, 0.14, 0.16)] == [

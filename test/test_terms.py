@@ -579,8 +579,16 @@ def test_a_relative_term_is_refused_outside_linear_space():
     Constraint([lin], terms=[proportional_error(eps)])  # linear space: fine
     Constraint([log], terms=[noise(eps)])  # the relative error in log space
     for term in (proportional_error(eps), normalization(eps)):
-        with pytest.raises(ValueError, match="relative error only in linear space"):
+        with pytest.raises(ValueError, match="relative error only in the identity"):
             Constraint([log], terms=[term])
     with pytest.raises(ValueError, match="relative"):  # on= picks the log one
         Constraint([lin, log], terms=[proportional_error(eps, on=log)])
     Constraint([lin, log], terms=[proportional_error(eps, on=lin)])
+    with pytest.raises(ValueError, match="relative"):  # on=None spans both
+        Constraint([lin, log], terms=[proportional_error(eps)])
+    d2 = Dataset(x, np.exp(-x), 0.05 * np.exp(-x))
+    with pytest.raises(ValueError, match="relative"):  # on= a dataset
+        Constraint(
+            [lin, Comparison(d2, model, space=tf.log)],
+            terms=[normalization(eps, on=d2)],
+        )

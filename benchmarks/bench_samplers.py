@@ -528,8 +528,8 @@ def errors(r, ref):
 def resolution(ref):
     """How far the reference itself may be off, in its standard deviations:
     the larger of the bias and width gaps between it and its independent
-    check (the pooled dynesty runs), or 0 for an exact or uncorroborated
-    reference."""
+    check (the pooled dynesty runs), or 0 for a reference without such a
+    check (the exact and NUTS references)."""
     check = (ref or {}).get("corroboration")
     return max(check["bias"], check["width"]) if check else 0.0
 
@@ -539,7 +539,7 @@ def verdict(e, ref):
     ``TOLERANCE``: within the reference's :func:`resolution` of the tolerance
     on either side, the reference cannot tell."""
     r = resolution(ref)
-    if e > TOLERANCE + r:
+    if not e <= TOLERANCE + r:  # NaN included
         return "wrong"
     return "ok" if e <= TOLERANCE - r else "unresolved"
 

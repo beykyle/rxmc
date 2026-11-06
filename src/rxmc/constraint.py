@@ -270,8 +270,10 @@ class Constraint:
                     raise ValueError(
                         f"a relative term (proportional_error, normalization) on "
                         f"{nonlinear[0]!r}: a fraction of the prediction is a relative "
-                        "error only in linear space; in log space use noise() for an "
-                        "uncorrelated relative error and offset() for a normalisation"
+                        "error only in the identity (linear) space, and every other "
+                        f"space is refused, {nonlinear[0].space.name!r} included; in "
+                        "log space use noise() for an uncorrelated relative error and "
+                        "offset() for a normalisation"
                     )
             if not callable(t.fn) and t.fn.shape != t.expected_shape(len(rows)):
                 raise ValueError(

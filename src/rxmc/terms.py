@@ -26,7 +26,7 @@ is, so :func:`~rxmc.predictive.grid_draws` can evaluate it on a grid that was
 never measured.  A term that is an array — the reported statistical errors, a
 fixed covariance, a per-point ``magnitude=`` — exists only at the measured rows.
 
-Two mechanisms are expressed here (see ``docs/groundup_design.md``):
+Two mechanisms are expressed here (see ``docs/design.md``, recipe 5):
 
 * **Correlating comparisons** — a ``mode`` or ``matrix`` term whose ``on``
   spans several comparisons writes off-diagonal blocks, coupling the data.

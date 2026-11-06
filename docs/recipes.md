@@ -212,7 +212,7 @@ Expected behaviour:
 - The model parameters relax from their biased values toward the truth
   (`gp_discrepancy`, on the toy).  The mean-zero envelope describes how far
   the model may stray; it is not a fit to the defect and need not contain it
-  (in `gp_discrepancy` it does over most of the toy's data range and about
+  (in `gp_discrepancy` it does over most of the toy's data range and over
   half of the cross section's grid), and on a model with missing physics some
   parameters can stay confidently wrong.
 - The kernel declares a **mean-zero** discrepancy, so the likelihood is the
@@ -482,10 +482,11 @@ Expected behaviour:
   of `prior_transform(u)` it samples the problem's prior exactly, whatever
   its marginals, and its evidence is the problem's.  It is the sampler the
   reaction notebooks use: on the p + $^{40}$Ca optical model, whose posterior has
-  two separated islands, it is the only benchmarked sampler to reach the
-  reference posterior, at eight times its default `n_effective` and
-  `n_active`.  Below that, how it weighs the islands changes from run to
-  run, so run it more than once and compare ([benchmarks](benchmarks.md)).
+  two separated islands, it is the only benchmarked sampler not shown wrong
+  against the reference, at eight times its default `n_effective` and
+  `n_active`, and even there it is wrong on one seed of three.  Below that,
+  how it weighs the islands changes from run to run, so run it more than
+  once and compare ([benchmarks](benchmarks.md)).
 - Parallelism: `log_posterior_batch` with emcee's `vectorize=True` needs no
   pool, and `log_prior_batch`, `log_likelihood_batch` and
   `prior_transform_batch` serve other vectorised samplers (pocomc above;

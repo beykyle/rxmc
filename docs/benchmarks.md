@@ -55,21 +55,21 @@ warm-up.  `compare.py` prints two runs side by side, with time ratios and
 the largest relative difference of the values.
 
 The script runs against whichever rxmc is importable.  The baseline
-`numpy-jitr3.json` is the numpy rxmc before the JAX rewrite (`main`), on
-jitr 3.0.1, whose gradient is a central finite difference of `2 ndim`
-calls; to reproduce it, install that rxmc and jitr in a separate
-environment and run this branch's script there.
+`numpy-jitr3.json` is the numpy rxmc 0.x (tag `v0.1.0`) on jitr 3.0.1,
+whose gradient is a central finite difference of `2 ndim` calls; to
+reproduce it, install that rxmc and jitr in a separate environment and run
+this script there.
 
 Against that baseline (same machine, CPU):
 
-| problem | `log_posterior` | gradient (FD baseline → autodiff) | vmap, 256 rows | emcee $32 \times 500$ |
+| problem | `log_posterior` | gradient (FD baseline to autodiff) | vmap, 256 rows | emcee $32 \times 500$ |
 |---|---|---|---|---|
-| line, reported errors | 0.16 → 0.10 ms | 0.66 → 0.11 ms | 6.2k → 1.06M θ/s | 2.9 → 1.9 s |
-| 6 comparisons, 13 modes | 1.38 → 0.20 ms | 30.4 → 0.39 ms | 0.5k → 41k θ/s | |
-| GP, N = 100 | 0.79 → 0.27 ms | 6.4 → 1.2 ms | 1.3k → 4.4k θ/s | 10.3 → 4.6 s |
-| GP, N = 500 | 10.8 → 5.3 ms | 90 → 32 ms | 87 → 147 θ/s | |
-| elastic, 4 energies | 7.0 → 2.6 ms | 70 → 6.0 ms | 142 → 331 θ/s | 106 → 45 s |
-| (p,n) IAS, 1 energy | 5.2 → 2.1 ms | 43 → 4.1 ms | 191 → 450 θ/s | |
+| line, reported errors | 0.16 to 0.10 ms | 0.66 to 0.11 ms | 6.2k to 1.06M evaluations/s | 2.9 to 1.9 s |
+| 6 comparisons, 13 modes | 1.38 to 0.20 ms | 30.4 to 0.39 ms | 0.5k to 41k evaluations/s | |
+| GP, N = 100 | 0.79 to 0.27 ms | 6.4 to 1.2 ms | 1.3k to 4.4k evaluations/s | 10.3 to 4.6 s |
+| GP, N = 500 | 10.8 to 5.3 ms | 90 to 32 ms | 87 to 147 evaluations/s | |
+| elastic, 4 energies | 7.0 to 2.6 ms | 70 to 6.0 ms | 142 to 331 evaluations/s | 106 to 45 s |
+| (p,n) IAS, 1 energy | 5.2 to 2.1 ms | 43 to 4.1 ms | 191 to 450 evaluations/s | |
 
 The first call of a new problem pays compilation, 0.1 to 1 s.  Values agree
 to 1e-13 except for the reaction models, where jitr v4 solves every partial
@@ -126,7 +126,7 @@ maximum of the likelihood, because on `hierarchy` the likelihood depends on
 `hierarchy` emcee and NUTS start from prior draws instead, because its MAP
 is far from the bulk of the posterior: the non-centred mode shrinks the
 `eta_j` toward their prior and inflates $\tau$ to compensate, putting $\tau$ at 1.27
-against a posterior of 0.31 ± 0.04.  The other problems' budgets are in
+against a posterior of $0.31 \pm 0.04$.  The other problems' budgets are in
 `BUDGETS` at the top of the script.
 
 dynesty runs rwalk with 500 live points, and pocomc 1024/512, on every
@@ -243,7 +243,7 @@ reference's resolution.
   points), so it overstates their ESS, and pocomc stops when Kish's ESS
   reaches its `n_total` target, so its ESS sits near that target by
   construction.  The bias and width columns are the check that matters:
-  pocomc on `gp` reports an ESS of 4400 with means 0.6 sd off.
+  pocomc on `gp` reports an ESS of about 4500 with means 0.6 sd off.
 - **Correct.**  A run is correct if it converged (next) and neither error
   is marked ✗; ESS is reported only for correct runs.  A ? means correct as
   far as the reference can tell.
@@ -280,7 +280,7 @@ moment gaps is the reference's resolution $r$:
 
 `alpha_gp`'s reference is kept, marked `corroborated: false` (the tables
 say so), because the share's disagreement is within dynesty's noise as far
-as can be told: single dynesty runs put 0.55 to 0.91 of the mass in the
+as can be told: single dynesty runs put 0.55 to 0.90 of the mass in the
 deeper family, so even nine pooled carry a standard error of 0.035 on the
 share, and the gap is 1.3 of those.  The pocomc runs agree on 0.739 to
 0.743, and the sweep's 4096/2048 runs on 0.71 to 0.74.  log Z agrees within
@@ -410,16 +410,16 @@ on each problem:
   converges (149 $\tau$, R-hat 1.008), 0.14 / 0.15 from the reference, within
   its resolution.
 - **Evidence.**  Against the exact log Z, dynesty is within its error on
-  `linear` and `gp` (80.3 ± 0.28 against 80.48) but 4 errors high on
-  `hierarchy` (76.2 ± 0.55 against 73.97); pocomc is within its error on
-  `hierarchy`, 1.2 errors low on `linear` and 6 errors low on `gp` (80.2 ± 0.04), where its
+  `linear` and `gp` ($80.3 \pm 0.28$ against 80.48) but 4 errors high on
+  `hierarchy` ($76.2 \pm 0.55$ against 73.97); pocomc is within its error on
+  `hierarchy`, 1.2 errors low on `linear` and 6 errors low on `gp` ($80.2 \pm 0.04$), where its
   posterior is biased too.  Against the optical-model references (pooled
   pocomc, checked by dynesty), dynesty's evidence is right even where its
-  posterior is not: -6.42 ± 0.32 against -6.65 on `omp`, -84.61 ± 0.31
+  posterior is not: $-6.42 \pm 0.32$ against -6.65 on `omp`, $-84.61 \pm 0.31$
   against -84.53 on `alpha_gp`, though 1.7 errors low on `n40ca_gp`
-  (-11.92 ± 0.34 against -11.34).  ptemcee's thermodynamic integration is
-  2.3, 1.0 and 0.3 errors low on the three (-11.95 ± 2.34, -89.36 ± 4.87,
-  -17.4 ± 21.8), errors too wide to say much.  Like Kish's ESS, pocomc's
+  ($-11.92 \pm 0.34$ against -11.34).  ptemcee's thermodynamic integration is
+  2.3, 1.0 and 0.3 errors low on the three ($-11.95 \pm 2.34$, $-89.36 \pm 4.87$,
+  $-17.4 \pm 21.8$), errors too wide to say much.  Like Kish's ESS, pocomc's
   log Z error leaves out the correlation between its particles.
 - **Cost per call.**  On a reaction model the solver dominates whatever the
   sampler: a call costs 1.7 to 2.6 ms on `omp` and `alpha_gp` and 0.4 to
@@ -438,33 +438,34 @@ on each problem:
 ## `gp_discrepancy` under other seeds: `gp_seed_check.py`
 
 The notebook fits its three-rung cross-section ladder with pocomc at
-1024/512 and seeds 10, 11 and 12, one run per rung.  `gp_seed_check.py`
+4096/2048 and seeds 10, 11 and 12, one run per rung.  `gp_seed_check.py`
 reruns the ladder at the same settings with three other seed sets (20 + i,
 30 + i, 40 + i for rung i) to see how much of what the notebook quotes is
-the seed's (`results/hpc/gp_seed_check.json`):
+the seed's (`results/hpc/gp_seed_check.json`; wall times on one local
+machine):
 
 | seeds | log Z: bare | proportional error | GP, growing amplitude | $\Delta\log Z$: proportional - bare | GP - proportional |
 |---|---|---|---|---|---|
-| notebook (10–12) | -467.18 ± 0.01 | 96.73 ± 0.02 | 103.88 ± 0.02 | 563.9 | 7.1 |
-| 20–22 | -467.18 ± 0.01 | 96.71 ± 0.01 | 103.91 ± 0.02 | 563.9 | 7.2 |
-| 30–32 | -467.19 ± 0.01 | 96.73 ± 0.03 | 103.90 ± 0.03 | 563.9 | 7.2 |
-| 40–42 | -467.19 ± 0.01 | 96.73 ± 0.02 | 103.86 ± 0.01 | 563.9 | 7.1 |
+| notebook (10-12) | -467.21 ± 0.01 | 91.12 ± 0.01 | 103.91 ± 0.04 | 558.3 | 12.8 |
+| 20-22 | -467.20 ± 0.01 | 91.11 ± 0.01 | 103.92 ± 0.02 | 558.3 | 12.8 |
+| 30-32 | -467.22 ± 0.01 | 91.14 ± 0.02 | 103.97 ± 0.07 | 558.4 | 12.8 |
+| 40-42 | -467.19 ± 0.01 | 91.14 ± 0.01 | 103.93 ± 0.02 | 558.3 | 12.8 |
 
 The volume parameters' medians, and the notebook's 68 % intervals in
 brackets:
 
-| rung | seeds | V_v | W_v | R_v | a_v |
+| rung | seeds | $V_v$ | $W_v$ | $R_v$ | $a_v$ |
 |---|---|---|---|---|---|
-| bare | notebook | 26.84 [26.44, 27.23] | 16.64 [16.40, 16.85] | 4.430 [4.410, 4.451] | 0.659 [0.654, 0.665] |
-| bare | 20, 30, 40 | 26.81, 26.81, 26.83 | 16.62, 16.62, 16.63 | 4.432, 4.432, 4.431 | 0.659, 0.659, 0.659 |
-| proportional error | notebook | 38.58 [35.48, 41.93] | 19.49 [18.23, 20.90] | 4.182 [4.028, 4.341] | 0.615 [0.534, 0.680] |
-| proportional error | 20, 30, 40 | 38.46, 38.63, 38.41 | 19.53, 19.60, 19.32 | 4.181, 4.176, 4.193 | 0.616, 0.612, 0.610 |
-| GP, growing amplitude | notebook | 43.91 [42.46, 45.48] | 13.57 [12.58, 14.56] | 4.285 [4.213, 4.348] | 0.488 [0.466, 0.513] |
-| GP, growing amplitude | 20, 30, 40 | 43.79, 43.86, 43.89 | 13.67, 13.64, 13.57 | 4.290, 4.287, 4.285 | 0.487, 0.488, 0.488 |
+| bare | notebook | 26.82 [26.41, 27.25] | 16.63 [16.39, 16.86] | 4.431 [4.409, 4.452] | 0.659 [0.653, 0.665] |
+| bare | 20, 30, 40 | 26.81, 26.82, 26.81 | 16.62, 16.62, 16.62 | 4.432, 4.431, 4.432 | 0.659, 0.659, 0.659 |
+| proportional error | notebook | 29.98 [27.49, 32.80] | 18.18 [16.82, 19.66] | 4.277 [4.153, 4.391] | 0.690 [0.655, 0.725] |
+| proportional error | 20, 30, 40 | 30.06, 30.21, 29.91 | 18.21, 18.27, 18.12 | 4.272, 4.265, 4.278 | 0.690, 0.692, 0.689 |
+| GP, growing amplitude | notebook | 43.80 [42.46, 45.36] | 13.64 [12.69, 14.60] | 4.288 [4.221, 4.347] | 0.487 [0.466, 0.511] |
+| GP, growing amplitude | 20, 30, 40 | 43.70, 43.74, 43.60 | 13.65, 13.65, 13.69 | 4.294, 4.290, 4.298 | 0.485, 0.486, 0.484 |
 
 Every number the notebook quotes holds under other seeds: each rung's log Z
-moves by at most 0.03 from the notebook's (the GP rung's runs spread 0.05,
-a few times their quoted errors), the evidence for the GP over the
-proportional error is 7.1 to 7.2 in every set, and every median moves by a
-small fraction of its 68 % interval (at most 0.12 of the interval's
-half-width, on the proportional rung's W_v).
+moves by at most 0.06 from the notebook's, the evidence for the GP over the
+proportional error is 12.8 in every set, and every median moves by at most
+0.16 of its 68 % interval's half-width (the GP rung's $R_v$).  The GP
+rung's medians in every set, the notebook's included, lie within 0.12
+posterior standard deviations of `n40ca_gp`'s reference.
